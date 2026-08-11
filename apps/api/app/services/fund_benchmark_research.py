@@ -830,7 +830,10 @@ def _normalize_snapshot(
     series_id: str,
 ) -> tuple[dict[date, float] | None, str | None]:
     if not isinstance(payload, Mapping):
-        return None, f"{series_id}_snapshot_envelope_missing"
+        # `_snapshot_envelope(raw=None)` 返回 None，所以走到这里只有一种情况：**provider
+        # 什么都没给**（成分不是可估值的指数，或者源失败）。原来的
+        # `_snapshot_envelope_missing` 读起来像内部封装出了 bug，运维会去查代码而不是去查源。
+        return None, f"{series_id}_provider_returned_no_series"
     available = _aware_datetime(payload.get("available_at"))
     if available is None:
         return None, f"{series_id}_snapshot_available_at_missing_or_invalid"

@@ -47,7 +47,14 @@ def default_benchmark_fetcher(
         or component.get("code")
         or ""
     ).strip()
-    if not symbol.isdigit():
+
+    from app.services.csindex_daily_client import is_csindex_code
+
+    # 纯数字之外还要放行中证的 `H` 系列（H30202 中证全指软件、H30054 中证全指医药……）。
+    # 原来的 `symbol.isdigit()` 把整个 H 系列挡在门外，而中证官方接口对它们是有数据的，
+    # 于是这些基金的基准腿永远拿不到序列、跟踪指标恒为不可用。
+    # 非指数标的（AU9999 上金所黄金现货等）仍然返回 None——它不是指数，如实缺席。
+    if not (symbol.isdigit() or is_csindex_code(symbol)):
         return None
 
     from app.services.index_daily_client import fetch_index_daily_history

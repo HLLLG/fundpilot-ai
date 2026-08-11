@@ -1335,7 +1335,27 @@ def decision_evidence_allows_action(
         f"holdings.{code}.sector_return_percent",
         f"holdings.{code}.sector_opportunity",
     )
-    if not any(_usable_evidence(items.get(fact_id)) for fact_id in directional_ids):
+    # 方向证据只约束**加仓**。缺少方向证据意味着"无法论证现在该买"，不意味着"该卖的
+    # 也别卖了"——风险动作不该因为少了一层证据而被放松，这个原则在
+    # `recommendation_guard._sector_direction_absence_reason` 的 docstring 里已经写明，
+    # 但此前这道门禁没有遵守它：它无条件追加阻断原因，于是把整张卡片一起关掉。
+    #
+    # 2026-08-11 14:30 实测后果：板块方向层整层超时（`sector_rotation.reason=timeout`），
+    # 6 只持仓的 `holdings.{code}.sector_opportunity` 全部缺席，而盘中
+    # `daily_return_percent` / `sector_return_percent` 本就恒为 `unknown`（官方净值未出、
+    # 资金流日期未对齐），三条腿同时失效。模型当时**一个加仓都没提**（观察×4、风控复核、
+    # 暂停追涨），却 6 只全被阻断：012200 的「风控复核」被降成「观察」、011036 的
+    # 「暂停追涨」同样被降成「观察」——一个"缺数据"的判定把两条真实的风险结论抹掉了。
+    #
+    # 加仓侧并没有因此放松：方向层缺席时 `propose_daily_action` 会同时命中
+    # `sector_direction_evidence_absent` / `entry_state_unavailable` / `weak_evidence`，
+    # `supports_add` 必为 False，`_promote_to_proposed_add` 也就不会提升。那条路径给出的
+    # 还是具体原因（"本轮板块方向证据未取到"），而不是这里的通用兜底。
+    #
+    # `direction is None` 保持保守：调用方没声明方向时无法排除加仓意图。
+    if direction in {None, "add"} and not any(
+        _usable_evidence(items.get(fact_id)) for fact_id in directional_ids
+    ):
         reasons.append("directional_evidence_not_point_in_time_usable")
     tradeability_id = f"holdings.{code}.tradeability"
     # The key is absent only on reports from before this evidence contract.

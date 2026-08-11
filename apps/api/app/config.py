@@ -67,7 +67,11 @@ class Settings(BaseSettings):
     # discovery context assembly are isolated so one pipeline cannot starve
     # the other, while the wider I/O pool absorbs bounded nested fan-out.
     sse_shared_io_workers: int = 32
-    sse_analysis_context_workers: int = 2
+    # 必须 >= 单份日报的增强项任务数（见 shared_executors.ANALYSIS_ENHANCEMENT_TASK_COUNT）：
+    # 池子比任务数小时，后提交的任务会用自己的超时预算去排队，`sector_opportunity` 作为第 5 个
+    # 提交项因此可能压根没启动就被判超时（2026-08-11 14:30 实测）。低于下界的取值会被
+    # `get_analysis_context_executor` 抬到下界。
+    sse_analysis_context_workers: int = 12
     sse_discovery_context_workers: int = 2
     # Bounded in-process telemetry avoids a new Prometheus/OTel deployment on
     # the current single-host topology. Only aggregate samples and sanitized

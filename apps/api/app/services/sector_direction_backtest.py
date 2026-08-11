@@ -1701,12 +1701,11 @@ def _num(value: object) -> float | None:
 # 数据装载层（默认走仓库既有 provider，全部可注入）
 # --------------------------------------------------------------------------
 
-#: 走恒生系列指数报价的板块。与 `discovery_sector_position._HK_INDEX_BY_SECTOR` 一致。
-_HK_INDEX_BY_SECTOR: dict[str, str] = {
-    "港股": "HSI",
-    "港股通": "HSI",
-    "恒生科技": "HSTECH",
-}
+#: 走恒生系列指数报价的板块。**单一来源**在 `sector_registry_data`，回测与生产共用
+#: 同一份，避免两处各存一份靠注释维持同步。
+from app.services.sector_registry_data import (  # noqa: E402
+    HK_INDEX_SYMBOL_BY_SECTOR as _HK_INDEX_BY_SECTOR,
+)
 
 #: 港股类板块的对标基准。生产 `discovery_sector_position` 目前对所有板块（含港股）
 #: 一律使用沪深300，导致港股的"相对强度"实际是跨市场跨货币比较；回测层显式支持按板块

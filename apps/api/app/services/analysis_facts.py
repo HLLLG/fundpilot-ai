@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import Executor, TimeoutError as FutureTimeoutError
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 import threading
 import time
@@ -47,6 +47,7 @@ from app.services.streaming_heartbeat import raise_if_stream_cancelled
 from app.services.report_sector_opportunity import (
     SECTOR_OPPORTUNITY_TOTAL_BUDGET_SECONDS,
     build_holding_sector_opportunity_context,
+    sector_opportunity_total_budget_seconds,
 )
 from app.services.sector_signal_context import (
     build_signal_backtest_context,
@@ -82,6 +83,20 @@ _ENHANCEMENT_QUEUE_MARGIN_SECONDS = 1.5
 SECTOR_OPPORTUNITY_TIMEOUT_SECONDS = (
     SECTOR_OPPORTUNITY_TOTAL_BUDGET_SECONDS + _ENHANCEMENT_QUEUE_MARGIN_SECONDS
 )
+
+
+def sector_opportunity_timeout_seconds(held_sector_count: int | None = None) -> float:
+    """外层超时随持仓板块数伸缩，与内层预算同源。
+
+    注意这只解决"内层预算被外层写死的数字砍掉"这一类问题。2026-08-11 14:30 那次整层超时的
+    真实原因是上下文线程池只有 2 个 worker、而单份日报提交 6 个增强项，`sector_opportunity`
+    排在第 5 位——它的预算在队列里就流失掉了。那条已在
+    `shared_executors.analysis_context_worker_floor()` 修掉；本函数管的是另一件事。
+    """
+    return (
+        sector_opportunity_total_budget_seconds(held_sector_count)
+        + _ENHANCEMENT_QUEUE_MARGIN_SECONDS
+    )
 MARKET_BREADTH_TIMEOUT_SECONDS = 3.0
 FUND_SCALE_FRESH_DAYS = 120
 FUND_SCALE_AGING_DAYS = 240
@@ -202,9 +217,19 @@ def _enhancement_result(
     future,
     *,
     timeout_seconds: float,
-    fallback: Any,
+    fallback: Any = None,
+    fallback_factory: Callable[[], Any] | None = None,
     stop_event: threading.Event | None = None,
 ) -> Any:
+    """等待增强项，超时/异常时退回兜底。
+
+    `fallback_factory` 用于兜底内容需要**在超时那一刻**才能确定的场景（例如读取增强项
+    自己写进 progress 的部分结果）；提供它时优先于静态的 `fallback`。
+    """
+
+    def _fallback() -> Any:
+        return fallback_factory() if fallback_factory is not None else fallback
+
     deadline = time.monotonic() + timeout_seconds
     try:
         while True:
@@ -212,14 +237,14 @@ def _enhancement_result(
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 future.cancel()
-                return fallback
+                return _fallback()
             try:
                 return future.result(timeout=min(0.25, remaining))
             except FutureTimeoutError:
                 continue
     except Exception:  # noqa: BLE001 - enhancement facts are best-effort
         raise_if_stream_cancelled(stop_event)
-        return fallback
+        return _fallback()
 
 
 def _signal_backtest_unavailable(reason: str) -> dict[str, Any]:
@@ -266,6 +291,41 @@ def _sector_opportunity_unavailable(
     }
 
 
+def _sector_opportunity_from_progress(
+    progress: dict[str, Any] | None,
+    holdings: list[Holding] | None = None,
+) -> dict[str, Any]:
+    """外层超时时的兜底：优先用增强项已经算完的持仓方向层。
+
+    轮动参考（`market_top`）与分位分母排在方向层之后，它们慢一点就会让外层判超时。此前
+    的兜底是 `held={}`，等于把已经算好的持仓方向证据一起丢掉——而 `held` 正是数据门禁、
+    动作提议与退出判定唯一依赖的那一份。2026-08-11 14:30 实测：整层丢弃后 6 只持仓全部
+    落到 `directional_evidence_not_point_in_time_usable`，连「风控复核」都被降成「观察」。
+    """
+    held = (progress or {}).get("held")
+    if not isinstance(held, dict) or not held:
+        return _sector_opportunity_unavailable("timeout", holdings)
+    flow_by_label = (progress or {}).get("sector_flow_by_label")
+    divergence = (progress or {}).get("divergence_backtest")
+    return {
+        "available": bool((progress or {}).get("heat_available")),
+        # 明确区分"整层没有"与"方向层有、轮动参考没跑完"，便于运维与 prompt 分辨。
+        "reason": "timeout_partial_held_only",
+        "held": dict(held),
+        "market_top": [],
+        "sector_flow_by_label": (
+            dict(flow_by_label)
+            if isinstance(flow_by_label, dict) and flow_by_label
+            else _sector_flow_unavailable_map(holdings or [], "timeout")
+        ),
+        "divergence_backtest": dict(divergence) if isinstance(divergence, dict) else {},
+        "direction_exit_by_fund_code": dict(
+            (progress or {}).get("direction_exit_by_fund_code") or {}
+        ),
+        "mainline": {"available": False, "reason": "timeout_partial_held_only"},
+    }
+
+
 def _guard_policy_unavailable() -> dict[str, Any]:
     return {
         "enforce_reversal_block": True,
@@ -281,6 +341,7 @@ def _attach_escalation_to_holdings(
     *,
     market_breadth: dict | None,
     profile: InvestorProfile,
+    direction_exit_by_fund_code: dict[str, dict] | None = None,
 ) -> None:
     """给每个持仓行挂上 M2.1 的双向 guard 升级判定结果（key: `escalation`）。
 
@@ -288,12 +349,16 @@ def _attach_escalation_to_holdings(
     `resolve_escalation_floor` 本身已能优雅降级返回 `min_bucket=None`（详见该函数
     docstring），这里不做额外短路，保持单一判定入口。
     """
+    by_fund_code = direction_exit_by_fund_code or {}
     for row in per_fund:
         sector_opportunity = row.get("sector_opportunity")
         # 方向退出判定挂在板块机会行上（由 report_sector_opportunity 计算），这里透传给
         # 升级下限：它是 2026-08 补上的"何时退场"来源，与既有的量价背离风险各判一次、
         # 取更保守者。
-        direction_exit = (
+        #
+        # 优先用**这只基金自己**的那一份：入场契约是每只基金一份，而板块行只能采用同方向
+        # 最早那笔买入作为基线，其余基金自己的入场理由此前永远用不上。
+        direction_exit = by_fund_code.get(str(row.get("fund_code") or "").strip()) or (
             sector_opportunity.get("direction_exit")
             if isinstance(sector_opportunity, dict)
             else None
@@ -403,6 +468,16 @@ def build_analysis_facts(
             strict=True,
         )
     ]
+    # 方向层预算与外层超时都按"去重后的持仓板块数"伸缩：价格结构是逐板块联网、内部
+    # 4 并发，板块数越多需要的墙钟越长。`progress` 供超时时取用已算完的方向层。
+    held_sector_count = len(
+        {
+            label
+            for holding in holdings
+            if (label := normalize_sector_label(holding.sector_name))
+        }
+    )
+    sector_opportunity_progress: dict[str, Any] = {}
     nav_trends = nav_trends_by_code or {}
     resolved_session = (
         session
@@ -462,6 +537,7 @@ def build_analysis_facts(
                 lambda: build_holding_sector_opportunity_context(
                     holdings,
                     trade_date=effective_trade_date,
+                    progress=sector_opportunity_progress,
                 ),
             )
             enhancement_futures.append(sector_opportunity_future)
@@ -496,8 +572,12 @@ def build_analysis_facts(
             )
             sector_opportunity = _enhancement_result(
                 sector_opportunity_future,
-                timeout_seconds=SECTOR_OPPORTUNITY_TIMEOUT_SECONDS,
-                fallback=_sector_opportunity_unavailable("timeout", holdings),
+                timeout_seconds=sector_opportunity_timeout_seconds(held_sector_count),
+                # 超时不再等于"整层没有"：方向层一算完就写进 progress，这里优先取用它。
+                fallback_factory=lambda: _sector_opportunity_from_progress(
+                    sector_opportunity_progress,
+                    holdings,
+                ),
                 stop_event=stop_event,
             )
             market_breadth = _enhancement_result(
@@ -689,11 +769,25 @@ def build_analysis_facts(
             "basis=absolute 表示该持仓没有对应的发现基金买入事件（多为截图导入），"
             "只能按绝对退出线表述，不得编造入场基线；basis=unavailable 表示趋势分取不到，"
             "此时既不构成卖出理由、也不授权加仓。"
+            "entry_reference_note 非空表示**买入记录存在、但用不上**：该基金买入时记录的方向与"
+            "它现在所属的方向不是同一个（板块分类变过），两个方向的分数不可比，因此按绝对退出线"
+            "判定。这种情况必须照 note 原样说明「当初买的是哪个方向、现在归到哪个方向」，"
+            "不得说成「没有买入记录」，也不得拿旧方向的分数当基线做相对比较。"
+            "invalidation_status 是**买入时写明的失效条件 × 今天的判定**逐条对照："
+            "promised=true 表示这条是当初那笔买入承诺过的，triggered=true 已触发、false 未触发、"
+            "null 表示今天缺数据无法判定（不得当成未触发）。breached_entry_promises 非空时，"
+            "叙述必须点名是哪一条承诺被触发（照 label 写），这是可以直接引用给用户的减仓/停止加仓"
+            "理由；为空时不得暗示「失效条件已出现」。这些 code 复用的是**入场**门槛阈值，"
+            "用作退出触发没有回测支撑，因此最高只到停止加仓，不得据此宣称应当清仓。"
             "注意 direction_exit 里的连续跌破天数门槛与相对回落门槛尚未经过回测验证"
             "（thresholds_validated=false），可作为动作依据但不要宣称它有历史胜率支撑。"
             "sector_direction_maturity.available=false 表示当天没有可复用的主线快照，"
             "此时 entry_state 等字段不存在，**不得**据此认为方向不成立或方向已成熟，"
             "只能按旧版机会分与资金面叙述。"
+            "sector_direction_maturity.complete=false 表示方向层只取到了一部分："
+            "missing_labels 列出的那些持仓板块今天没有 entry_state，它们的方向判断只能按旧版"
+            "机会分表述，且不得给出加仓类动作。必须在 caveats 或对应持仓的校验备注里点名这些"
+            "板块，不能让「方向层可用」掩盖「其中某几个板块其实没有」。"
             "sector_direction_maturity.hysteresis_applied=true 时，entry_state 已套上跨日滞回："
             "此时持仓 sector_opportunity 上的 consecutive_qualifying_days 是该方向连续通过入场线的"
             "交易日数，raw_entry_state 是未平滑的当日原始档位。两者不同（例如 entry_state="
@@ -804,7 +898,16 @@ def build_analysis_facts(
     # M2.1/M2.2：双向 guard 升级判定——须在 market_breadth 就位后才能算，因此放在这里
     # 而不是 per_fund 主循环内（非 budget_enhancements 路径下 market_breadth 变量在
     # 循环执行时尚未赋值，只有 facts["market_breadth"] 在此处才是最终值）。
-    _attach_escalation_to_holdings(per_fund, market_breadth=facts["market_breadth"], profile=profile)
+    _attach_escalation_to_holdings(
+        per_fund,
+        market_breadth=facts["market_breadth"],
+        profile=profile,
+        direction_exit_by_fund_code=(
+            sector_opportunity.get("direction_exit_by_fund_code")
+            if isinstance(sector_opportunity, dict)
+            else None
+        ),
+    )
     facts["allowed_actions"] = build_allowed_actions(per_fund)
     facts["signal_backtest"] = signal_backtest
     facts["sector_rotation"] = {

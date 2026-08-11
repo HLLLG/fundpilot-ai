@@ -532,7 +532,7 @@ def apply_recommendation_guards(
         if execution_blocked:
             copy.points = safe_blocked_points(
                 copy.points,
-                fallback="关键信息还不够完整或不够新，先观察，等数据更新后再判断。",
+                fallback=_blocked_points_fallback(execution_reasons),
             )
             copy.decision_path = "证据时点校验未通过，系统阻断仓位动作并降为观察/风险复核。"
             copy.sector_evidence = [
@@ -633,6 +633,49 @@ def normalize_action_text(action: str) -> str:
     if bucket == ACTION_BUCKET_REDUCE and ("复核" in cleaned or "风控" in cleaned):
         return "风控复核"
     return label
+
+
+#: 阻断原因 → 用户能读懂、且能据此判断"要不要等一会儿再看"的那句话。
+#:
+#: 此前所有阻断共用一句"关键信息还不够完整或不够新"。它落在 `points[0]`，而前端的
+#: 「核心理由」渲染的正是 `points[0]`，于是 6 只持仓的核心理由一字不差——用户既不知道
+#: 缺的是哪一类数据，也无法判断是"等下一轮就好"还是"这只基金真有问题"。
+_BLOCKED_POINT_REASON_TEXT: tuple[tuple[str, str], ...] = (
+    (
+        "stale_portfolio_snapshot",
+        "持仓快照还是上一交易日的，先观察，等快照刷新后再判断。",
+    ),
+    (
+        "non_authoritative_portfolio",
+        "本次用的是请求内的临时持仓、非服务端权威快照，先观察。",
+    ),
+    (
+        "holding_amount_not_point_in_time_usable",
+        "持仓金额未确认为最新，暂不给出金额与仓位比例，先观察。",
+    ),
+    (
+        "directional_evidence_not_point_in_time_usable",
+        "本轮板块方向证据未取到，暂不支持加仓判断；减仓与风险提示不受影响。",
+    ),
+    (
+        "holding_purchase_execution_not_point_in_time_usable",
+        "申购可执行状态未核实，本次不给加仓动作。",
+    ),
+    (
+        "holding_redemption_execution_not_point_in_time_usable",
+        "赎回可执行状态未核实，本次不给减仓动作。",
+    ),
+)
+_BLOCKED_POINT_FALLBACK_DEFAULT = "关键信息还不够完整或不够新，先观察，等数据更新后再判断。"
+
+
+def _blocked_points_fallback(reasons: list[str] | tuple[str, ...]) -> str:
+    """按真实阻断原因给出兜底首句；认不出的原因才退回通用文案。"""
+    codes = {str(reason) for reason in reasons or ()}
+    matched = [text for code, text in _BLOCKED_POINT_REASON_TEXT if code in codes]
+    if not matched:
+        return _BLOCKED_POINT_FALLBACK_DEFAULT
+    return matched[0] if len(matched) == 1 else matched[0] + "（另有其他数据项待确认）"
 
 
 def _execution_direction(action: str) -> str:

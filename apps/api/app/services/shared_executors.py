@@ -92,6 +92,30 @@ def get_shared_io_executor() -> ThreadPoolExecutor:
         return _io_executor
 
 
+#: 一份日报会并发提交的增强项数量（`analysis_facts.build_analysis_facts`：signal_backtest /
+#: guard_policy / intraday / stock_connect_flow / sector_opportunity / market_breadth）。
+#:
+#: 这是上下文池的**下界**，不是建议值。原因是每个增强项都有自己的超时预算，而
+#: `_enhancement_result` 的 deadline 从"开始等待"起算——任务还在队列里排队时，它的预算就已经
+#: 在流失。池子比任务数小意味着后提交的任务用一部分（甚至全部）预算在排队，那些超时数字就
+#: 不再表示"给数据源多少时间"。
+#:
+#: 2026-08-11 14:30 实测到的后果：池子只有 2 个 worker、任务有 6 个，而 `sector_opportunity`
+#: 是第 5 个提交的。更糟的是 `future.cancel()` 对**已在运行**的任务无效，被放弃的超时任务仍然
+#: 占着 worker 跑完自己的预算——两个这样的任务就能让方向层压根没机会启动，外层只能拿到
+#: `held={}`，随后 6 只持仓被数据门禁全部降为观察。
+#:
+#: 池子是**进程级单例**，所以还要留出并发报告的余量：这些线程绝大部分时间阻塞在
+#: `shared_io`（32 workers）上等 provider，线程本身几乎不占资源，宁可宽一点。
+ANALYSIS_ENHANCEMENT_TASK_COUNT = 6
+_ANALYSIS_CONTEXT_CONCURRENT_REPORTS = 2
+
+
+def analysis_context_worker_floor() -> int:
+    """上下文池不得低于「单份日报任务数 × 预期并发报告数」。"""
+    return ANALYSIS_ENHANCEMENT_TASK_COUNT * _ANALYSIS_CONTEXT_CONCURRENT_REPORTS
+
+
 def get_analysis_context_executor() -> ThreadPoolExecutor:
     """Return the bounded analysis context/judge executor."""
 
@@ -99,8 +123,10 @@ def get_analysis_context_executor() -> ThreadPoolExecutor:
     with _lock:
         if _analysis_context_executor is None:
             _analysis_context_executor = InstrumentedThreadPoolExecutor(
+                # 配置只能往上调，不能把池子压到下界之下——压下去等于让各增强项的超时预算
+                # 变成"排队时间 + 数据源时间"的混合物。
                 max_workers=max(
-                    1,
+                    analysis_context_worker_floor(),
                     int(get_settings().sse_analysis_context_workers),
                 ),
                 thread_name_prefix="fund-ai-analysis-context",

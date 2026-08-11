@@ -48,7 +48,8 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 | `candidate_pool[].opportunity_score_20_60d` | 服务端基于未封顶的5/20/60日强度、年化波动和回撤修复生成的排序分；可高于100，不是收益率或概率 |
 | `candidate_pool[].nav_trend` | 净值趋势摘要；判断启动、修复和短期加速须优先参考，不得只看 `sector_heat` |
 | `candidate_pool[].estimated_daily_return_percent` | 候选当日涨跌；须看 `daily_return_source`：`official_nav`=官方净值可作主论据；`sector_estimate`=板块估算，**points 须注明「估算」** |
-| `sector_heat` | 板块热度排行（含 `change_1d_percent`、`heat_score`）；全市场横向对比用 |
+| `candidate_pool[].estimated_daily_return_as_of` | 板块估算的截止时刻（北京时间 `HH:MM`）。盘中扫描给出的估算是那一刻的板块快照而非收盘值，**points 必须一并写出**，格式「（板块估算，截至 HH:MM）」，用户要靠它和基金详情页的板块分时对账 |
+| `sector_heat` | 板块热度排行（含 `change_1d_percent`、`heat_score`、`change_as_of_time` 截止时刻）；全市场横向对比用 |
 | `sector_opportunities[].trend_formation_probability/probability_early_probe_eligible` | **趋势成形信号分**（0～100 的加权合成，未经校准，中性方向即约 56）；达到早期线后仍须具体基金早期修复信号通过，只开放 `first_tranche_scale` 对应的小额试仓。它既不是概率也不是收益承诺，且不决定仓位比例 |
 | `sector_opportunities[].selection_priority_score/selection_path` | 板块最终召回排序依据；提前试仓、资金拐点排在普通等待方向之前，高弹性获得有限排序加分。它不是收益率，也不能单独替代动作条件 |
 | `target_sector_context.sector_fund_flow` | 板块主力净流入；仅 `date_aligned=true` 时可与板块涨跌做背离判断 |
@@ -112,7 +113,9 @@ DISCOVERY_FACTS_INSTRUCTION = (
     "判断入场位置须优先用 fund_entry_signal 与 nav_trend 的20日修复率、离低点反弹、近5日方向和波动率，"
     "不得仅凭 sector_heat 热度或贴近高点下结论；只有结构化 overheat_flags 非空时才能写追高风险。"
     "estimated_daily_return_percent 须结合 daily_return_source："
-    "official_nav 可作主论据；sector_estimate 须在 points 注明「估算」、不得表述为确定涨跌。"
+    "official_nav 可作主论据；sector_estimate 须在 points 注明「估算」、不得表述为确定涨跌，"
+    "且必须带上 estimated_daily_return_as_of 的时刻，写成「（板块估算，截至 HH:MM）」，"
+    "该时刻缺失时写「（板块估算，截止时刻未知）」，禁止自行推断时刻。"
     "引用 sector_fund_flow、stock_connect_flow、signal_backtest、candidate_factor_scores 时须用给定数字及 confidence/factor_reliability，禁止编造。"
     "candidate_factor_scores.execution_qualified_fund_codes 只表示可作为量化加分证据；未覆盖不得伪装成量化支持。opportunity_first 下未覆盖本身不否决买入，risk_first 下仍作为执行白名单。"
     "peer_research 的同类分位逐维展示；applicable=false 的指标必须忽略，available=false 不得补值；execution_tilt_eligible=false 时只可作描述，不得支撑金额倾斜。"

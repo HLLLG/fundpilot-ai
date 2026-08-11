@@ -23,6 +23,7 @@ from app.services.sector_registry import resolve_discovery_quote
 from app.services.sector_quote_cache import (
     get_spot_snapshot,
     get_spot_snapshot_any_age,
+    get_spot_snapshot_revalidated,
     save_spot_snapshot,
 )
 from app.services.theme_board_snapshot import list_theme_board_universe
@@ -45,6 +46,8 @@ _CACHE_PREFIX = "board-flow-hist:v2:"
 _LEGACY_CACHE_PREFIX = "board-flow-hist:v1:"
 _LIVE_TTL_SECONDS = 900.0
 _CLOSED_TTL_SECONDS = 3600.0
+# 只读路径向持久行复验的间隔（单行主键查询，代价可忽略）。
+_MEMORY_REVALIDATE_SECONDS = 30.0
 _INTRADAY_SESSIONS = {
     "trading_day_intraday",
     "trading_day_pre_close",
@@ -165,12 +168,21 @@ def get_cached_board_flow_series(
 
 
 def get_board_flow_series_cache_only(board_code: str) -> list[dict[str, Any]]:
-    """只读板块历史缓存；用于请求链路内的低延迟研究因子。"""
+    """只读板块历史缓存；用于请求链路内的低延迟研究因子。
+
+    走**复验**读而不是 `get_spot_snapshot_any_age`：这个 key 不含交易日，序列最后一行就是
+    "今日进行中"的资金流与收盘价，而 `any_age` 命中进程内存后永不回持久行——没走过
+    `get_cached_board_flow_series` 的 api 进程会把今日那一行钉到收盘，再经
+    `discovery_sector_position` 进入板块位置分位。
+    """
     code = _normalize_board_code(board_code)
     if not code:
         return []
     for prefix in (_CACHE_PREFIX, _LEGACY_CACHE_PREFIX):
-        snapshot = get_spot_snapshot_any_age(f"{prefix}{code}")
+        snapshot = get_spot_snapshot_revalidated(
+            f"{prefix}{code}",
+            memory_ttl_seconds=_MEMORY_REVALIDATE_SECONDS,
+        )
         if snapshot and snapshot.get("series"):
             return list(snapshot.get("series") or [])
     return []

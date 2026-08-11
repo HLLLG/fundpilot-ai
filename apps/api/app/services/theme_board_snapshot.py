@@ -35,7 +35,7 @@ from app.services.sector_quote_identity import (
 )
 from app.services.sector_quote_cache import (
     get_spot_snapshot,
-    get_spot_snapshot_any_age,
+    get_spot_snapshot_revalidated,
     save_spot_snapshot,
     snapshot_refreshed_before_process_boot,
 )
@@ -50,7 +50,16 @@ _CACHE_VERSION = "v7"
 _REFRESH_BUDGET_SECONDS = 30.0
 _KLINE_FALLBACK_BUDGET_SECONDS = 15.0
 _SERIES_TIMEOUT = 8.0
-_MAX_WORKERS = 8
+# 进程内存向持久行复验的间隔。worker 容器写库、api 容器读库，这个窗口决定 api 侧最多
+# 落后 worker 多久；单行主键查询，代价可忽略。
+_MEMORY_REVALIDATE_SECONDS = 30.0
+# 盘中快照超过这个年龄就在 payload 上标 stale。原先只用「是否早于进程启动」判定，
+# 而冻结的快照都是启动之后写的，于是 stale 永远为 false，前端无从察觉。
+_LIVE_STALE_AFTER_SECONDS = 300.0
+_LIVE_SESSION_KINDS = frozenset({"trading_day_intraday", "trading_day_pre_close"})
+# 涨跌幅不再回落 BK 码后，需要走日 K 兜底的指数主题从个位数涨到 ~50 个。墙钟预算保持
+# 15s 不变（冷启动时这段在请求路径上），靠加宽并发把覆盖率补回来。
+_KLINE_FALLBACK_MAX_WORKERS = 16
 
 # 对标小倍养基「今日板块涨幅榜」的粗粒度精选清单；白名单与映射见 sector_registry_data。
 # 东财 m:90 t:2/t:3 含 ~500 细分行业/概念，过碎；此处只取 curated 主题板块。
@@ -281,8 +290,19 @@ def _load_board_maps(board_type: str) -> tuple[dict[str, str], dict[str, float]]
 # 后台刷新：clist 批量 f3+f109+f62，缺失时 K 线/spot 兜底
 # ---------------------------------------------------------------------------
 def _clist_lookup_codes(entry: dict[str, Any], *, prefer_flow: bool) -> list[str]:
-    """按主题解析 clist 代码；涨跌幅优先指数码，资金流优先 BK 码。"""
-    keys = ("flow_source_code", "source_code") if prefer_flow else ("source_code", "flow_source_code")
+    """按主题解析 clist 代码；涨跌幅只认板块自身标的，资金流优先 BK 码。
+
+    资金流可以在 BK 码与指数码之间互相兜底（f62 主力净流入只有 BK 板块有）。涨跌幅
+    不行：``flow_source_code`` 指向的东财 BK 板块与 ``source_code`` 指向的中证指数是
+    两个不同的成分篮子，同一天涨跌幅可以差好几个百分点。
+
+    历史缺陷：``m:2`` clist 只覆盖中证系列 secid，深市/沪市挂牌的中证指数（医疗
+    0.399989、军工 0.399967、新能源 1.000941 等）永远查不到，于是涨跌幅静默回落到
+    BK 码——医疗当日涨跌取的是 BK0727 医疗服务板块，而基金详情页分时走的是 0.399989
+    中证医疗指数，两个数字对不上且没有任何告警。只有 THEME_BOARD_PROVIDER_IDENTITIES
+    里那几个 label 因为强制核身份而免疫。
+    """
+    keys = ("flow_source_code", "source_code") if prefer_flow else ("source_code",)
     codes: list[str] = []
     for key in keys:
         code = str(entry.get(key) or "").strip()
@@ -465,7 +485,7 @@ def _enrich_missing_1d_via_kline(
     if not pending:
         return
     deadline = time.monotonic() + _KLINE_FALLBACK_BUDGET_SECONDS
-    executor = ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(pending)))
+    executor = ThreadPoolExecutor(max_workers=min(_KLINE_FALLBACK_MAX_WORKERS, len(pending)))
 
     def fetch_change(entry: dict[str, Any]) -> float | None:
         verified_spot_change: float | None = None
@@ -496,7 +516,18 @@ def _enrich_missing_1d_via_kline(
                 timeout=_SERIES_TIMEOUT,
             )
         )
-        return kline_change if kline_change is not None else _as_float(verified_spot_change)
+        if kline_change is not None:
+            return kline_change
+        if verified_spot_change is None:
+            # 同标的现货兜底。涨跌幅不再回落 BK 码后，指数主题只剩日 K 一条路；日 K 当日
+            # 行缺失（盘中尚未生成、接口抖动）时宁可多打一次同 secid 的现价涨跌，也不能
+            # 让这一格空着——空着会让候选基金整条 estimated_daily_return_percent 消失。
+            _provider_name, verified_spot_change = fetch_eastmoney_quote_by_secid(
+                entry["secid"],
+                timeout=min(_SERIES_TIMEOUT, 5.0),
+                max_retries=1,
+            )
+        return _as_float(verified_spot_change)
 
     futures = {executor.submit(fetch_change, entry): (item, entry) for item, entry in pending}
     try:
@@ -661,6 +692,27 @@ def build_theme_board_payload(
     }
 
 
+def _snapshot_too_old_for_session(
+    refreshed_at: object,
+    *,
+    session_kind: str,
+) -> bool:
+    """盘中快照是否已经旧到不该再当成"今日实时"用。"""
+    if session_kind not in _LIVE_SESSION_KINDS:
+        return False
+    text = str(refreshed_at or "").strip()
+    if not text:
+        return True
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - parsed).total_seconds()
+    return age > _LIVE_STALE_AFTER_SECONDS
+
+
 def get_theme_board_snapshot_cache_only() -> dict[str, Any] | None:
     """只读主题板块缓存，命中即返回（任意新鲜度），未命中直接返回 None，绝不触发刷新。
 
@@ -673,7 +725,15 @@ def get_theme_board_snapshot_cache_only() -> dict[str, Any] | None:
     session = build_trading_session()
     trade_date = session.get("effective_trade_date")
     cache_key = f"theme:boards:{_CACHE_VERSION}:{trade_date}"
-    return get_spot_snapshot_any_age(cache_key)
+    # 与 `get_theme_board_snapshot` **同一个 key、同一条 worker-only 刷新链路**，所以必须
+    # 同样走复验读：`get_spot_snapshot_any_age` 命中进程内存后直接返回、永不回持久行，
+    # api 容器读到一次当天的 key 就会把那一刻的值供到收盘。这里读出来的当日主力净流入
+    # 会经 `sector_fund_flow_context` 进入决策证据——冻结的后果不是显示旧数字，而是拿旧
+    # 数字做判断，所以这一处比展示路径更不能冻。
+    return get_spot_snapshot_revalidated(
+        cache_key,
+        memory_ttl_seconds=_MEMORY_REVALIDATE_SECONDS,
+    )
 
 
 def get_theme_board_snapshot(
@@ -691,10 +751,19 @@ def get_theme_board_snapshot(
     cached: dict[str, Any] | None = None
     stale = False
     if not force_refresh:
-        # 后台线程负责新鲜度；前台接受任意时段缓存，秒出。
-        cached = get_spot_snapshot_any_age(cache_key)
+        # 后台线程负责新鲜度；前台接受任意时段缓存，秒出。但内存层必须周期性向持久行
+        # 复验：刷新线程只跑在 worker 容器，api 容器读到一次就会把那一刻的值供到收盘。
+        cached = get_spot_snapshot_revalidated(
+            cache_key,
+            memory_ttl_seconds=_MEMORY_REVALIDATE_SECONDS,
+        )
         if cached is not None:
-            stale = snapshot_refreshed_before_process_boot(cached.get("refreshed_at"))
+            stale = snapshot_refreshed_before_process_boot(
+                cached.get("refreshed_at")
+            ) or _snapshot_too_old_for_session(
+                cached.get("refreshed_at"),
+                session_kind=session_kind,
+            )
 
     if cached is None or force_refresh:
         cached = refresh_theme_board_snapshot(trade_date=trade_date)

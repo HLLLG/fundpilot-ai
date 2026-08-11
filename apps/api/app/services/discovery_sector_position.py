@@ -10,11 +10,11 @@ BenchmarkFetchFn = Callable[[], dict | None]
 
 _BENCHMARK_CODE = "000300"
 _BENCHMARK_NAME = "沪深300"
-_HK_INDEX_BY_SECTOR = {
-    "\u6052\u751f\u79d1\u6280": "HSTECH",
-    "\u6e2f\u80a1": "HSI",
-    "\u6e2f\u80a1\u901a": "HSI",
-}
+#: 走恒生系列指数报价的板块。**单一来源**在 `sector_registry_data`，与
+#: `sector_direction_backtest` 共用同一份。
+from app.services.sector_registry_data import (  # noqa: E402
+    HK_INDEX_SYMBOL_BY_SECTOR as _HK_INDEX_BY_SECTOR,
+)
 
 # 港股类板块的对标基准。此前所有板块（含港股）一律对标沪深300，于是「港股近20日超额」
 # 实际是「恒生指数(港币) − 沪深300(人民币)」，还要靠日期交集拼两套不同的交易日历——

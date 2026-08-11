@@ -100,6 +100,12 @@ _NO_EXIT: dict[str, Any] = {
     "reasons": [],
     "triggers": [],
     "entry_reference": None,
+    #: 拿到了买入记录、但因为板块分类漂移而无法用作相对基线时的披露文案。
+    "entry_reference_note": None,
+    #: 买入时承诺的失效条件 × 今天的判定，逐条对照。
+    "invalidation_status": [],
+    #: 其中"当初承诺过、今天确实触发"的 code；非空即可直接引用买入承诺作为减仓理由。
+    "breached_entry_promises": [],
     "thresholds_validated": False,
 }
 
@@ -113,6 +119,7 @@ def assess_direction_exit(
     trend_history: Sequence[tuple[str, float]] = (),
     entry_contract: Mapping[str, Any] | None = None,
     has_unrealized_gain: bool = False,
+    invalidation_checks: object = None,
     persistent_breakdown_days: int = PERSISTENT_BREAKDOWN_DAYS,
     relative_decay_points: float = RELATIVE_TREND_DECAY_POINTS,
 ) -> dict[str, Any]:
@@ -120,6 +127,11 @@ def assess_direction_exit(
 
     ``trend_history`` 是**不含今日**的历史趋势分，按交易日**从近到远**排列
     ``[(trade_date, trend), ...]``；缺失时只能看到今日，连续天数最多算到 1。
+
+    ``invalidation_checks`` 是当前方向行的 `invalidation_checks`（见
+    `sector_opportunity_scoring._invalidation_checks_v3`）。它与入场契约里冻结的
+    ``promised_invalidation`` 对照后写入 ``invalidation_status``：这是"买入卡片上写的失效
+    条件"第一次真的被逐日核对，而不是停在展示文案。
     """
     label = str(sector_label or "").strip()
     result: dict[str, Any] = {
@@ -129,9 +141,31 @@ def assess_direction_exit(
         "persistent_breakdown_days": persistent_breakdown_days,
     }
 
-    entry_reference = _normalize_entry_contract(entry_contract, sector_label=label)
+    entry_reference, entry_reference_note = _resolve_entry_reference(
+        entry_contract,
+        sector_label=label,
+    )
     result["entry_reference"] = entry_reference
+    # 拿到了买入记录但用不上时必须说清原因（板块分类漂移），否则用户以为系统压根没这笔账。
+    result["entry_reference_note"] = entry_reference_note
     relative = entry_reference is not None and entry_reference.get("entry_trend") is not None
+
+    # 逐日核对买入时承诺的失效条件。分类漂移时 `entry_reference` 为 None，但承诺仍然属于
+    # 那笔买入，照样要核对——所以这里从原始契约取，不依赖 `entry_reference`。
+    invalidation_status, breached = _resolve_invalidation_status(
+        promised=(entry_contract or {}).get("promised_invalidation")
+        if isinstance(entry_contract, Mapping)
+        else None,
+        today_checks=invalidation_checks,
+    )
+    result["invalidation_status"] = invalidation_status
+    result["breached_entry_promises"] = [row["code"] for row in breached]
+    breach_reason = (
+        "买入时写明的失效条件已触发："
+        + "；".join(row["label"] or row["code"] for row in breached[:2])
+        if breached
+        else None
+    )
 
     trend = _num(trend_strength)
     if trend is None:
@@ -181,6 +215,7 @@ def assess_direction_exit(
                     base_reason,
                     f"且趋势强度已连续 {consecutive} 个交易日低于退出线 "
                     f"{exit_trend_threshold:g}，方向失效已被时间确认",
+                    *([breach_reason] if breach_reason else []),
                 ],
                 triggers=["趋势与资金参与度同时回到横截面中位以上，方向才重新具备参与资格"],
             )
@@ -189,7 +224,7 @@ def assess_direction_exit(
             exit_state=EXIT_STATE_DEEP_REDUCE,
             min_bucket=ACTION_BUCKET_DEEP_REDUCE,
             percent=-50.0,
-            reasons=[base_reason],
+            reasons=[base_reason, *([breach_reason] if breach_reason else [])],
             triggers=[
                 "趋势与资金参与度同时回到横截面中位以上，方向才重新具备参与资格",
                 f"若连续 {persistent_days} 个交易日仍在退出线下则升级为清仓评估",
@@ -210,7 +245,8 @@ def assess_direction_exit(
                         f"低于退出线 {exit_trend_threshold:g}，属持续走坏而非单日插针",
                         entry_reference,
                         trend,
-                    )
+                    ),
+                    *([breach_reason] if breach_reason else []),
                 ],
                 triggers=[
                     f"趋势强度回到退出线 {exit_trend_threshold:g} 以上并保持",
@@ -228,6 +264,8 @@ def assess_direction_exit(
         ]
         if has_unrealized_gain:
             reasons.append("当前持仓浮盈，落袋压力更小，建议提高减仓比例")
+        if breach_reason:
+            reasons.append(breach_reason)
         return _finalize(
             result,
             exit_state=EXIT_STATE_REDUCE,
@@ -240,7 +278,36 @@ def assess_direction_exit(
             ],
         )
 
-    # 三、趋势仍在线上但相对入场明显回落：只禁止加仓，不要求卖出。
+    # 三、买入时承诺的失效条件已触发，但趋势还没跌破退出线。
+    #
+    # 上面两档覆盖的是"趋势跌破退出线"和"方向作废"，而承诺里还有主线退潮、早期试仓的信号分
+    # 跌破试仓线这类条件——它们可以在趋势分仍然体面时先触发。既然买入卡片上写着"出现这些
+    # 情况就该退"，最低限度是**不再加仓**：这是用户当初同意的条件，不是新造的规则。
+    #
+    # 刻意只到 pause_add，不直接减仓：这些 code 复用的阈值原本是**入场**门槛，用作退出触发
+    # 没有回测支撑（`thresholds_validated=False` 已如实披露），把它顶到减仓等于用未标定的
+    # 阈值处置真实仓位。
+    if breach_reason:
+        return _finalize(
+            result,
+            exit_state=EXIT_STATE_PAUSE_ADD,
+            min_bucket=ACTION_BUCKET_PAUSE,
+            percent=None,
+            reasons=[
+                _with_entry_context(
+                    f"{breach_reason}；方向「{label}」趋势强度 {trend:.1f} 尚在退出线 "
+                    f"{exit_trend_threshold:g} 上方，因此维持持有、本轮不再加仓",
+                    entry_reference,
+                    trend,
+                )
+            ],
+            triggers=[
+                "已触发的失效条件重新解除后才恢复加仓资格",
+                f"若趋势强度继续跌破退出线 {exit_trend_threshold:g} 则转为减仓",
+            ],
+        )
+
+    # 四、趋势仍在线上但相对入场明显回落：只禁止加仓，不要求卖出。
     if relative:
         entry_trend = float(entry_reference["entry_trend"])
         decay = entry_trend - trend
@@ -262,7 +329,7 @@ def assess_direction_exit(
                 ],
             )
 
-    # 四、趋势仍在线上。加仓额外要求方向**当前仍通过入场线**——原来的加仓阶梯只看
+    # 五、趋势仍在线上。加仓额外要求方向**当前仍通过入场线**——原来的加仓阶梯只看
     # `research_score`（"今天这个方向多强"），不问"我买它的理由还在不在"，于是一个趋势
     # 正在从 43 掉到 38 的方向照样能拿到加仓比例。这里把它按住：不要求卖出，但不给加。
     if str(entry_state or "") == ENTRY_READY_TO_START:
@@ -348,6 +415,34 @@ def _consecutive_days_below(
     return count
 
 
+def _resolve_entry_reference(
+    entry_contract: Mapping[str, Any] | None,
+    *,
+    sector_label: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """返回 `(可用于相对比较的入场基线, 不可用时的披露文案)`。
+
+    板块分类会随时间变化：015788 在 2026-08-06 被买入时荐基记录的方向是「信创」，现在这只
+    基金归到「数字经济」。拿信创的入场趋势分去比数字经济的当前趋势分是两个成分篮子的分数
+    对比，会给出一个**错误的**基线——比没有基线更危险，所以这里仍然拒绝相对模式。
+
+    但此前是**静默**拒绝：`entry_reference` 直接为 null，用户只看到"趋势 73.3 仍在退出线
+    上方"，完全不知道系统其实握着那笔买入记录、只是因为分类漂移而没用上。现在把原因作为
+    文案返回，由调用方披露。
+    """
+    if not isinstance(entry_contract, Mapping):
+        return None, None
+    contract_label = str(entry_contract.get("sector_label") or "").strip()
+    if contract_label and sector_label and contract_label != sector_label:
+        entry_date = str(entry_contract.get("entry_date") or "").strip()
+        when = f"{entry_date} " if entry_date else ""
+        return None, (
+            f"{when}买入时记录的方向是「{contract_label}」，该基金现已归入「{sector_label}」；"
+            "两者成分不同，不能用当初的方向分做相对比较，本次按绝对退出线判定"
+        )
+    return _normalize_entry_contract(entry_contract, sector_label=sector_label), None
+
+
 def _normalize_entry_contract(
     entry_contract: Mapping[str, Any] | None,
     *,
@@ -371,6 +466,68 @@ def _normalize_entry_contract(
         "thesis_event_id": str(entry_contract.get("thesis_event_id") or "").strip() or None,
     }
     return normalized
+
+
+def _resolve_invalidation_status(
+    *,
+    promised: object,
+    today_checks: object,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """把"买入时承诺的失效条件"与"今天的判定"对起来。
+
+    返回 `(status, breached)`：`status` 是逐条对照（含未承诺但今天已触发的条件，标
+    `promised=False`），`breached` 只含**当初承诺过、且今天确实触发**的那些——那是可以直接
+    引用买入承诺的减仓理由。
+
+    `triggered=None` 表示今天缺数据无法判定，既不算触发也不算解除。
+    """
+    promised_labels: dict[str, str] = {}
+    if isinstance(promised, Sequence) and not isinstance(promised, (str, bytes)):
+        for item in promised:
+            if not isinstance(item, Mapping):
+                continue
+            code = str(item.get("code") or "").strip()
+            if code:
+                promised_labels[code] = str(item.get("label") or "").strip()
+
+    status: list[dict[str, Any]] = []
+    breached: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    if isinstance(today_checks, Sequence) and not isinstance(today_checks, (str, bytes)):
+        for check in today_checks:
+            if not isinstance(check, Mapping):
+                continue
+            code = str(check.get("code") or "").strip()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            triggered = check.get("triggered")
+            triggered = None if triggered is None else bool(triggered)
+            row = {
+                "code": code,
+                "label": promised_labels.get(code) or str(check.get("label") or "").strip(),
+                "promised": code in promised_labels,
+                "triggered": triggered,
+                "detail": str(check.get("detail") or "").strip() or None,
+            }
+            status.append(row)
+            if row["promised"] and triggered:
+                breached.append(row)
+
+    # 承诺过、但今天这一行压根没有对应判定（策略变了 / 档位不同）：如实标为无法判定。
+    for code, label in promised_labels.items():
+        if code in seen:
+            continue
+        status.append(
+            {
+                "code": code,
+                "label": label,
+                "promised": True,
+                "triggered": None,
+                "detail": "当前方向档位不再产出该条判定，无法逐日核对",
+            }
+        )
+    return status, breached
 
 
 # --------------------------------------------------------------------------
@@ -509,7 +666,43 @@ def _entry_contract_from_event(event: Mapping[str, Any]) -> dict[str, Any] | Non
         "entry_position_risk": (scores or {}).get("position"),
         "entry_tranche_scale": _num(recommendation.get("entry_tranche_scale")),
         "thesis_event_id": str(event.get("event_id") or "").strip() or None,
+        # 买入当时**承诺**的失效条件（结构化 code）。它是"当初说好什么情况下这笔就错了"的
+        # 唯一凭证：策略参数以后会变，但已经发生的那笔买入必须按当时的承诺复核。
+        "promised_invalidation": _promised_invalidation_from_snapshot(
+            payload,
+            sector_label,
+        ),
     }
+
+
+def _promised_invalidation_from_snapshot(
+    payload: Mapping[str, Any],
+    sector_label: str,
+) -> list[dict[str, Any]]:
+    """从冻结快照里取出买入时那一行的 `invalidation_checks`（只留 code 与文案）。"""
+    replay = payload.get("replay_bundle")
+    facts = (replay or {}).get("facts_snapshot") if isinstance(replay, Mapping) else None
+    rows = (facts or {}).get("sector_opportunities") if isinstance(facts, Mapping) else None
+    if not isinstance(rows, Sequence):
+        return []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        if str(row.get("sector_label") or "").strip() != sector_label:
+            continue
+        checks = row.get("invalidation_checks")
+        if not isinstance(checks, Sequence):
+            return []
+        promised: list[dict[str, Any]] = []
+        for check in checks:
+            if not isinstance(check, Mapping):
+                continue
+            code = str(check.get("code") or "").strip()
+            if not code:
+                continue
+            promised.append({"code": code, "label": str(check.get("label") or "").strip()})
+        return promised
+    return []
 
 
 def _entry_scores_from_snapshot(

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import logging
+import math
 import time
 from typing import Any
 
@@ -29,9 +30,27 @@ logger = logging.getLogger(__name__)
 
 SECTOR_FLOW_BUDGET_SECONDS = 4.0
 SECTOR_DIVERGENCE_BUDGET_SECONDS = 4.0
-# 主线 regime 只对"用户持有的那几个板块"联网取日线序列，实测 4 个板块 2.22 s；
-# 分位分母走零网络缓存（78 个白名单板块 0.18 s），快照构建本身 0.012 s。
-SECTOR_POSITION_BUDGET_SECONDS = 8.0
+#: 价格结构是**逐板块**联网取日线。`build_sector_position_map_for_opportunities` 的默认
+#: `max_workers=4` 隐含了"持仓板块数 ≤ 4"这个前提：超过 4 个就要跑两波，而预算固定 8 s 一分
+#: 没多。这里把并发开到板块数（`_fetch_sector_position_map` 传 max_workers），让持仓这一小批
+#: 一波跑完，墙钟不再随板块数线性增长；再叠一轮缺口补齐，因为缺一个板块就等于那只基金当天
+#: 没有 `entry_state`。
+#:
+#: **不要把这段当成 2026-08-11 14:30 超时的修复。** 线上实测这一段其实很便宜：6 个板块冷缓存
+#: 2.50 s、热缓存 0.13 s，而且全部走 `eastmoney_board_fund_flow_daily_close` 这条零网络的缓存
+#: 路径，6/6 命中。那次超时的真实原因在上下文线程池——`sse_analysis_context_workers=2` 而单份
+#: 日报提交 6 个增强项，`sector_opportunity` 排在第 5 位，排队就把它的预算耗掉了
+#: （见 `shared_executors.ANALYSIS_ENHANCEMENT_TASK_COUNT`）。本段的价值是**完整性**，不是延迟。
+#:
+#: 并发上限存在的意义只是防止持仓极度分散时同时打出几十个请求（逐板块会走 akshare 子进程
+#: 与成分股代理，不是廉价调用）。超过上限才需要多跑一波，预算也才随之增加。
+_SECTOR_POSITION_MAX_WORKERS = 8
+#: 一波的墙钟预算。单板块实测约 2.2 s，8 s 是 3.6 倍余量。
+_SECTOR_POSITION_WAVE_SECONDS = 8.0
+#: 缺口补齐轮的额外预算：只对首轮没拿到的板块再跑一次，命中率优先于速度。
+_SECTOR_POSITION_RETRY_SECONDS = 8.0
+#: 未提供持仓板块数时按这个数推导默认预算，保持与历史常量完全一致（max(4,4,8+8-8)…见下）。
+_DEFAULT_HELD_SECTOR_COUNT = 4
 #: 分位分母走零网络缓存，实测 78 个白名单板块 0.18 s。原值 4.0 是 22 倍余量，而它直接
 #: 计入总预算上限，等于让最坏墙钟为一个纯内存步骤多留 4 s。收到 2.0（11 倍余量）以压低
 #: 总上限；真超了也只是分位分母退回持仓板块，不影响 regime 本身。
@@ -39,26 +58,45 @@ PERCENTILE_UNIVERSE_BUDGET_SECONDS = 2.0
 #: 打分、去重与快照构建都是纯内存运算（实测 0.012 s）；留 1 s 覆盖线程调度与 GC 抖动。
 _SCORING_MARGIN_SECONDS = 1.0
 
-#: 本函数最坏情况下的总墙钟：资金流 / 背离 / 价格结构三段并发（取最大值），分位分母
-#: 与打分在其后串行。
-#:
-#: **这个常量是给调用方的契约**——`analysis_facts` 的外层预算直接取它，两边因此不可能
-#: 再漂移。历史缺陷是外层写死 5 s 而内层最坏 12 s+：网络稍慢就把已经跑到一半的方向证据
-#: 整体丢掉，`held` 退化成 `{}`，日报当天彻底没有板块方向层。而且 `future.cancel()` 对
-#: 已运行任务无效，被放弃的请求仍会跑完自己的预算，只是结果没人要——裁掉的是"等待"，
-#: 不是"开销"，纯亏。
-#:
-#: 快乐路径不受影响（实测全链路约 3.6 s，`_enhancement_result` 一就绪就返回）；抬高的
-#: 只是慢路径的上限，换来的是慢路径不再静默丢掉整层证据。
-SECTOR_OPPORTUNITY_TOTAL_BUDGET_SECONDS = (
-    max(
-        SECTOR_FLOW_BUDGET_SECONDS,
-        SECTOR_DIVERGENCE_BUDGET_SECONDS,
-        SECTOR_POSITION_BUDGET_SECONDS,
+def sector_position_budget_seconds(held_sector_count: int | None = None) -> float:
+    """价格结构预算：一波跑完 + 一轮缺口补齐。
+
+    波数按**并发上限**算（不是默认的 4）：`_fetch_sector_position_map` 会把并发开到板块数，
+    所以 8 个以内的持仓一波就能跑完。再叠一轮补齐预算——持仓方向层缺一个板块，那只基金当天
+    就没有 `entry_state`，宁可多等 8 s 也要把缺口补上。
+    """
+    count = _DEFAULT_HELD_SECTOR_COUNT if held_sector_count is None else int(held_sector_count)
+    waves = max(1, math.ceil(max(0, count) / _SECTOR_POSITION_MAX_WORKERS))
+    return _SECTOR_POSITION_WAVE_SECONDS * waves + _SECTOR_POSITION_RETRY_SECONDS
+
+
+def sector_opportunity_total_budget_seconds(held_sector_count: int | None = None) -> float:
+    """本函数最坏情况下的总墙钟：三段并发取最大值，分位分母与打分在其后串行。
+
+    **这是给调用方的契约**——`analysis_facts` 的外层超时直接从它派生，两边因此不可能
+    再漂移。历史缺陷是外层写死 5 s 而内层最坏 12 s+：网络稍慢就把已经跑到一半的方向证据
+    整体丢掉，`held` 退化成 `{}`，日报当天彻底没有板块方向层。而且 `future.cancel()` 对
+    已运行任务无效，被放弃的请求仍会跑完自己的预算，只是结果没人要——裁掉的是"等待"，
+    不是"开销"，纯亏。
+
+    快乐路径不受影响（实测全链路约 3.6 s，`_enhancement_result` 一就绪就返回）；随板块数
+    抬高的只是慢路径的上限。即便真的超了，`progress` 里已经装好的 `held` 也会被外层取用
+    （见 `build_holding_sector_opportunity_context` 的 `progress` 参数），不再整层丢弃。
+    """
+    return (
+        max(
+            SECTOR_FLOW_BUDGET_SECONDS,
+            SECTOR_DIVERGENCE_BUDGET_SECONDS,
+            sector_position_budget_seconds(held_sector_count),
+        )
+        + PERCENTILE_UNIVERSE_BUDGET_SECONDS
+        + _SCORING_MARGIN_SECONDS
     )
-    + PERCENTILE_UNIVERSE_BUDGET_SECONDS
-    + _SCORING_MARGIN_SECONDS
-)
+
+
+#: 兼容既有导入：等于 `sector_opportunity_total_budget_seconds()` 的默认值（11 s）。
+SECTOR_POSITION_BUDGET_SECONDS = sector_position_budget_seconds()
+SECTOR_OPPORTUNITY_TOTAL_BUDGET_SECONDS = sector_opportunity_total_budget_seconds()
 MARKET_TOP_LIMIT = 5
 MARKET_TOP_CANDIDATE_LIMIT = 8
 
@@ -151,8 +189,13 @@ def _build_holding_mainline(
         return {}, {"available": False, "reason": "mainline_snapshot_build_error"}
 
     by_label = mainline_regime_by_label(snapshot)
+    # 哪些持仓板块今天没拿到 regime 行 —— 它们不会有 `entry_state`，方向层退化成旧版机会分，
+    # 退出判定也一起失效。这必须显式可见，否则"方向层可用"会掩盖"其中两个板块其实没有"。
+    missing_labels = [label for label in held_labels if label not in by_label]
     return by_label, {
         "available": bool(by_label),
+        "complete": not missing_labels,
+        "missing_labels": missing_labels,
         "source": "report_computed",
         "trade_date": snapshot.get("effective_trade_date") or trade_date,
         "schema_version": snapshot.get("schema_version"),
@@ -310,6 +353,7 @@ def build_holding_sector_opportunity_context(
     mainline_by_label: dict[str, dict] | None = None,
     mainline_meta: dict[str, Any] | None = None,
     total_budget_seconds: float | None = None,
+    progress: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """返回 `{available, held: {sector_label: opportunity_row}, market_top: [opportunity_row]}`。
 
@@ -318,13 +362,27 @@ def build_holding_sector_opportunity_context(
     用于日报叙述「相对更强的方向是哪些」（板块轮动参考）。
 
     `total_budget_seconds` 是本函数的**总墙钟上限**，各阶段预算从它派生（见
-    `_StageBudget`）。默认 `SECTOR_OPPORTUNITY_TOTAL_BUDGET_SECONDS`，调用方应直接复用
-    该常量作为自己的外层超时，不要另写一个数字。
+    `_StageBudget`）。默认按持仓板块数推导（`sector_opportunity_total_budget_seconds`），
+    调用方应直接复用同一个函数作为自己的外层超时，不要另写一个数字。
+
+    `progress` 是调用方传入的可变字典，本函数会在**持仓方向层一算完就立刻写进去**
+    （`progress["held"]`），供外层在自己的 deadline 到点时取用已完成的部分。这修的是一个
+    真实的全损：轮动参考与分位分母排在方向层之后，它们慢一点就会让外层判超时，而外层的
+    fallback 是 `held={}`——已经算好的持仓方向证据被连带丢掉，日报当天彻底没有方向层，
+    随后 6 只持仓被数据门禁全部降为观察（2026-08-11 14:30 实测）。
     """
+    tracker = progress if isinstance(progress, dict) else {}
+    tracker["started_at"] = time.monotonic()
     budget = _StageBudget(
         total_budget_seconds
         if total_budget_seconds is not None
-        else SECTOR_OPPORTUNITY_TOTAL_BUDGET_SECONDS
+        else sector_opportunity_total_budget_seconds(
+            len(
+                _unique_labels(
+                    normalize_sector_label(holding.sector_name) for holding in holdings
+                )
+            )
+        )
     )
     held_labels = _unique_labels(
         normalize_sector_label(holding.sector_name) for holding in holdings
@@ -398,7 +456,11 @@ def build_holding_sector_opportunity_context(
             held_labels,
             trade_date,
             fetch_sector_position,
-            budget_seconds=budget.stage(SECTOR_POSITION_BUDGET_SECONDS),
+            # 逐板块联网、内部 4 并发：预算必须随板块数伸缩，否则 6 个板块跑两波却只给
+            # 一波的时间，第二波必然被砍掉（进而 `position_by_label` 不全甚至为空）。
+            budget_seconds=budget.stage(
+                sector_position_budget_seconds(len(held_labels))
+            ),
         )
         try:
             loaded_flow_by_label = flow_future.result()
@@ -482,7 +544,19 @@ def build_holding_sector_opportunity_context(
         for row in held_rows
         if str(row.get("sector_label") or "")
     }
-    _attach_direction_exit(held, holdings=holdings, trade_date=trade_date)
+    direction_exit_by_fund_code = _attach_direction_exit(
+        held,
+        holdings=holdings,
+        trade_date=trade_date,
+    )
+
+    # 方向层到这里已经完备（含滞回与退出判定）。立刻交给调用方：后面的轮动参考与分位
+    # 分母都是"锦上添花"，不该因为它们慢就让已经算好的持仓方向证据一起被外层丢掉。
+    tracker["held"] = dict(held)
+    tracker["direction_exit_by_fund_code"] = dict(direction_exit_by_fund_code)
+    tracker["sector_flow_by_label"] = dict(flow_by_label)
+    tracker["divergence_backtest"] = dict(divergence_by_label)
+    tracker["heat_available"] = bool(heat_by_label)
 
     # 轮动参考：拆成「打分 → 滞回 → 选择」，与荐基 `_score_select_and_persist_directions`
     # 同一顺序。此前这里用的是复合入口 `select_sector_opportunities`（内部打分即选择），
@@ -537,6 +611,9 @@ def build_holding_sector_opportunity_context(
         # M1 数据契约（design 第7节）：analysis_facts.holdings[].flow_divergence_backtest
         # 由 analysis_facts.py 从这里按持仓板块 label 反查，避免重复计算同一份回测。
         "divergence_backtest": divergence_by_label,
+        # 逐基金的退出判定（只含拿到自己入场契约的那些）。板块行只能采用同方向最早那笔
+        # 买入作为基线，这里让每只基金用回自己的那笔。
+        "direction_exit_by_fund_code": direction_exit_by_fund_code,
         # 主线复用的可用性必须显式披露：`entry_state` 在快照缺席时压根不会出现，
         # 下游（prompt / guard / 前端）需要能区分"方向尚未成熟"与"今天没有主线快照"。
         "mainline": resolved_mainline_meta,
@@ -551,16 +628,21 @@ def _attach_direction_exit(
     *,
     holdings: list[Holding],
     trade_date: str | None,
-) -> None:
+) -> dict[str, dict]:
     """给每个持仓方向挂上退出判定（key: `direction_exit`），原地修改。
 
     只在**已持有**的方向上算：退出是持仓语义，轮动参考里那些没买的方向不需要它（也是
     职责边界——发现基金负责能不能进，日报负责已持仓的加/减/退）。
 
+    另外返回**按基金代码**的退出判定。`direction_exit` 挂在板块行上，而入场契约是**每只
+    基金**一份：同一方向持有多只基金时，板块行只能采用其中一笔（按最早买入），其余基金
+    自己的入场基线就永远用不上。返回值让 `analysis_facts` 给每个持仓行挂上属于它自己的
+    那一份——guard 早就在读 `facts_row["direction_exit"]` 了，此前那里只是板块行的副本。
+
     整段 best-effort：退出判定是新增的增强项，任何一步失败都不能让日报生成不出来。
     """
     if not held:
-        return
+        return {}
     try:
         from app.services.sector_direction_exit import (
             assess_direction_exit,
@@ -581,14 +663,26 @@ def _attach_direction_exit(
             labels,
             before_trade_date=history_cutoff,
         )
-        # 入场契约按「基金 → 方向」取：同一方向可能对应多只基金，取最早那笔买入作为
-        # 该方向的基线（先买的那笔才是"当初为什么进这个方向"）。
         contracts_by_code = load_direction_entry_contracts(
             [holding.fund_code for holding in holdings],
         )
+        # 板块行的基线：同一方向可能对应多只基金，取最早那笔买入（先买的那笔才是"当初
+        # 为什么进这个方向"）。这里按**基金当前所属板块**归并，而不是按契约里记录的板块
+        # 名——015788 买入时记作「信创」、现在归到「数字经济」，用历史 label 当 key 会让
+        # 契约压根进不了 `held` 的索引，`entry_reference` 直接为 null 且没有任何解释。
+        # 归并后 `assess_direction_exit` 仍会因分类漂移拒绝相对模式（拿两个篮子的分数对比
+        # 会给出错误基线），但会把原因作为 `entry_reference_note` 披露出来。
+        current_label_by_code: dict[str, str] = {}
+        for holding in holdings:
+            label = normalize_sector_label(holding.sector_name)
+            if label:
+                current_label_by_code[str(holding.fund_code or "").strip()] = label
+
         contract_by_label: dict[str, dict] = {}
-        for contract in contracts_by_code.values():
-            label = str(contract.get("sector_label") or "").strip()
+        for code, contract in contracts_by_code.items():
+            label = current_label_by_code.get(str(code or "").strip()) or str(
+                contract.get("sector_label") or ""
+            ).strip()
             if not label:
                 continue
             existing = contract_by_label.get(label)
@@ -598,11 +692,14 @@ def _attach_direction_exit(
                 contract_by_label[label] = contract
 
         gain_by_label: dict[str, bool] = {}
+        gain_by_code: dict[str, bool] = {}
         for holding in holdings:
+            in_gain = (holding.holding_profit or 0) > 0
+            gain_by_code[str(holding.fund_code or "").strip()] = in_gain
             label = normalize_sector_label(holding.sector_name)
             if not label:
                 continue
-            if (holding.holding_profit or 0) > 0:
+            if in_gain:
                 gain_by_label[label] = True
 
         for label, row in held.items():
@@ -614,9 +711,36 @@ def _attach_direction_exit(
                 trend_history=history_by_label.get(label, []),
                 entry_contract=contract_by_label.get(label),
                 has_unrealized_gain=gain_by_label.get(label, False),
+                # 今天这一行的失效条件判定，用来和买入时冻结的承诺逐条对照。
+                invalidation_checks=row.get("invalidation_checks"),
             )
+
+        # 逐基金：用**这只基金自己**的入场契约，对着它当前板块的方向行判一次。
+        by_fund_code: dict[str, dict] = {}
+        for holding in holdings:
+            code = str(holding.fund_code or "").strip()
+            label = current_label_by_code.get(code)
+            row = held.get(label) if label else None
+            if not code or row is None:
+                continue
+            contract = contracts_by_code.get(code)
+            if contract is None:
+                # 没有自己的契约时不必单独算：板块行那份已经是它能得到的最好判定。
+                continue
+            by_fund_code[code] = assess_direction_exit(
+                sector_label=label,
+                entry_state=row.get("entry_state"),
+                trend_strength=row.get("trend_strength_score"),
+                exit_trend_threshold=EXIT_TREND_THRESHOLD,
+                trend_history=history_by_label.get(label, []),
+                entry_contract=contract,
+                has_unrealized_gain=gain_by_code.get(code, False),
+                invalidation_checks=row.get("invalidation_checks"),
+            )
+        return by_fund_code
     except Exception:  # noqa: BLE001 — 绝不阻塞日报
         logger.warning("方向退出判定失败，本次跳过", exc_info=True)
+        return {}
 
 
 def _resolve_previous_trade_date(trade_date: str | None) -> str | None:
@@ -637,26 +761,66 @@ def _fetch_sector_position_map(
     *,
     budget_seconds: float = SECTOR_POSITION_BUDGET_SECONDS,
 ) -> dict[str, dict]:
-    """持仓板块的 20 日价格结构与相对强度（联网，逐板块用各自正确基准）。"""
+    """持仓板块的 20 日价格结构与相对强度（联网，逐板块用各自正确基准）。
+
+    **持仓板块必须尽量取全**：缺一个板块就等于那只基金当天没有 `entry_state`，方向层退化成
+    旧版机会分，退出判定也一起失效（`_build_holding_mainline` 只为拿到 position 的 label 出
+    regime 行）。所以这里做两件事：
+
+    1. 并发开到板块数，让持仓这一小批（通常 3～8 个）**一波跑完**，而不是 4 个一波；
+    2. 首轮有缺口时，用剩余预算只对缺失的板块补一次——单个板块的瞬时失败不该让它一整天
+       没有方向层。
+
+    仍然以 `budget_seconds` 为硬停：数据源真挂了的时候，"无限等准确"不是准确，是把日报也
+    一起拖死。取不全时如实缺席，由上层披露。
+    """
     if not held_labels or budget_seconds <= 0:
         return {}
-    try:
-        if fetch_sector_position is not None:
+    if fetch_sector_position is not None:
+        try:
             return fetch_sector_position(held_labels, trade_date) or {}
-        from app.services.discovery_sector_position import (
-            build_sector_position_map_for_opportunities,
-        )
+        except Exception:  # noqa: BLE001 - best-effort，绝不阻塞日报
+            return {}
 
-        return (
-            build_sector_position_map_for_opportunities(
-                held_labels,
-                as_of_trade_date=trade_date,
-                total_timeout_seconds=budget_seconds,
+    from app.services.discovery_sector_position import (
+        build_sector_position_map_for_opportunities,
+    )
+
+    deadline = time.monotonic() + max(0.0, float(budget_seconds))
+    resolved: dict[str, dict] = {}
+    pending = list(held_labels)
+    # 首轮 + 一次补齐。补齐次数刻意有上限：数据源持续失败时重试只是把同一个错误多犯几次。
+    for attempt in range(2):
+        if not pending:
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            batch = (
+                build_sector_position_map_for_opportunities(
+                    pending,
+                    as_of_trade_date=trade_date,
+                    total_timeout_seconds=remaining,
+                    max_workers=max(1, min(len(pending), _SECTOR_POSITION_MAX_WORKERS)),
+                )
+                or {}
             )
-            or {}
+        except Exception:  # noqa: BLE001 - best-effort，绝不阻塞日报
+            break
+        resolved.update(
+            {label: row for label, row in batch.items() if isinstance(row, dict) and row}
         )
-    except Exception:  # noqa: BLE001 - best-effort，绝不阻塞日报
-        return {}
+        pending = [label for label in pending if label not in resolved]
+        if pending and attempt == 0:
+            logger.info(
+                "持仓板块价格结构首轮缺口 %s，用剩余预算补一次", ",".join(pending)
+            )
+    if pending:
+        logger.warning(
+            "持仓板块价格结构最终缺口 %s：这些方向今日没有 entry_state", ",".join(pending)
+        )
+    return resolved
 
 
 def _unavailable(reason: str) -> dict[str, Any]:

@@ -447,12 +447,25 @@ def resolve_benchmark_comparison(
         ),
     }
     if availability_reason:
+        # 冻结方给出的"明确不可用契约"本来就没有 `available_at`（它压根没冻结成功）。
+        # 此时若沿用 `benchmark_available_at_missing_or_invalid`，等于把"没有请求用户上下文"
+        # "缓存里没有基准证据""缓存明细不完整"这三种完全不同的原因统一改写成一句时间戳问题——
+        # 2026-08-11 线上那份荐基报告里 192 处全是这一句，运维据此完全判断不出该等下一份
+        # 快照还是该去补数据源。所以这里把上游的真实原因原样透传。
+        declared_reason = _text(spec.get("reason"))
+        declared_unavailable = (
+            spec.get("tier") == "unavailable" or spec.get("status") == "unavailable"
+        )
         return {
             **base,
             "comparison_role": "unavailable",
             "formal_excess_eligible": False,
             "qualified": False,
-            "reason": f"benchmark_{availability_reason}",
+            "reason": (
+                declared_reason
+                if declared_unavailable and declared_reason
+                else f"benchmark_{availability_reason}"
+            ),
         }
 
     verification_kind = base["contract_verification_kind"]
@@ -604,8 +617,19 @@ def build_peer_rank(
                 orientation=str(definition["orientation"]),
             )
 
+        # 同类全集里**一个成员都没有**这项指标时，它不是"这只基金缺值"，而是"目录压根不带
+        # 这一列"。两者的运维含义完全相反：前者等下一份快照可能就有了，后者要去补数据源。
+        #
+        # 2026-08-11 线上实测：目录缓存 20000 行里 `max_drawdown_1y_percent` 与
+        # `fund_scale_yi` 的非空数**都是 0**（这两项由候选级 profile 富化提供，而 profile 是
+        # 逐只拉的，不可能覆盖两万只）。于是每只基金、每一天都报
+        # `target_metric_value_missing`，读起来像是偶发数据缺口，实际是结构性的永不可得。
+        catalogue_not_covered = sample_count == 0 and target_evidence.get("status") != "available"
+
         reasons: list[str] = []
-        if target_evidence.get("status") != "available":
+        if catalogue_not_covered:
+            reasons.append("peer_catalogue_metric_not_covered")
+        elif target_evidence.get("status") != "available":
             reasons.append(f"target_{target_evidence.get('reason') or 'metric_unavailable'}")
         if peer_family_count < minimum_peer_count:
             reasons.append("independent_peer_family_count_below_minimum")
@@ -614,6 +638,10 @@ def build_peer_rank(
         if coverage < minimum_metric_coverage:
             reasons.append("metric_coverage_below_minimum")
         qualified = not reasons
+        # **刻意不把零覆盖指标从 `all_metric_qualified` 里豁免。** 豁免会让
+        # `peer_data_qualified` 变成"只要收益类分位齐了就算合格"，从而在没有任何风险指标
+        # （最大回撤/下行捕获）参与的情况下放开 `execution_tilt_eligible` ——那是拿收益分位
+        # 直接提额，正是这道门禁要防的事。所以门禁继续 fail-closed，只把原因说准。
         all_metric_qualified = all_metric_qualified and qualified
         sample_material = [
             {
@@ -632,6 +660,8 @@ def build_peer_rank(
             "availability": (
                 "available"
                 if target_evidence.get("status") == "available"
+                else "not_covered_by_peer_catalogue"
+                if catalogue_not_covered
                 else "unavailable"
             ),
             "value": target_evidence.get("value"),
@@ -656,11 +686,24 @@ def build_peer_rank(
             ),
         }
 
+    # 因为"目录不带这一列"而永远合格不了的指标，单独列出来。没有这份清单时，
+    # `one_or_more_peer_metrics_not_qualified` 读起来像"今天数据不巧缺了"，而它其实是
+    # 结构性的——只要目录不补这几列，`qualified` 这一档永远到不了、执行提额永远开不了。
+    # 运维要靠它区分"等下一份快照"与"去补数据源"。
+    not_covered_fields = sorted(
+        field
+        for field, item in metrics.items()
+        if item.get("applicable") is True
+        and item.get("availability") == "not_covered_by_peer_catalogue"
+    )
+
     overall_reasons = list(target_group.get("reasons") or [])
     if target_membership_reason:
         overall_reasons.append(f"target_{target_membership_reason}")
     if not all_metric_qualified:
         overall_reasons.append("one_or_more_peer_metrics_not_qualified")
+    if not_covered_fields:
+        overall_reasons.append("peer_catalogue_missing_required_metrics")
     overall_reasons = _unique(overall_reasons)
     peer_data_qualified = bool(
         target_group.get("qualified")
@@ -716,6 +759,9 @@ def build_peer_rank(
         "execution_tilt_gate": execution_tilt_gate,
         "reason": overall_reasons[0] if overall_reasons else None,
         "reasons": overall_reasons,
+        # 结构性缺列：不是今天数据不巧缺了，而是同类目录里没有任何成员带这几项，
+        # 只要不补数据源，`qualified` 与执行提额就永远不可达。
+        "catalogue_uncovered_metrics": not_covered_fields,
         "qualification_policy": {
             "minimum_independent_peer_families": minimum_peer_count,
             "minimum_metric_coverage": minimum_metric_coverage,

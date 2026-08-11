@@ -11,7 +11,12 @@ from app.config import get_settings
 from app.services.akshare_spot_client import fetch_boards_via_akshare
 from app.services.eastmoney_spot_client import fetch_eastmoney_boards
 from app.services.sector_quote_browser_provider import fetch_boards_via_browser_command
-from app.services.sector_quote_cache import get_spot_snapshot, get_spot_snapshot_any_age, save_spot_snapshot
+from app.services.sector_quote_cache import (
+    get_spot_snapshot,
+    get_spot_snapshot_any_age,
+    get_spot_snapshot_revalidated,
+    save_spot_snapshot,
+)
 from app.services.sector_quote_relay_provider import fetch_boards_via_relay
 from app.services.shared_executors import get_shared_io_executor
 from app.services.cache_policy import jittered_ttl
@@ -24,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 SpotBoard = dict[str, float]
 _MIN_CACHE_BOARD_ENTRIES = 8
+# "今日最后一个已知值"兜底向持久行复验的间隔（单行主键查询，代价可忽略）。
+_STALE_DAY_REVALIDATE_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -105,7 +112,16 @@ def fetch_spot_boards_result(
     ttl = float(settings.sector_quotes_ttl_seconds)
     cache_key = f"spot:all:{today}"
 
-    stale_day = get_spot_snapshot(cache_key, ttl_seconds=24 * 3600)
+    # "今天的最后一个已知值"，用于 live 拉取失败或抢锁失败时的兜底（出口会标
+    # `from_stale_cache=True`）。这里用复验读而不是 `ttl_seconds=24*3600`：24 小时 TTL 对一个
+    # key 里已经含 today 的**盘中**行情等于"今天任何值都算新鲜"，而且长 TTL 不会淘汰内存条目，
+    # 于是本进程会一直持有第一次读到的那份对象（实测两个 uvicorn worker 分别冻在 13:17 与
+    # 14:38，而持久行已是 14:59）。语义不变——仍然是"任意新鲜度的兜底"——只是把兜底值换成
+    # 持久层里最新的那份。
+    stale_day = get_spot_snapshot_revalidated(
+        cache_key,
+        memory_ttl_seconds=_STALE_DAY_REVALIDATE_SECONDS,
+    )
     if stale_day is not None and not _boards_cacheable(stale_day):
         stale_day = None
 

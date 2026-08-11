@@ -38,6 +38,14 @@ _BASE_REGEX_REPLACEMENTS: tuple[tuple[str, str], ...] = (
         "近1年最大回撤约 {abs0}%",
     ),
     (
+        r"estimated_daily_return_as_of\s*(?:=|为|约)?\s*(\d{1,2}:\d{2})",
+        "截至 {raw0}",
+    ),
+    (
+        r"change_as_of_time\s*(?:=|为|约)?\s*(\d{1,2}:\d{2})",
+        "截至 {raw0}",
+    ),
+    (
         r"estimated_daily_return_percent\s*(?:=|为|约)?\s*([-+]?\d+(?:\.\d+)?)%?",
         "今日涨跌约 {0}%",
     ),
@@ -152,6 +160,9 @@ def humanize_evidence_text(
 
 def _format_number_template(template: str, match: re.Match) -> str:
     raw = match.group(1)
+    # ``raw0`` 供非数值捕获用（如 ``HH:MM`` 时刻）；走 fmt_num 会把它当数字格式化掉。
+    if "{raw0}" in template:
+        return template.format(raw0=raw)
     return template.format(fmt_num(raw), abs0=fmt_abs_num(raw))
 
 

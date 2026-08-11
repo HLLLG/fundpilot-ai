@@ -9,7 +9,15 @@ from threading import RLock
 import requests
 
 from app.services.amac_benchmark_index_data import amac_code_to_entry
+from app.services.csindex_daily_client import (
+    fetch_csindex_daily_history,
+    is_csindex_code,
+)
 from app.services.sector_registry_data import CANONICAL_SECTORS, THEME_BOARD_INDEX
+from app.services.xueqiu_index_daily_client import (
+    fetch_xueqiu_index_daily_history,
+    xueqiu_blocked_seconds_remaining,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -156,12 +164,35 @@ def _sina_symbol(index_symbol: str) -> str:
 
 
 def _fetch_index_daily_history_impl(index_symbol: str, trading_days: int = 252) -> dict | None:
-    """拉取指数日线收盘价：已登记主题走东财，其余优先新浪。"""
+    """拉取指数日线收盘价：东财 → 新浪 → 雪球 → 中证官方。
+
+    前两路只能覆盖**交易所挂牌**的代码。中证 9xxxxx 与 H3xxxx（930598 中证稀土、
+    H30202 中证全指软件……）没有交易所行情代码，新浪与腾讯对它们一律返回 0 行，
+    东财 kline 又从生产服务器整体不可用，所以后两路是它们唯一的来源。
+
+    雪球在中证官网**之前**：两者数值逐位一致（雪球转发的就是中证的数据），但中证官网
+    有约 40~50 次/小时的配额、超了 403 且粘性，而雪球 64 个代码背靠背 2.5s 无限流。
+    把权威但稀缺的那一路留作兜底，正好对冲雪球需要 cookie 握手、是聚合站的脆弱性。
+    """
     days = max(20, min(trading_days, 800))
     eastmoney_result = _fetch_eastmoney_daily_history(index_symbol, days)
     if eastmoney_result is not None:
         return eastmoney_result
 
+    sina_result = _fetch_sina_daily_history(index_symbol, days)
+    if sina_result is not None:
+        return sina_result
+
+    xueqiu_result = fetch_xueqiu_index_daily_history(index_symbol, trading_days=days)
+    if xueqiu_result is not None:
+        return xueqiu_result
+
+    if is_csindex_code(index_symbol):
+        return fetch_csindex_daily_history(index_symbol, trading_days=days)
+    return None
+
+
+def _fetch_sina_daily_history(index_symbol: str, days: int) -> dict | None:
     symbol = _sina_symbol(index_symbol)
     url = (
         "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
@@ -220,6 +251,14 @@ def fetch_index_daily_history(index_symbol: str, trading_days: int = 252) -> dic
             _INDEX_TTL_CACHE.pop(key, None)
 
     result = _fetch_index_daily_history_impl(index_symbol, trading_days)
+    if result is None and (
+        is_csindex_code(index_symbol) or xueqiu_blocked_seconds_remaining() > 0
+    ):
+        # 后两路的"空"很可能只是**本次**被自身保护机制跳过了：中证有全局限速、滚动窗口
+        # 配额与按代码的负 TTL，雪球有连续失败熔断。把这种空冻成一小时"没有数据"，会让
+        # 下一轮连补齐的机会都没有。前两路（东财 0.03s TCP 断连、新浪 0.1s 空数组）
+        # 重试成本可以忽略，所以不做负缓存的代价很小。
+        return None
     with _INDEX_TTL_CACHE_LOCK:
         _INDEX_TTL_CACHE[key] = (now, result)
         _INDEX_TTL_CACHE.move_to_end(key)

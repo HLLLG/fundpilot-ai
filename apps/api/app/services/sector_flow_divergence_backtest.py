@@ -43,7 +43,10 @@ from app.services.board_fund_flow_history import (
 )
 from app.services.eastmoney_trends_client import DailyKlineBar
 from app.services.sector_canonical import get_canonical_sector
-from app.services.sector_daily_kline_provider import fetch_canonical_daily_kline_series
+from app.services.sector_daily_kline_provider import (
+    daily_bars_from_board_flow_series,
+    fetch_canonical_daily_kline_series,
+)
 from app.services.sector_fund_flow_context import _classify_flow_pattern
 from app.services.sector_labels import normalize_sector_label
 from app.services.sector_signal_rules import prediction_matches
@@ -204,6 +207,39 @@ def backtest_flow_price_divergence(
     }
 
 
+#: 用资金流日线合成价格序列时，至少要有这么多根才算够用；不足则退回联网取 K 线。
+#: 回测本身要求对齐后 ≥3 天（`backtest_flow_price_divergence`），窗口下限 30 天，
+#: 所以这里取 30：够窗口下限就没必要再打一次网络。
+_MIN_SYNTHESIZED_BARS = 30
+
+
+def _kline_bars_from_flow_series(
+    flow_series: list[dict[str, Any]],
+) -> list[DailyKlineBar]:
+    """用**同一份**板块资金流日线里的涨跌幅合成价格序列。
+
+    实现复用 `sector_daily_kline_provider.daily_bars_from_board_flow_series`（那里也把它当作
+    概念/行业板块的同源首选与指数类的兜底代理），避免两处各写一遍再漂移。
+
+    回测只消费 `date` 与 `change_percent`（见 `_align_kline_and_flow`），而这两项在资金流
+    序列里本来就有——它每行都带 `close_price` 与 `change_percent`。此前却另外去联网拉一份
+    canonical 日 K，换来三个问题：
+
+    1. **它是整条链路最慢的一段。** 2026-08-11 线上实测：6 个持仓板块的背离回测耗时
+       15.83 s 且只回来 1 个。东财 kline 端点从这台服务器不可用（push2his / 79.push2 /
+       push2 直接 TCP 断连，push2delay 返回 200 但 klines=0，48 种主机×ut×参数组合全部失败），
+       于是每个板块都要把 akshare 子进程、relay、新浪等兜底全走一遍。而它在真实链路里的预算
+       只有 4 s，等于每次日报固定烧掉 4 s 换回近乎为零的证据。
+    2. **日历可能错位。** 指数日历与板块资金流日历不是同一份，而这是个 T→T+1 的回测，
+       inner join 掉的每一天都是白丢的样本。
+    3. **口径不一致。** 资金流是东财 BK 板块的，价格却取中证指数的——两个不同成分篮子。
+       同一类错配已经在「医疗」上造成过 BK0727 与 399989 的数字对不上。
+
+    改用同一份行之后：零额外网络、日期天然对齐、涨跌与资金流同属一个板块。
+    """
+    return daily_bars_from_board_flow_series(flow_series)
+
+
 def _default_fetch_kline(sector_label: str) -> list[DailyKlineBar]:
     canon = get_canonical_sector(sector_label)
     if canon is None:
@@ -255,16 +291,8 @@ def build_sector_flow_divergence_backtest(
         if cached is not None:
             return cached
 
-    kline_fetcher = fetch_kline or _default_fetch_kline
-    kline_series = kline_fetcher(label)
-    if not kline_series:
-        return {
-            "enabled": True,
-            "resolved": False,
-            "by_rule": {},
-            "message": "无 canonical K 线映射或拉取失败，已跳过背离回测。",
-        }
-
+    # 先取资金流：它既是回测的必需项，也顺带带着价格序列。资金流缺失时压根不必再去打那段
+    # 又慢又常失败的 K 线兜底链（此前顺序相反，白花预算）。
     if fetch_flow is not None:
         board_code, flow_series = fetch_flow(label)
     else:
@@ -277,6 +305,26 @@ def build_sector_flow_divergence_backtest(
             "message": "未解析到板块资金流代码或历史资金流为空，已跳过背离回测。",
         }
 
+    price_source = "board_fund_flow_daily"
+    if fetch_kline is not None:
+        kline_series = fetch_kline(label)
+        price_source = "injected"
+    else:
+        # 同一份行里就有涨跌幅：零额外网络、日期天然对齐、与资金流同属一个板块。
+        kline_series = _kline_bars_from_flow_series(flow_series)
+        if len(kline_series) < _MIN_SYNTHESIZED_BARS:
+            fallback = _default_fetch_kline(label)
+            if len(fallback) > len(kline_series):
+                kline_series = fallback
+                price_source = "canonical_daily_kline"
+    if not kline_series:
+        return {
+            "enabled": True,
+            "resolved": False,
+            "by_rule": {},
+            "message": "板块资金流日线缺涨跌幅且 canonical K 线拉取失败，已跳过背离回测。",
+        }
+
     result = backtest_flow_price_divergence(
         board_code,
         kline_series,
@@ -285,6 +333,9 @@ def build_sector_flow_divergence_backtest(
     )
     result["enabled"] = True
     result["sector_label"] = label
+    # 价格序列来源必须可见：同源（board_fund_flow_daily）与跨源（canonical_daily_kline）
+    # 的日历对齐程度不同，样本数差异要能解释。
+    result["price_series_source"] = price_source
 
     if not injected and result.get("by_rule"):
         _set_cached_backtest(cache_key, result, time.time())

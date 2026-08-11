@@ -46,14 +46,18 @@ recommendations 字段约束：
   quality_reasons、return_3m_percent/return_6m_percent、max_drawdown_1y_percent、fund_scale_yi
 - validation_notes: 字符串数组，写清 quality_penalties、信息缺失、新闻 stale/empty 等校验备注；仅结构化 overheat_flags 非空时可写追高/短期加速风险；无明显问题则 []
 - points: 字符串数组，每条须引用 candidate_pool 内具体字段（如 nav_trend、return_3m_percent、
-  estimated_daily_return_percent、sector_fund_flow）；daily_return_source=sector_estimate 时须写「估算」
+  estimated_daily_return_percent、sector_fund_flow）；daily_return_source=sector_estimate 时须写「估算」，
+  并把 estimated_daily_return_as_of 的时刻一起写出，格式固定为「（板块估算，截至 HH:MM）」，
+  例如「今日涨跌估算 +2.77%（板块估算，截至 14:28）」；该字段缺失时写「（板块估算，截止时刻未知）」，
+  不得自己编一个时刻，也不得省略成只写「估算」
 - risks: 字符串数组，每只至少 1 条
 - news_bullish: 字符串数组，仅引用 news_titles 或 topic_briefs.points.source_titles 中已有标题；无则 []
 - suggested_amount_yuan: 始终输出 null。模型只判断候选与动作；服务端会忽略模型金额，并在最终守卫后按
   本次可投入预算、已有板块敞口、集中度与候选风险相关性统一计算本次参考金额
 - 面向用户展示时必须使用中文标签，不要原样输出 fund_quality_score、sector_fit_score、quality_penalties、
   sector_opportunities、nav_trend、max_drawdown_1y_percent、estimated_daily_return_percent 等内部字段名；
-  可写成“基金质量分”“板块关联排序分”“板块身份状态”“系统校验提示”“系统筛出的主方向”“净值走势”“近1年最大回撤”“今日涨跌估算”等。
+  可写成“基金质量分”“板块关联排序分”“板块身份状态”“系统校验提示”“系统筛出的主方向”“净值走势”“近1年最大回撤”“今日涨跌估算”等；
+  estimated_daily_return_as_of / change_as_of_time 只能以“截至 HH:MM”的形式出现，不得原样输出字段名。
 
 全局约束：
 - 不得推荐 portfolio_gap.holdings_slim 中已持有的 fund_code
@@ -112,7 +116,7 @@ _COMMON_REQUIREMENTS = [
     "方向成熟度 V2/V3 存在时按 entry_state；V3 ready_on_pullback 可在基金修复替代结构项，或资金同日改善且基金信号通过时缩小本次金额；forming 仅在 probability_early_probe_eligible=true 且基金早期信号通过时提前试仓；V3 过热仅缩小本次金额",
     "展示文本使用中文标签，不要原样输出 fund_quality_score/sector_fit_score/quality_penalties 等内部字段名",
     "sector_fit_score 仅是关联排序分，不得替代 sector_identity_status=verified 与 sector_identity_eligible=true 的代码级身份门槛",
-    "estimated_daily_return_percent 且 daily_return_source=sector_estimate 时，points 须注明「估算」",
+    "estimated_daily_return_percent 且 daily_return_source=sector_estimate 时，points 须写成「（板块估算，截至 HH:MM）」，时刻取 estimated_daily_return_as_of；字段缺失写「截止时刻未知」，不得编造或省略",
     "判断入场位置须参考 fund_entry_signal 与20日修复率、离低点反弹、近5日方向，不得只看 sector_heat 或距高点",
     "板块 selection_priority_score 仅用于同一入场状态内排序；资金拐点优先于普通等待，高弹性只加排序分，不替代趋势、资金、结构和数据门槛",
     "仅结构化 overheat_flags 非空时可写追高/短期加速风险；接近20日高点本身不是否决理由",

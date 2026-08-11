@@ -12,6 +12,10 @@ from app.services.performance_metrics import record_cache_event
 
 _MEMORY: OrderedDict[str, tuple[float, dict]] = OrderedDict()
 _MEMORY_MAX_ENTRIES = 512
+# 内存层最近一次「向持久行复验」的时刻。刻意与 ``_MEMORY`` 里的 ``cached_at`` 分开存：
+# ``cached_at`` 是数据的捕获时刻，TTL-aware 的 ``get_spot_snapshot`` 靠它判新鲜度，
+# 复验不能把它往前推，否则一次纯读取会被后来的 TTL 判断误当成一次真实的 provider 拉取。
+_MEMORY_REVALIDATED_AT: OrderedDict[str, float] = OrderedDict()
 _MEMORY_LOCK = RLock()
 _PROCESS_BOOT_AT: datetime | None = None
 _SCHEMA_LOCK = RLock()
@@ -34,6 +38,29 @@ def _get_memory_snapshot(
             return False, None
         _MEMORY.move_to_end(cache_key)
         return True, payload
+
+
+def _peek_memory_snapshot(cache_key: str) -> tuple[float, dict] | None:
+    """读内存层但不按 TTL 淘汰（``_get_memory_snapshot`` 过期时会 pop 掉）。"""
+    with _MEMORY_LOCK:
+        cached = _MEMORY.get(cache_key)
+        if cached is None:
+            return None
+        _MEMORY.move_to_end(cache_key)
+        return cached
+
+
+def _memory_revalidated_at(cache_key: str) -> float | None:
+    with _MEMORY_LOCK:
+        return _MEMORY_REVALIDATED_AT.get(cache_key)
+
+
+def _mark_memory_revalidated(cache_key: str, checked_at: float) -> None:
+    with _MEMORY_LOCK:
+        _MEMORY_REVALIDATED_AT[cache_key] = checked_at
+        _MEMORY_REVALIDATED_AT.move_to_end(cache_key)
+        while len(_MEMORY_REVALIDATED_AT) > _MEMORY_MAX_ENTRIES:
+            _MEMORY_REVALIDATED_AT.popitem(last=False)
 
 
 def _save_memory_snapshot(cache_key: str, cached_at: float, payload: dict) -> None:
@@ -165,6 +192,61 @@ def get_spot_snapshot_any_age(cache_key: str) -> dict | None:
         _updated_at_timestamp(row["updated_at"]),
         payload,
     )
+    record_cache_event(cache_key, "stale_hit_durable")
+    return payload
+
+
+def get_spot_snapshot_revalidated(
+    cache_key: str,
+    *,
+    memory_ttl_seconds: float,
+) -> dict | None:
+    """任意新鲜度投递，但内存层会周期性向持久行复验；**不打 provider**。
+
+    ``get_spot_snapshot_any_age`` 命中进程内存后直接返回，永不回源。生产部署里刷新线程
+    只跑在 worker 容器（``FUND_AI_RUNTIME_ROLE=worker``），api 容器自己从不刷新板块快照，
+    于是任何一个 uvicorn worker 只要读过当天的 key，就会把那一刻的值供到收盘——2026-08-11
+    实测两个 uvicorn worker 分别冻在 13:17 与 14:38，而 MySQL 已经是 14:59。
+
+    这里给内存层加一个短复验窗口：窗口内走内存，窗口外读一次持久行（单行主键查询），
+    发现 worker 写了更新的行就换过来。语义仍是"绝不因为新鲜度去打外部数据源"。
+    """
+    now = datetime.now(timezone.utc).timestamp()
+    cached = _peek_memory_snapshot(cache_key)
+
+    if cached is not None:
+        cached_at, payload = cached
+        last_checked = max(cached_at, _memory_revalidated_at(cache_key) or 0.0)
+        if now - last_checked <= memory_ttl_seconds:
+            record_cache_event(cache_key, "stale_hit_memory")
+            return payload
+
+    with _connect() as connection:
+        _ensure_cache_table(connection)
+        row = connection.execute(
+            "SELECT payload, updated_at FROM sector_spot_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+
+    if row is None:
+        if cached is not None:
+            _mark_memory_revalidated(cache_key, now)
+            record_cache_event(cache_key, "stale_hit_memory")
+            return cached[1]
+        record_cache_event(cache_key, "miss")
+        return None
+
+    durable_at = _updated_at_timestamp(row["updated_at"])
+    if cached is not None and durable_at <= cached[0]:
+        # 持久行不比内存更新，继续用内存；记一次复验时刻，避免每个请求都查库。
+        _mark_memory_revalidated(cache_key, now)
+        record_cache_event(cache_key, "stale_hit_memory")
+        return cached[1]
+
+    payload = json.loads(row["payload"])
+    # 与 ``get_spot_snapshot_any_age`` 一致：保留持久层的捕获时刻，不用读取时刻。
+    _save_memory_snapshot(cache_key, durable_at, payload)
+    _mark_memory_revalidated(cache_key, now)
     record_cache_event(cache_key, "stale_hit_durable")
     return payload
 

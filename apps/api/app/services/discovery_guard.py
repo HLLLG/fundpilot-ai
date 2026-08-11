@@ -352,6 +352,11 @@ def apply_discovery_guards(
         str(row.get("sector_label", "")): row.get("change_1d_percent")
         for row in sector_heat
     }
+    change_as_of_by_sector = {
+        str(row.get("sector_label", "")): as_of
+        for row in sector_heat
+        if (as_of := _format_change_as_of_time(row.get("change_as_of")))
+    }
     opportunity_by_sector = _sector_opportunities_by_label(discovery_facts or {})
     titles = _collect_citable_titles(market_news or [], topic_briefs or [])
     caveats: list[str] = []
@@ -1114,6 +1119,8 @@ def apply_discovery_guards(
         _enforce_discovery_execution_projection(copy)
         copy.news_bullish = _filter_news_titles(copy.news_bullish, titles)
         _humanize_recommendation_text(copy)
+        # 必须在 humanize 之后：原始枚举 sector_estimate 要先被规范成「板块估算」。
+        _annotate_daily_estimate_as_of(copy, change_as_of_by_sector)
         guarded.append(copy)
 
     if discovery_facts is not None:
@@ -1657,6 +1664,89 @@ def _backfill_decision_fields(
             _build_validation_notes(pool_item, opportunity),
             limit=4,
         )
+
+
+def _format_change_as_of_time(value: object) -> str | None:
+    from app.services.discovery_candidate_llm import format_change_as_of_time
+
+    return format_change_as_of_time(value)
+
+
+_SECTOR_ESTIMATE_PAREN_RE = re.compile(r"（板块估算(?P<rest>[^）]*)）")
+
+
+def _stamp_as_of_in_text(text: str, marker: str) -> tuple[str, bool]:
+    """把「截至 HH:MM」插进已有的「板块估算」措辞里，不新造句子。"""
+    raw = str(text or "")
+    if not raw or "截至" in raw:
+        return raw, False
+    stamped, count = _SECTOR_ESTIMATE_PAREN_RE.subn(
+        lambda match: f"（板块估算{match.group('rest')}，{marker}）",
+        raw,
+        count=1,
+    )
+    if count:
+        return stamped, True
+    if "板块估算" in raw:
+        return raw.replace("板块估算", f"板块估算（{marker}）", 1), True
+    return raw, False
+
+
+def _annotate_daily_estimate_as_of(
+    rec: DiscoveryRecommendation,
+    change_as_of_by_sector: dict[str, str],
+) -> None:
+    """确定性地让板块快照的截止时刻出现在报告里。
+
+    「今日涨跌估算」是板块某一时刻的快照而非收盘值。2026-08-11 用户 14:31 扫描拿到的
+    +2.77% 实际截止于 13:17，而报告通篇没有时刻，用户无从判断它已经过时。prompt 已要求
+    模型自己写，但那不可靠，这里做确定性兜底：
+
+    1. 优先就地插进正文的「板块估算」措辞——`points[0]` 就是前端那行「核心理由」，
+       时刻必须落在这个可见位置上。
+    2. 正文没有可插入的位置时，退而写一条 validation_notes，至少在完整依据里可查。
+
+    必须在 ``_humanize_recommendation_text`` 之后调用：模型可能写的是原始枚举
+    ``sector_estimate``，要等它被规范成「板块估算」之后才匹配得上。
+    """
+    as_of = change_as_of_by_sector.get(str(rec.sector_name or "").strip())
+    if not as_of:
+        return
+    marker = f"截至 {as_of}"
+    if any(
+        marker in str(text or "")
+        for text in (*rec.points, *rec.validation_notes, *rec.sector_evidence)
+    ):
+        return
+
+    stamped_any = False
+    points: list[str] = []
+    for text in rec.points:
+        if stamped_any:
+            points.append(text)
+            continue
+        stamped, changed = _stamp_as_of_in_text(text, marker)
+        stamped_any = stamped_any or changed
+        points.append(stamped)
+    rec.points = points
+
+    if not stamped_any:
+        notes: list[str] = []
+        for text in rec.validation_notes:
+            if stamped_any:
+                notes.append(text)
+                continue
+            stamped, changed = _stamp_as_of_in_text(text, marker)
+            stamped_any = stamped_any or changed
+            notes.append(stamped)
+        rec.validation_notes = notes
+
+    if not stamped_any:
+        rec.validation_notes = [
+            *rec.validation_notes,
+            f"{rec.sector_name}板块当日涨跌取自 {as_of} 的盘中快照，非收盘值；"
+            f"报告中的今日涨跌估算以此为基准，可在基金详情页的板块分时上核对。",
+        ]
 
 
 def _humanize_recommendation_text(rec: DiscoveryRecommendation) -> None:

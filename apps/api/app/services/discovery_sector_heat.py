@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.services.sector_quote_cache import get_spot_snapshot, save_spot_snapshot
 from app.services.sector_registry import list_theme_board_labels
@@ -9,7 +9,12 @@ from app.services.trading_session import build_trading_session
 
 _HEAT_LIVE_TTL_SECONDS = 60.0
 _HEAT_CLOSED_TTL_SECONDS = 3600.0
-_SECTOR_HEAT_CACHE_VERSION = "v2"
+_SECTOR_HEAT_CACHE_VERSION = "v3"
+_LIVE_SESSION_KINDS = frozenset({"trading_day_intraday", "trading_day_pre_close"})
+# 盘中主题快照允许的最大滞后。后台 daemon 默认 1200s 刷一次，而扫描侧读的是 any-age
+# 缓存，所以扫描拿到的板块涨跌可以比用户点击时刻旧 20 分钟以上（daemon 未起来时更久）。
+# 尾盘扫描据此给出的"今日涨跌估算"会停在早盘的数，故这里自行卡一道新鲜度阈值。
+_HEAT_LIVE_SNAPSHOT_MAX_AGE_SECONDS = 180.0
 
 # 荐基 UI 展示用别名 → 市场主题板块标签（共享 theme board 快照涨跌）
 _UI_HEAT_LABEL_ALIASES: dict[str, str] = {
@@ -59,37 +64,77 @@ def build_sector_heat_ranking(
         if cached and cached.get("sectors"):
             return list(cached["sectors"])
 
-    rows = _rows_from_theme_board_snapshot()
+    rows, change_as_of = _rows_from_theme_board_snapshot(
+        live=session_kind in _LIVE_SESSION_KINDS
+    )
     merged = list(rows) if rows else _fallback_theme_sector_heat_rows()
 
     merged = _append_alias_heat_rows(merged)
     merged = _sort_sector_heat_rows(merged)
+    if change_as_of:
+        merged = [{**row, "change_as_of": change_as_of} for row in merged]
 
     if merged and any(row.get("change_1d_percent") is not None for row in merged):
         save_spot_snapshot(
             cache_key,
-            {"sectors": merged, "trade_date": trade_date, "session_kind": session_kind},
+            {
+                "sectors": merged,
+                "trade_date": trade_date,
+                "session_kind": session_kind,
+                "change_as_of": change_as_of,
+            },
         )
     return merged
 
 
 def build_sector_heat_ranking_for_ui() -> list[dict]:
     """推荐基金 Tab 关注方向：复用市场主题板块快照（白名单标签 + 当日涨跌），秒级返回。"""
-    rows = _rows_from_theme_board_snapshot()
+    rows, _change_as_of = _rows_from_theme_board_snapshot(live=False)
     if rows:
         return _append_alias_heat_rows(rows)
     return _fallback_theme_sector_heat_rows()
 
 
-def _rows_from_theme_board_snapshot() -> list[dict]:
-    """从 theme board 共享缓存构建热度行，与 /api/market/theme-boards 口径一致。"""
+def _snapshot_age_seconds(refreshed_at: object) -> float | None:
+    text = str(refreshed_at or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - parsed).total_seconds()
+
+
+def _rows_from_theme_board_snapshot(*, live: bool) -> tuple[list[dict], str | None]:
+    """从 theme board 共享缓存构建热度行，与 /api/market/theme-boards 口径一致。
+
+    返回 ``(rows, change_as_of)``。``change_as_of`` 是这批涨跌幅的实际截止时刻，供上层
+    标注口径——扫描报告里的"今日涨跌估算"此前是个没有截止时间的裸数字，用户在尾盘看到
+    的其实可能是早盘的值。
+    """
     try:
         snapshot = get_theme_board_snapshot(force_refresh=False, sort="change")
+        if live:
+            age = _snapshot_age_seconds(
+                snapshot.get("refreshed_at") if isinstance(snapshot, dict) else None
+            )
+            if age is None or age > _HEAT_LIVE_SNAPSHOT_MAX_AGE_SECONDS:
+                # 盘中滞后超阈值就自己刷一次，别把后台 daemon 的 20 分钟节奏当成
+                # 决策数据的新鲜度上限。
+                snapshot = get_theme_board_snapshot(force_refresh=True, sort="change")
     except Exception:
-        return []
+        return [], None
     theme_items = snapshot.get("items") if isinstance(snapshot, dict) else None
+    change_as_of = (
+        str(snapshot.get("refreshed_at") or "").strip() or None
+        if isinstance(snapshot, dict)
+        else None
+    )
     if not isinstance(theme_items, list):
-        return []
+        return [], change_as_of
 
     by_label: dict[str, dict] = {}
     for item in theme_items:
@@ -112,7 +157,7 @@ def _rows_from_theme_board_snapshot() -> list[dict]:
         }
 
     if not by_label:
-        return []
+        return [], change_as_of
 
     merged: list[dict] = []
     for label in list_theme_board_labels():
@@ -129,7 +174,7 @@ def _rows_from_theme_board_snapshot() -> list[dict]:
                 "advancing_ratio_percent": None,
             }
         )
-    return _sort_sector_heat_rows(merged)
+    return _sort_sector_heat_rows(merged), change_as_of
 
 
 def _append_alias_heat_rows(rows: list[dict]) -> list[dict]:

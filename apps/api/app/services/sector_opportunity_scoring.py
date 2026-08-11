@@ -1811,6 +1811,16 @@ def _entry_maturity_v3(
             entry_state=entry_state,
             probability_early_probe_eligible=probability_early_probe_eligible,
         ),
+        # 同一组失效条件的机器可判版本：买入时冻结 code，日报逐日对照 triggered。
+        "invalidation_checks": _invalidation_checks_v3(
+            entry_state=entry_state,
+            probability_early_probe_eligible=probability_early_probe_eligible,
+            trend_strength=trend_strength,
+            participation=participation,
+            mainline_status=status,
+            structure_broken=structure_broken,
+            formation_probability=formation_probability,
+        ),
         "execution_eligible": (
             entry_state == ENTRY_READY_TO_START
             or flow_improving_probe_eligible
@@ -1971,6 +1981,116 @@ def _invalidation_signals_v3(
     if entry_state == ENTRY_READY_ON_PULLBACK:
         values.append("等待过程中趋势强度跌破入场线")
     return values[:3]
+
+
+#: `invalidation_signals` 的机器可判版本。
+#:
+#: 那三条失效条件此前只是展示文案——`sector_direction_exit` 与 `sector_direction_state`
+#: 的模块 docstring 都写着"至今只是一段展示文案，没有代码在逐日跟踪它们"。买入卡片上写下
+#: 的退出承诺和日报实际执行的退出规则因此是两套东西。
+#:
+#: 这里把每条文案绑定到一个**已经算好**的条件上：三条主条件合起来正是
+#: `classify_entry_state_v3` 判 `invalid` 的那三项，阈值全部复用既有常量
+#: （`V3_INVALID_TREND_CEILING` / `V3_INVALID_PARTICIPATION_CEILING` / `V3_GATE_THRESHOLDS`
+#: / `V3_EARLY_PROBE_MIN_*`），**不新设任何阈值**——新阈值没有回测支撑，而这些至少有
+#: `V3_GATE_THRESHOLDS` 注释里记录的网格实测背景。
+_INVALIDATION_CHECK_CODES: dict[str, str] = {
+    "doubly_weak": "趋势强度与资金参与度同时跌入横截面低位",
+    "mainline_fading": "主线状态转为退潮",
+    "structure_broken": "价格跌破20日均线且相对强度同步转弱",
+    "trend_below_entry_line": "等待过程中趋势强度跌破入场线",
+    "formation_probability_below_probe_line": "趋势成形信号分跌破早期试仓线",
+    "trend_below_probe_floor": "趋势强度跌破早期形成区间",
+}
+
+
+def _invalidation_checks_v3(
+    *,
+    entry_state: str,
+    probability_early_probe_eligible: bool,
+    trend_strength: float | None,
+    participation: float | None,
+    mainline_status: str,
+    structure_broken: bool,
+    formation_probability: float | None,
+) -> list[dict[str, Any]]:
+    """逐条给出"承诺的失效条件 + 今天是否已触发"，供日报逐日核对。
+
+    `triggered` 是**对当前这一行**的判定；日报把它与买入时冻结的 `code` 列表对照，就能说出
+    "当初承诺的第 N 条已经触发"，而不是自己另推一套退出规则。
+    """
+
+    def _check(code: str, triggered: bool | None, detail: str) -> dict[str, Any]:
+        return {
+            "code": code,
+            "label": _INVALIDATION_CHECK_CODES[code],
+            # None 表示这一条今天缺数据、无法判定——不能当成"没触发"。
+            "triggered": triggered,
+            "detail": detail,
+        }
+
+    checks: list[dict[str, Any]] = []
+    if probability_early_probe_eligible:
+        checks.append(
+            _check(
+                "formation_probability_below_probe_line",
+                None
+                if formation_probability is None
+                else formation_probability < V3_EARLY_PROBE_MIN_PROBABILITY,
+                f"信号分 {'—' if formation_probability is None else f'{formation_probability:.1f}'}"
+                f" vs 试仓线 {V3_EARLY_PROBE_MIN_PROBABILITY:g}",
+            )
+        )
+        checks.append(
+            _check(
+                "trend_below_probe_floor",
+                None if trend_strength is None else trend_strength < V3_EARLY_PROBE_MIN_TREND,
+                f"趋势 {'—' if trend_strength is None else f'{trend_strength:.1f}'}"
+                f" vs 早期形成区间 {V3_EARLY_PROBE_MIN_TREND:g}",
+            )
+        )
+        checks.append(
+            _check("structure_broken", bool(structure_broken), "20日均线与相对强度结构")
+        )
+        return checks
+
+    checks.append(
+        _check(
+            "doubly_weak",
+            None
+            if trend_strength is None or participation is None
+            else (
+                trend_strength < V3_INVALID_TREND_CEILING
+                and participation < V3_INVALID_PARTICIPATION_CEILING
+            ),
+            f"趋势 {'—' if trend_strength is None else f'{trend_strength:.1f}'}"
+            f"/{V3_INVALID_TREND_CEILING:g}，参与度 "
+            f"{'—' if participation is None else f'{participation:.1f}'}"
+            f"/{V3_INVALID_PARTICIPATION_CEILING:g}（两项同时低于才算）",
+        )
+    )
+    checks.append(
+        _check(
+            "mainline_fading",
+            None if not str(mainline_status or "").strip() else mainline_status == "fading",
+            f"主线状态 {mainline_status or '—'}",
+        )
+    )
+    checks.append(
+        _check("structure_broken", bool(structure_broken), "20日均线与相对强度结构")
+    )
+    if entry_state == ENTRY_READY_ON_PULLBACK:
+        checks.append(
+            _check(
+                "trend_below_entry_line",
+                None
+                if trend_strength is None
+                else trend_strength < V3_GATE_THRESHOLDS["trend"],
+                f"趋势 {'—' if trend_strength is None else f'{trend_strength:.1f}'}"
+                f" vs 入场线 {V3_GATE_THRESHOLDS['trend']:g}",
+            )
+        )
+    return checks
 
 
 def _entry_structure_score(

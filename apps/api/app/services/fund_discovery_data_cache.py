@@ -11,6 +11,7 @@ from app.services.cross_process_lock import CrossProcessLockError, cross_process
 from app.services.sector_quote_cache import (
     get_spot_snapshot,
     get_spot_snapshot_any_age,
+    get_spot_snapshot_revalidated,
     save_spot_snapshot,
 )
 from app.services.shared_executors import get_shared_io_executor
@@ -18,6 +19,8 @@ from app.services.shared_executors import get_shared_io_executor
 _UNIVERSE_CACHE_KEY = "fund:discovery_universe:v4:pit:20000"
 _PROFILE_CACHE_KEY = "fund:discovery_profiles:v5:tracking-reference"
 _UNIVERSE_TTL_SECONDS = 24 * 60 * 60
+# 只读路径向持久行复验的间隔。目录是日粒度数据，60s 足够，且是单行主键查询。
+_UNIVERSE_MEMORY_REVALIDATE_SECONDS = 60.0
 _PROFILE_TTL_SECONDS = 36 * 60 * 60
 _INCOMPLETE_PROFILE_RETRY_SECONDS = 30 * 60
 _PROFILE_REQUIRED_FIELDS = ("fund_scale_yi", "established_date", "fund_manager")
@@ -76,7 +79,14 @@ def fetch_discovery_fund_universe_cache_only() -> list[dict]:
     与 `theme_board_snapshot.get_theme_board_snapshot_cache_only` 同一约定：
     函数名里的 `cache_only` 就是"不会有网络副作用"的承诺。
     """
-    payload = get_spot_snapshot_any_age(_UNIVERSE_CACHE_KEY)
+    # 复验读而不是 `get_spot_snapshot_any_age`：后者命中进程内存后永不回持久行，而这个
+    # key 只在走过荐基扫描的进程里被写。长命的 api 进程读到一次就会把那一版目录钉死，
+    # 之后即使别的进程刷新了全目录也看不见——日报的同类分位会一直用几天前的目录。
+    # PIT 契约本身不受影响（行上带 `snapshot_available_at`，冻结只影响新鲜度不影响可比性）。
+    payload = get_spot_snapshot_revalidated(
+        _UNIVERSE_CACHE_KEY,
+        memory_ttl_seconds=_UNIVERSE_MEMORY_REVALIDATE_SECONDS,
+    )
     if not _valid_universe_snapshot(payload):
         return []
     return _universe_rows_with_snapshot_contract(payload)

@@ -205,7 +205,12 @@ def freeze_fund_benchmark_spec(
         or evidence.get("sector_name")
         or ""
     ).strip()
-    available_at = str(evidence.get("available_at") or "")
+    # 冻结进契约的时间戳必须是**带时区**的 ISO 串。缓存列是 VARCHAR，本模块的
+    # `_parse_datetime` 对无时区串宽容地按 UTC 处理，而下游 `fund_peer_ranking._parse_instant`
+    # 对无时区串直接判 None——两套解析器宽严不一致时，一份内容完整的 `tracked_index_exact`
+    # 契约也会在下游被报成 `benchmark_available_at_missing_or_invalid`。在这里归一，
+    # 让契约自身自洽，不把解析差异留给消费方。
+    available_at = _canonical_available_at(evidence.get("available_at"))
     source_ref = str(evidence.get("source_ref") or "")
 
     if (
@@ -503,8 +508,19 @@ def _cached_benchmark_evidence_by_code(
             if available is None or decision is None or available > decision:
                 continue
             eligible.append(row)
+        # 先按"这一行到底带没带基准身份"排，再看来源等级与时间。
+        #
+        # 2026-08-11 线上实测（002610）：本地板块行 `source=precompute_benchmark`、
+        # `updated_at=08-11`，但 detail 里只有 `fund_name`——没有 index_code 也没有基准
+        # 文本；而全局行 `source=precompute_benchmark`、`resolved_at=08-05` 带着完整的
+        # `index_code=AU9999` 与合同文本。原来只按（来源等级, 时间）倒排，于是**较新但空**
+        # 的行压过**较旧但完整**的行，冻结结果是 `cached_benchmark_detail_incomplete`。
+        #
+        # 两行的 `available_at` 都 ≤ decision_at，都是决策时可知的，所以选信息量大的那行
+        # 不构成前视。空明细不是"基准变更"的证据，只是证据缺失，不该有覆盖权。
         eligible.sort(
             key=lambda row: (
+                1 if _has_benchmark_identity(row) else 0,
                 1 if str(row.get("source")) == "benchmark_index" else 0,
                 str(row.get("available_at") or ""),
             ),
@@ -512,6 +528,15 @@ def _cached_benchmark_evidence_by_code(
         )
         result[code] = eligible[0] if eligible else None
     return result
+
+
+def _has_benchmark_identity(row: Mapping[str, Any]) -> bool:
+    """该缓存行是否真的携带可用的基准身份（指数代码或基准文本）。"""
+    detail = _detail(row.get("detail"))
+    return bool(
+        str(detail.get("index_code") or "").strip()
+        or str(detail.get("benchmark_text") or "").strip()
+    )
 
 
 def _index_component(
@@ -552,6 +577,11 @@ def _recommendation_codes(rows: object) -> list[str]:
     return result
 
 
+def _canonical_available_at(value: object) -> str:
+    parsed = _parse_datetime(value)
+    return parsed.isoformat() if parsed is not None else ""
+
+
 def _unavailable(reason: str) -> dict[str, Any]:
     return {
         "schema_version": BENCHMARK_MAPPING_SCHEMA_VERSION,
@@ -560,6 +590,9 @@ def _unavailable(reason: str) -> dict[str, Any]:
         "formal_excess_eligible": False,
         "mapping_id": None,
         "contract_verification_kind": None,
+        # 明确写出来，让"不可用契约"的形状与可用契约一致。缺这个键时下游只能靠
+        # `spec.get("available_at") is None` 猜，读起来像时间戳坏了而不是契约没冻结成。
+        "available_at": None,
         "reason": reason,
         "components": [],
     }
