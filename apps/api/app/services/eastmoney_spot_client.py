@@ -5,6 +5,7 @@ import math
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from functools import lru_cache
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -72,6 +73,10 @@ def fetch_eastmoney_boards(
             "fs": "m:90 t:2 f:!50",
             "fields": "f3,f14",
         }),
+        # 指数池必须带 f12（证券代码）：四个池会被压平进同一个按简称索引的
+        # ``boards["index"]``，而东财存在多只**不同**指数共用一个简称的情况
+        # （"数字经济" 既是深证 399262 也是中证 931582）。没有代码就无法判断
+        # 后来的行覆盖的是不是同一只标的，只能盲目 update——那正是串号的来源。
         ("index_main", {
             **_COMMON_PARAMS,
             "pz": "100",
@@ -79,7 +84,7 @@ def fetch_eastmoney_boards(
             "wbp2u": "|0|0|0|web",
             "fid": "",
             "fs": "b:MK0010",
-            "fields": "f3,f14",
+            "fields": "f3,f12,f14",
         }),
         ("index_csi", {
             **_COMMON_PARAMS,
@@ -87,7 +92,7 @@ def fetch_eastmoney_boards(
             "wbp2u": "|0|0|0|web",
             "fid": "f12",
             "fs": "m:2",
-            "fields": "f3,f14",
+            "fields": "f3,f12,f14",
         }),
         ("index_sh", {
             **_COMMON_PARAMS,
@@ -95,7 +100,7 @@ def fetch_eastmoney_boards(
             "wbp2u": "|0|0|0|web",
             "fid": "f12",
             "fs": "m:1+t:1",
-            "fields": "f3,f14",
+            "fields": "f3,f12,f14",
         }),
         ("index_sz", {
             **_COMMON_PARAMS,
@@ -103,7 +108,7 @@ def fetch_eastmoney_boards(
             "wbp2u": "|0|0|0|web",
             "fid": "f12",
             "fs": "m:0+t:5",
-            "fields": "f3,f14",
+            "fields": "f3,f12,f14",
         }),
     ]
 
@@ -114,6 +119,9 @@ def fetch_eastmoney_boards(
     }
 
     failed_specs: list[str] = []
+    #: 指数简称 -> 已被采纳的那只标的的证券代码。仅用于合并期消歧，不进入返回值
+    #: （``SpotBoard`` 的形状与快照缓存都保持 name -> change 不变）。
+    index_codes: dict[str, str] = {}
 
     with eastmoney_httpx_client(
         headers=_EASTMONEY_HEADERS,
@@ -123,21 +131,31 @@ def fetch_eastmoney_boards(
         http2=False,
     ) as client:
         for key, params in specs:
+            fetched_codes: dict[str, str] = {}
             try:
                 fetched = _fetch_paginated_board(
                     client,
                     params,
                     max_retries=max_retries,
                     max_hosts=max_hosts,
+                    collect_codes=fetched_codes if key.startswith("index") else None,
                 )
             except Exception as exc:
                 failed_specs.append(key)
                 logger.debug("eastmoney board fetch failed (%s): %s", key, exc)
                 continue
             if key.startswith("index"):
-                boards["index"].update(fetched)
+                _merge_index_pool(
+                    boards["index"],
+                    index_codes,
+                    fetched,
+                    fetched_codes,
+                    pool=key,
+                )
             else:
                 boards[key].update(fetched)
+
+    _drop_unverified_index_names(boards["index"], index_codes)
 
     if failed_specs:
         logger.info(
@@ -157,6 +175,7 @@ def _fetch_paginated_board(
     *,
     max_retries: int,
     max_hosts: int | None = None,
+    collect_codes: dict[str, str] | None = None,
 ) -> dict[str, float]:
     params = {**base_params, "pn": "1"}
     first = _request_board_page(client, params, max_retries=max_retries, max_hosts=max_hosts)
@@ -166,7 +185,7 @@ def _fetch_paginated_board(
     total_pages = max(1, math.ceil(total / page_size))
 
     result: dict[str, float] = {}
-    _absorb_board_rows(rows, result)
+    _absorb_board_rows(rows, result, collect_codes=collect_codes)
     for page in range(2, total_pages + 1):
         page_params = {**params, "pn": str(page)}
         try:
@@ -176,7 +195,11 @@ def _fetch_paginated_board(
                 max_retries=max_retries,
                 max_hosts=max_hosts,
             )
-            _absorb_board_rows(payload.get("diff") or [], result)
+            _absorb_board_rows(
+                payload.get("diff") or [],
+                result,
+                collect_codes=collect_codes,
+            )
         except Exception as exc:
             logger.debug(
                 "eastmoney pagination stopped at page %s with %s rows: %s",
@@ -623,7 +646,12 @@ def _find_sector_row(rows: list[dict[str, Any]], sector_name: str) -> float | No
     return None
 
 
-def _absorb_board_rows(rows: list[dict[str, Any]], target: dict[str, float]) -> None:
+def _absorb_board_rows(
+    rows: list[dict[str, Any]],
+    target: dict[str, float],
+    *,
+    collect_codes: dict[str, str] | None = None,
+) -> None:
     for row in rows:
         name = row.get("f14")
         change = row.get("f3")
@@ -636,6 +664,132 @@ def _absorb_board_rows(rows: list[dict[str, Any]], target: dict[str, float]) -> 
             target[cleaned] = round(float(change), 4)
         except (TypeError, ValueError):
             continue
+        if collect_codes is not None:
+            code = str(row.get("f12") or "").strip()
+            if code:
+                collect_codes[cleaned] = code
+
+
+@lru_cache(maxsize=1)
+def _registry_index_codes_by_display_name() -> dict[str, frozenset[str]]:
+    """指数简称 -> 该简称在 registry 里被允许的证券代码集合。
+
+    ``boards["index"]`` 只能按简称索引，而下游（``resolve_sector_quote`` 的持久化
+    映射快捷路径、``fetch_canonical_sector_quote`` 的 board 兜底、模糊匹配）都会按
+    ``canon.source_name`` 去取值。所以这里要能回答一个问题：**这个简称下的行，到底
+    是不是 registry 认定的那只标的**。答案只由 registry 给出，不由东财的返回顺序给出。
+    """
+    from app.services.sector_registry_data import CANONICAL_SECTORS, THEME_BOARD_INDEX
+
+    allowed: dict[str, set[str]] = {}
+
+    def _register(display_name: str, code: str, kind: str) -> None:
+        if kind != "index":
+            return
+        name = str(display_name or "").strip()
+        cleaned_code = str(code or "").strip().upper()
+        if not name or not cleaned_code:
+            return
+        allowed.setdefault(name, set()).add(cleaned_code)
+
+    # 与 sector_registry._market_quote_for_label 同一优先级：主题指数优先，
+    # CANONICAL_SECTORS 仅补 THEME_BOARD_INDEX 未覆盖的 label。
+    for label, (_secid, code, kind) in THEME_BOARD_INDEX.items():
+        _register(label, code, kind)
+    for label, (_secid, code, kind, source_name) in CANONICAL_SECTORS.items():
+        if label in THEME_BOARD_INDEX:
+            continue
+        _register(source_name or label, code, kind)
+
+    return {name: frozenset(codes) for name, codes in allowed.items()}
+
+
+def _index_name_code_is_allowed(name: str, code: str | None) -> bool | None:
+    """``True``/``False`` = registry 认识该简称且代码匹配/不匹配；``None`` = 不认识。"""
+    allowed = _registry_index_codes_by_display_name().get(name)
+    if allowed is None:
+        return None
+    cleaned = str(code or "").strip().upper()
+    if not cleaned:
+        return None
+    return cleaned in allowed
+
+
+def _merge_index_pool(
+    target: dict[str, float],
+    target_codes: dict[str, str],
+    fetched: dict[str, float],
+    fetched_codes: dict[str, str],
+    *,
+    pool: str,
+) -> None:
+    """把一个指数池并入 ``boards["index"]``，禁止同名不同标的互相覆盖。
+
+    四个指数池（主要指数 / 中证 m:2 / 上证 m:1+t:1 / 深证 m:0+t:5）被压平进同一个
+    按简称索引的字典。此前是裸 ``update()``，于是**最后**并入的深证池（900+ 只）会
+    静默覆盖前面的池。真实事故：东财对深证 399262 与中证 931582 都显示简称
+    "数字经济"，而基金跟踪的是中证那只——覆盖之后，"数字经济" 的涨跌变成了另一只
+    成分完全不同的指数的涨跌（实测同一时刻 +2.29% vs +1.54%），并原样写进持仓行、
+    喂给模型、写成 "板块今日涨 +2.34%"。
+
+    冲突时的取舍顺序：
+    1. 同一只标的（代码相同）→ 用新值刷新；
+    2. registry 认定的那只标的 → 它赢，无论来自哪个池、第几个到；
+    3. registry 不认识这个简称 → **保留先到的**，不让后到的静默顶掉。
+    """
+    for name, change in fetched.items():
+        code = fetched_codes.get(name)
+        if name not in target:
+            target[name] = change
+            if code:
+                target_codes[name] = code
+            continue
+
+        existing_code = target_codes.get(name)
+        if code and existing_code and code == existing_code:
+            target[name] = change
+            continue
+
+        incoming_allowed = _index_name_code_is_allowed(name, code)
+        existing_allowed = _index_name_code_is_allowed(name, existing_code)
+        if incoming_allowed is True and existing_allowed is not True:
+            target[name] = change
+            if code:
+                target_codes[name] = code
+            continue
+
+        logger.debug(
+            "eastmoney index name collision kept existing: name=%s existing=%s incoming=%s pool=%s",
+            name,
+            existing_code,
+            code,
+            pool,
+        )
+
+
+def _drop_unverified_index_names(
+    board: dict[str, float],
+    index_codes: dict[str, str],
+) -> None:
+    """registry 认识这个简称、但采纳的行不是它认定的标的 → 移除该简称（fail-closed）。
+
+    合并期的消歧只能处理"两个池都到齐"的情况。中证池失败、只有深证那只同名指数到了
+    的时候没有冲突可判，裸留下来就又是一次静默替身。这里补最后一道：宁可让
+    ``boards["index"]["数字经济"]`` 缺席、把取值交回 canonical secid 路径
+    （identity 校验过的那条），也不交出一只名字对、成分不对的指数。
+
+    只在**确实拿到了代码**且代码不被允许时才删——拿不到代码证明不了任何事，
+    此时保持原样，不制造可用性回退。
+    """
+    for name in list(board):
+        if _index_name_code_is_allowed(name, index_codes.get(name)) is False:
+            logger.warning(
+                "eastmoney index name dropped as unverified: name=%s code=%s",
+                name,
+                index_codes.get(name),
+            )
+            board.pop(name, None)
+            index_codes.pop(name, None)
 
 
 # 经典行业/概念板块（与蚂蚁财富、东财资金流向页一致）；勿加 f:!50（该过滤为细分行业，如「防水材料」）

@@ -163,8 +163,10 @@ def refresh_holdings_sector_quotes(
                 timeout_seconds=timeout_seconds,
             )
             for board_type in ("index", "concept", "industry"):
-                merged = boards.get(board_type) or {}
-                merged.update(fetch_result.boards.get(board_type) or {})
+                merged = _merge_spot_board_under_canonical(
+                    canonical=boards.get(board_type),
+                    spot=fetch_result.boards.get(board_type),
+                )
                 boards[board_type] = merged
                 fetch_result.boards[board_type] = merged
         else:
@@ -608,3 +610,26 @@ def _effective_provider_path(
 
 def _board_entry_count(boards: dict[str, dict[str, float]]) -> int:
     return sum(len(board or {}) for board in boards.values())
+
+
+def _merge_spot_board_under_canonical(
+    *,
+    canonical: dict[str, float] | None,
+    spot: dict[str, float] | None,
+) -> dict[str, float]:
+    """现货榜只补 canonical 没覆盖到的简称，**不覆盖**已有条目。
+
+    `canonical` 是 `prefetch_canonical_kline_quotes` 写进来的那份：按 registry 的
+    secid 逐个标的拉取，高风险 label 还额外过了 `provider_identity_matches`。
+    `spot` 是全市场现货榜，只能按**简称**索引——而简称不唯一（东财对深证 399262
+    与中证 931582 都显示「数字经济」）。
+
+    此前这里是 `merged.update(spot)`，合并方向反了：一份没有身份保证的简称值会顶掉
+    已经按 secid 校验过的值。生产表现就是持仓行的「数字经济」从中证 931582 的
+    +1.54% 变成深证 399262 的 +2.29%，而同一份日报里走另一条路的 `sector_opportunity`
+    仍是 1.35——同一天同一板块两个数字。
+
+    这里的方向与 `sector_quote_provider._fill_missing_boards_from_akshare` 一致：
+    兜底源只填空缺，不改写更可信的那一份。
+    """
+    return {**(spot or {}), **(canonical or {})}
