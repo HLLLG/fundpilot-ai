@@ -270,7 +270,20 @@ def test_weak_evidence_and_weak_vehicle_each_step_down_once() -> None:
     """两个独立维度：收益证据与工具合格性，各降一级。"""
     percent, basis, _note = _position(
         {"applicable": True, "status": "watch_only", "penalties": ["跟踪误差偏高"]},
-        evidence={"composite": {"level": "中", "score": 2.0}},
+        evidence={
+            # 「可用但偏弱」才降一档：`reliability.usable` 是判据，只给 composite.level
+            # 在新口径下不再触发降档（证据不可用 ≠ 基金更弱）。
+            "composite": {"level": "中", "score": 2.0},
+            "components": [
+                {
+                    "source": "factor",
+                    "role": "return_signal",
+                    "level": "中",
+                    "direction": "positive",
+                    "reliability": {"level": "中", "scope": "peer_group", "usable": True},
+                }
+            ],
+        },
     )
 
     assert percent == 10.0

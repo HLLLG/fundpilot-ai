@@ -76,6 +76,12 @@ def _facts_with_holding(sector_opportunity=None, evidence=None) -> dict:
     return {"holdings": [row]}
 
 
+#: A（2026-08-12）之后基金侧证据弱**不再单独**拦加仓，所以要验证它的措辞，必须同时给出
+#: 一个板块侧弱项——那才是这句话在生产里真正出现的场景。用 `opportunity_available=False`
+#: 是最小的板块侧弱项。
+_SECTOR_WEAK = {"opportunity_available": False}
+
+
 @pytest.mark.parametrize(
     "components",
     [
@@ -93,7 +99,7 @@ def test_weak_composite_without_factor_component_reports_missing_ic_coverage(
     if components is not None:
         evidence["components"] = components
 
-    reasons = _weak_evidence_reasons(None, evidence)
+    reasons = _weak_evidence_reasons(_SECTOR_WEAK, evidence)
 
     assert "IC 回测未覆盖，现有量化证据置信偏低" in reasons
     assert "量化证据背书弱" not in reasons
@@ -101,7 +107,7 @@ def test_weak_composite_without_factor_component_reports_missing_ic_coverage(
 
 def test_weak_composite_with_factor_component_retains_weak_evidence_reason() -> None:
     reasons = _weak_evidence_reasons(
-        None,
+        _SECTOR_WEAK,
         {
             "composite": {"level": "不足"},
             "components": [
@@ -114,6 +120,39 @@ def test_weak_composite_with_factor_component_retains_weak_evidence_reason() -> 
 
     assert "量化证据背书弱" in reasons
     assert "IC 回测未覆盖，现有量化证据置信偏低" not in reasons
+
+
+def test_fund_side_weakness_alone_no_longer_blocks_an_add() -> None:
+    """A 的本体：板块侧全部站得住时，基金侧证据弱只降档、不再降为观察。
+
+    这正是 011036 的生产形态——`entry_state=ready_to_start`、`confidence=高`、
+    `opportunity_available=True`，只有基金侧那个 peer_group 常量在拦。
+    """
+    sector_ok = {
+        "opportunity_available": True,
+        "confidence": "高",
+        "entry_state": "ready_to_start",
+    }
+    evidence = {
+        "composite": {"level": "低"},
+        "components": [{"source": "factor", "level": "低", "basis": "主因子动量·IC偏弱"}],
+    }
+
+    assert _weak_evidence_reasons(sector_ok, evidence) == []
+
+
+def test_sector_side_weakness_still_blocks_and_lists_the_fund_reason() -> None:
+    """不对称是刻意的：板块侧弱项照旧无条件拦，并把基金侧弱项作为补充列出。"""
+    reasons = _weak_evidence_reasons(
+        {"opportunity_available": True, "confidence": "高", "entry_state": "forming"},
+        {
+            "composite": {"level": "低"},
+            "components": [{"source": "factor", "level": "低", "basis": "主因子动量·IC偏弱"}],
+        },
+    )
+
+    assert "板块方向条件仍在形成中" in reasons
+    assert "量化证据背书弱" in reasons
 
 
 def test_full_guard_ignores_non_dict_evidence_components() -> None:
@@ -441,6 +480,48 @@ def _strong_fund_evidence() -> dict:
     return {"composite": {"level": "高", "score": 3.0}}
 
 
+def _usable_medium_fund_evidence() -> dict:
+    """「证据**可用**但偏弱」：可靠性放行（中），因此降一档是真的"基金更弱"。
+
+    必须带 `components[].reliability.usable=True`——`_fund_evidence_is_usable` 认的是
+    这个标记，不是 `composite.level`。只写 `composite.level=中` 在新口径下是构造不出来的
+    数据（中档只可能由一条可靠性放行的分量产生），也正是本次修复要区分的那条边界。
+    """
+    return {
+        "composite": {"level": "中", "score": 2.0},
+        "components": [
+            {
+                "source": "factor",
+                "role": "return_signal",
+                "level": "中",
+                "direction": "positive",
+                "reliability": {"level": "中", "scope": "peer_group", "usable": True},
+            }
+        ],
+    }
+
+
+def _unusable_reliability_fund_evidence() -> dict:
+    """线上当前的真实形态：因子分量在，但同类 IC 不可靠 → 该路没有产出可用结论。"""
+    return {
+        "composite": {"level": "不足", "score": 0},
+        "components": [
+            {
+                "source": "factor",
+                "role": "return_signal",
+                "level": "不足",
+                "direction": "unknown",
+                "reliability": {
+                    "level": "低",
+                    "scope": "peer_group",
+                    "usable": False,
+                    "basis": "指数基金未来20日 IC +0.043，样本外/区间稳定性不足",
+                },
+            }
+        ],
+    }
+
+
 def test_conservative_profile_does_not_cap_opportunity_percentage() -> None:
     request = _request(decision_style="conservative")
 
@@ -491,22 +572,27 @@ def test_add_percentage_prefers_research_score_and_falls_back_safely(
     [
         pytest.param(_strong_fund_evidence(), 20.0, None, id="high_keeps_sector_tier"),
         pytest.param(
-            {"composite": {"level": "中", "score": 2.0}},
+            _usable_medium_fund_evidence(),
             15.0,
             "基金自身正向量化支持中，档位下调至 15%",
-            id="medium_steps_down_one_tier",
+            id="usable_medium_steps_down_one_tier",
         ),
-        pytest.param(
-            None,
-            15.0,
-            "基金自身量化支持暂缺，档位下调至 15%",
-            id="missing_evidence_steps_down_one_tier",
-        ),
+        # 以下三种都属于「这一路没有产出可用结论」，按本仓既有原则
+        # （证据缺失 ≠ 基金更弱）**不动档位**。此前三者都降一档，而因子可靠性在
+        # current_survivors cohort 下天花板只有「中」、这里要求「高」才满档，
+        # 于是变成对所有持仓恒定降一档——一个不携带信息的全局保守系数。
+        pytest.param(None, 20.0, None, id="missing_evidence_keeps_tier"),
         pytest.param(
             {"composite": {"level": "不足", "score": 0}},
-            15.0,
-            "基金自身正向量化支持不足，档位下调至 15%",
-            id="insufficient_matches_missing",
+            20.0,
+            None,
+            id="insufficient_keeps_tier",
+        ),
+        pytest.param(
+            _unusable_reliability_fund_evidence(),
+            20.0,
+            None,
+            id="unusable_reliability_keeps_tier",
         ),
     ],
 )

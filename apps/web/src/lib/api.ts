@@ -747,6 +747,18 @@ export type EvidenceCoverageMetric = {
   level: string;
   percent?: number | null;
   basis?: string;
+  /** 机器可判的口径标识，例如 `fund_feature_completeness`（特征齐全度，非统计样本量）。 */
+  metric?: string;
+};
+
+/**
+ * 可靠性块。`scope` 是关键：`peer_group` 表示这是**同类基金共用的**因子统计属性
+ * （同一同类组内每只基金相同），只能决定该路证据是否可用（`usable`），
+ * 不能当作这只基金自身的优劣。
+ */
+export type EvidenceReliabilityMetric = EvidenceLevelMetric & {
+  scope?: "peer_group" | "sector_rule" | string;
+  usable?: boolean;
 };
 
 export type EvidenceFreshnessMetric = {
@@ -757,12 +769,14 @@ export type EvidenceFreshnessMetric = {
 
 export type EvidenceComponent = {
   source: string;
-  role?: "return_signal" | "risk_guard" | string;
+  role?: "return_signal" | "risk_guard" | "historical_validation" | string;
+  /** 该路证据的支持强度（来自该标的自身的信号），可靠性不放行时为「不足」。 */
   level: string;
   basis: string;
-  reliability?: EvidenceLevelMetric;
+  reliability?: EvidenceReliabilityMetric;
   direction?: "positive" | "negative" | "mixed" | "neutral" | "risk" | "unknown" | string;
-  effect_size?: EvidenceLevelMetric;
+  /** `metric=factor_percentile_extremity` 时衡量的是因子横截面位置，不是收益效应量。 */
+  effect_size?: EvidenceLevelMetric & { metric?: string; percentile?: number | null };
   coverage?: EvidenceCoverageMetric;
   freshness?: EvidenceFreshnessMetric;
 };
@@ -772,7 +786,7 @@ export type HoldingEvidence = {
   composite: {
     level: string;
     score: number;
-    reliability?: EvidenceLevelMetric;
+    reliability?: EvidenceReliabilityMetric;
     direction?: "positive" | "negative" | "mixed" | "neutral" | "unknown" | string;
     effect_size?: EvidenceLevelMetric;
     coverage?: EvidenceCoverageMetric;

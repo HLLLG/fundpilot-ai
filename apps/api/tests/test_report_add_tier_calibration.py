@@ -72,6 +72,26 @@ def _strong_fund_evidence() -> dict:
     return {"composite": {"level": "高", "score": 3.0}}
 
 
+def _usable_medium_fund_evidence() -> dict:
+    """「证据可用但偏弱」才降一档；`reliability.usable` 是 `_fund_evidence_is_usable` 的判据。
+
+    只写 `composite.level=中` 已不足以触发降档——那种数据在新口径下构造不出来（中档只能
+    由一条可靠性放行的分量产生），而"证据不可用"按本仓原则不算基金更弱。
+    """
+    return {
+        "composite": {"level": "中", "score": 2.0},
+        "components": [
+            {
+                "source": "factor",
+                "role": "return_signal",
+                "level": "中",
+                "direction": "positive",
+                "reliability": {"level": "中", "scope": "peer_group", "usable": True},
+            }
+        ],
+    }
+
+
 def _percent(sector_opportunity: dict | None, **kwargs) -> tuple[float | None, str]:
     request = _request()
     percent, basis, _note = _resolve_deterministic_position_change(
@@ -242,7 +262,7 @@ def test_v3_row_without_a_finite_direction_score_falls_back_to_legacy() -> None:
 def test_fund_evidence_still_steps_the_v3_tier_down() -> None:
     full, _ = _percent(_v3_row(76.5))
     stepped, basis = _percent(
-        _v3_row(76.5), evidence={"composite": {"level": "中", "score": 2.0}}
+        _v3_row(76.5), evidence=_usable_medium_fund_evidence()
     )
 
     assert full == 20.0

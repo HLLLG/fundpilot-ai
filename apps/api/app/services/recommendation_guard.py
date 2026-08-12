@@ -282,8 +282,12 @@ def apply_recommendation_guards(
             if weak_reasons:
                 normalized = "观察"
                 max_bucket = min(max_bucket, ACTION_BUCKET_WATCH)
+                # 措辞从「板块或基金证据不足」收紧为「板块方向证据不足」：A 之后
+                # `_weak_evidence_reasons` 只在板块侧命中时才返回非空，所以"板块"必然
+                # 成立。旧措辞那个"或"字让用户无法判断到底哪一路出了问题——实测
+                # 011036 板块侧全部通过、只有基金侧的常量在拦，却也显示这句话。
                 weak_note = (
-                    f"板块或基金证据不足（{'、'.join(weak_reasons)}），"
+                    f"板块方向证据不足（{'、'.join(weak_reasons)}），"
                     "已将加仓类动作降为「观察」。"
                 )
 
@@ -835,9 +839,27 @@ def _fund_evidence_add_percent(
     sector_percent: float,
     evidence: dict | None,
 ) -> tuple[float, str | None]:
-    """按基金自身正向量化支持决定是否把板块档位下调一级。"""
+    """按基金自身正向量化支持决定是否把板块档位下调一级。
+
+    **证据不可用不降档。** 本仓既有原则是「证据缺失 ≠ 基金更弱」（见本文件里
+    "绝对封顶等于把「证据缺失」当成「基金更弱」" 那条注释），但此前这里只判
+    `level != 高` 就降一档，等于把"没有可用证据"也算成短板。
+
+    这在当前配置下不是边缘情形而是全体命中：因子可靠性由
+    `factor_confidence._research_factor_confidence` 按 peer_group 给出，
+    `cohort_mode="current_survivors"` 时**天花板只有「中」**（该函数注释写明），
+    而这里要求「高」才用满档 —— 于是**任何持仓在任何一天都必然被降一档**，
+    一个恒定的降档不携带任何信息，只是伪装成证据推理的全局保守系数。
+
+    现在分三种情形：
+      * 有可用证据且为「高」→ 满档；
+      * 有可用证据但偏弱     → 降一档（这才是真的"基金更弱"）；
+      * 没有可用证据         → 不动档位（可靠性不达标时该路压根没产出结论）。
+    """
     level = _composite_level(evidence)
     if str(level or "") == _FUND_EVIDENCE_FULL_TIER_LEVEL:
+        return sector_percent, None
+    if not _fund_evidence_is_usable(evidence):
         return sector_percent, None
     stepped = _tier_percent_one_step_down(sector_percent)
     if stepped >= sector_percent:
@@ -848,6 +870,28 @@ def _fund_evidence_add_percent(
         else "基金自身量化支持暂缺"
     )
     return stepped, f"{reason}，档位下调至 {stepped:g}%"
+
+
+def _fund_evidence_is_usable(evidence: dict | None) -> bool:
+    """是否存在**可靠性放行**的收益类证据。
+
+    `reliability.usable` 由 `signal_synthesis._reliability_block` 写入（可靠性 ∈ {高, 中}）。
+    没有这类分量时，基金侧量化证据这一路没有产出可用结论——既不该背书，也不该当短板。
+    """
+    if not isinstance(evidence, dict):
+        return False
+    components = evidence.get("components")
+    if not isinstance(components, (list, tuple)):
+        return False
+    for component in components:
+        if not isinstance(component, dict):
+            continue
+        if component.get("role") != "return_signal":
+            continue
+        reliability = component.get("reliability")
+        if isinstance(reliability, dict) and reliability.get("usable") is True:
+            return True
+    return False
 
 
 # 方向成熟度（`sector_entry_maturity.2026-08.v3`）在日报侧的两处消费。
@@ -1683,32 +1727,55 @@ def _weak_evidence_reasons(
     *,
     sector_absence_reason: str | None = None,
 ) -> list[str]:
-    """加仓类动作要求「板块方向」与「基金自身证据」至少有一路站得住，否则视为证据不足。
+    """板块方向侧的弱项照旧拦加仓；**基金侧量化证据弱不再单独拦**。
 
     `sector_absence_reason` 由调用方通过 `_sector_direction_absence_reason` 计算后传入
     （它需要 `holding` 才能区分缺席原因，而本函数刻意只吃证据、不吃持仓）。
+
+    改动背景（2026-08-12，用户决策）：此前实现把所有弱项收集起来，**任意一条**非空即降级，
+    与本函数原 docstring 声称的「至少有一路站得住」直接矛盾。实测后果是加仓在任何一天对
+    任何持仓都不可达——`_weak_quantitative_evidence_reason` 判的是
+    `evidence.composite.level ∈ {低, 不足}`，而在旧口径下该值等于因子 IC 可靠性，
+    是 peer_group 级常量且当前恒为「低」。011036 板块侧
+    `entry_state=ready_to_start`、`confidence=高`、趋势 71.29 全部通过，模型也确实拟了
+    「分批加仓」，仍被这个常量拦下。
+
+    **不对称是刻意的。** 只解除基金侧的单独否决，板块侧照旧无条件拦：
+      * 方向证据整层缺席、`opportunity_available=False`、置信偏低、资金流偏弱、
+        `entry_state` 未通过入场线 —— 这些都是逐只逐日真实变化、且是"先看板块方向"这条
+        决策顺序的前置条件，放松它们会让系统对一个没通过入场线的方向加仓，
+        与荐基侧的既有硬门冲突；
+      * 基金侧证据弱则改由 `_fund_evidence_add_percent` 的降一档承担（且证据不可用时
+        连降档也不做，见该函数）。
+
+    板块侧命中时，基金侧的弱项仍会一并列出作为补充说明——它解释"为什么不只是降档"。
     """
-    reasons: list[str] = []
+    sector_reasons: list[str] = []
     if sector_absence_reason:
-        reasons.append(sector_absence_reason)
+        sector_reasons.append(sector_absence_reason)
     if sector_opportunity:
         if sector_opportunity.get("opportunity_available") is False:
-            reasons.append("持仓板块当前不构成机会")
+            sector_reasons.append("持仓板块当前不构成机会")
         confidence = str(sector_opportunity.get("confidence") or "")
         if confidence in {"低", "不足"}:
-            reasons.append("板块方向置信偏低")
+            sector_reasons.append("板块方向置信偏低")
         pattern = str(sector_opportunity.get("pattern_label") or "")
         if pattern in {"distribution", "weak_outflow"}:
-            reasons.append("板块资金流偏弱")
-    weak_quantitative_reason = _weak_quantitative_evidence_reason(evidence, ic_status)
-    if weak_quantitative_reason:
-        reasons.append(weak_quantitative_reason)
+            sector_reasons.append("板块资金流偏弱")
     # 方向成熟度档位。只在当天有主线快照（因此存在 entry_state）时才可能拦，
     # 缺席不拦——那是"没有这层证据"，不是"方向不成立"。
     entry_state_reason = _entry_state_add_block_reason(sector_opportunity)
     if entry_state_reason:
-        reasons.append(entry_state_reason)
-    return _append_unique([], reasons, limit=4)
+        sector_reasons.append(entry_state_reason)
+
+    if not sector_reasons:
+        return []
+
+    fund_reasons: list[str] = []
+    weak_quantitative_reason = _weak_quantitative_evidence_reason(evidence, ic_status)
+    if weak_quantitative_reason:
+        fund_reasons.append(weak_quantitative_reason)
+    return _append_unique([], [*sector_reasons, *fund_reasons], limit=4)
 
 
 def _backfill_decision_fields(

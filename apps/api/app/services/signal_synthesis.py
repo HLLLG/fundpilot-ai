@@ -14,6 +14,54 @@ _LEVEL_SCORE = {"高": 3, "中": 2, "低": 1}
 _OVERVIEW_LEVELS = ("高", "中", "低", "不足")
 _FACTOR_KEYS = ("momentum", "risk_adjusted", "drawdown")
 _FACTOR_LABEL = {"momentum": "动量", "risk_adjusted": "风险调整", "drawdown": "回撤控制"}
+
+#: 可靠性达到这两档，该路证据才允许参与结论（既可背书也可作负面依据）。
+#:
+#: 低/不足 表示「这个因子在这类基金上没有被证明可用」，此时它既不能背书也不能当负面
+#: 证据——用一个符号都站不住的估计去断言方向，比不给方向更糟。
+_USABLE_RELIABILITY_LEVELS = frozenset({"高", "中"})
+
+
+def _reliability_block(
+    level: object,
+    *,
+    basis: str,
+    scope: str,
+    score: float | None = None,
+) -> dict[str, Any]:
+    """统一的可靠性块，并**显式披露作用域**。
+
+    `scope` 是本次重构的关键字段。因子可靠性来自
+    `portfolio_snapshot` 的 `factor_reliability(research_model=..., segment=peer_group)`，
+    是**同类组级常量**——同一 peer_group 内每只基金逐字相同（实测 002610 与 015788 同为
+    指数型，momentum 依据文本完全一致）。此前它被直接当作组件的 `level`，于是
+    `evidence.composite.level` 实际等于「这个因子在这类基金上灵不灵」，对同类基金恒等、
+    **没有任何横截面区分能力**，却被 guard 当成逐只基金的一票否决依据。
+
+    把作用域写进 payload，是为了让下游（guard / prompt / 前端）不可能再把它误读成
+    「这只基金的量化质量」。
+    """
+    normalized = str(level or "不足")
+    return {
+        "level": normalized,
+        "score": _LEVEL_SCORE.get(normalized, 0) if score is None else score,
+        "basis": basis,
+        "scope": scope,
+        "usable": normalized in _USABLE_RELIABILITY_LEVELS,
+    }
+
+
+def _support_level(effect: dict[str, Any], reliability: dict[str, Any]) -> str:
+    """该路证据的支持强度 = **这个标的自身的信号强度**，且必须由可靠性放行。
+
+    与旧实现的区别：旧实现是 `level = reliability.level`，即用同类组常量顶替了逐只信号。
+    现在两者各归其位——`effect_size` 提供逐只区分度，`reliability` 只有放行/不放行两种作用，
+    不再冒充强度。可靠性不可用时返回「不足」（= 这路没产出可用证据），而不是「低」
+    （= 有证据但弱）：两者在 guard 与文案里的含义完全不同。
+    """
+    if not reliability.get("usable"):
+        return "不足"
+    return str(effect.get("level") or "不足")
 def synthesize_confidence(component_levels: list[str]) -> dict:
     """兼容旧调用：聚合可靠性等级，返回 ``{level, score}``。"""
     scores = [_LEVEL_SCORE[lv] for lv in component_levels if lv in _LEVEL_SCORE]
@@ -170,9 +218,36 @@ def _factor_component(fund_code: str, factor_scores: dict | None) -> dict | None
     )
     pct = float(pct_source[key])
     basis_text = str(rel.get("basis") or "")
-    direction = "neutral" if 45 <= pct <= 55 else ("positive" if pct > 55 else "negative")
-    if "反向" in basis_text or "均值回归" in basis_text:
-        direction = {"positive": "negative", "negative": "positive"}.get(direction, direction)
+    reliability = _reliability_block(
+        rel.get("level"),
+        basis=basis_text or "未提供 IC 可靠性依据",
+        scope="peer_group",
+    )
+    # 方向只由该基金的因子百分位给出，且**必须**可靠性放行。
+    #
+    # 删掉的是这一段：
+    #     if "反向" in basis_text or "均值回归" in basis_text:
+    #         direction = {"positive": "negative", "negative": "positive"}[direction]
+    # 它有两个问题。① 逻辑自相矛盾：系统先因为"样本外符号反转"把该因子判为不可靠，
+    # 又拿这个反转去断言方向为正。实测 011036 回撤控制百分位 16（该维度倒数），本应
+    # negative，被翻转成 positive，日报于是写出「基金量化信号偏均值回归但方向正向」，
+    # 用户读到"方向正向"会以为这只基金因子表现好。② 判据是对中文 basis 做子串匹配，
+    # 措辞一改就静默失效。
+    #
+    # 而且这段代码**只可能作用在不可靠的证据上**：所有产出「反向/均值回归」文案的分支
+    # （`factor_confidence._research_factor_confidence` 与 legacy `factor_confidence`）
+    # 都同时把 level 定为「低」。该不变量由
+    # `test_quant_evidence_semantics.py::test_reversal_basis_always_comes_with_unusable_reliability`
+    # 锁住——哪天有生产者破坏它，测试会先响，而不是这里静默给出一个翻转过的方向。
+    direction = (
+        "unknown"
+        if not reliability["usable"]
+        else "neutral"
+        if 45 <= pct <= 55
+        else "positive"
+        if pct > 55
+        else "negative"
+    )
     completeness = _number(
         row.get("typed_feature_completeness")
         if factor_family == "fund_type_specific"
@@ -190,20 +265,37 @@ def _factor_component(fund_code: str, factor_scores: dict | None) -> dict | None
     )
     factor_prefix = "类型因子" if factor_family == "fund_type_specific" else "主因子"
     basis = f"{factor_prefix} {label}(百分位{pct:g})·IC{basis_text}"
+    # `effect_size` 装的是 |百分位 − 50| × 2，即**这只基金在该因子上有多极端**，
+    # 不是收益效应量。旧文案「因子百分位偏离中位 X 点」+ 档位「高」很容易被读成
+    # "效应强度高"：任何百分位落在 20/80 之外的基金都会自动拿到「高」，而它乘上
+    # IC≈0.04 之后的真实收益差异极小。`metric` 是给下游的机器可判标识，`basis`
+    # 自带口径说明，避免只靠外部文档约束。
+    effect = _effect(
+        abs(pct - 50) * 2,
+        f"该基金在此因子的同类百分位 {pct:g}（偏离中位 {abs(pct - 50):.1f} 点）；"
+        "衡量的是横截面位置，不是收益效应量",
+    )
+    effect["metric"] = "factor_percentile_extremity"
+    effect["percentile"] = pct
+    # `coverage` 装的是 feature_completeness，即**基金特征字段齐不齐**，
+    # 与 IC 估计的统计样本覆盖无关。旧 basis 只写「基金特征完整度」，
+    # 摆在 reliability 旁边时会被当成统计可信度的一部分。
+    coverage = _coverage(
+        coverage_percent,
+        "基金特征字段完整度（数据齐全度，非 IC 统计样本覆盖）",
+    )
+    coverage["metric"] = "fund_feature_completeness"
     return {
         "source": "factor",
         "factor_family": factor_family,
         "factor_key": key,
         "role": "return_signal",
-        "level": str(rel.get("level") or "不足"),
-        "reliability": {
-            "level": str(rel.get("level") or "不足"),
-            "score": _LEVEL_SCORE.get(str(rel.get("level")), 0),
-            "basis": basis_text or "未提供 IC 可靠性依据",
-        },
+        # 不再等于 reliability.level（同类组常量）；见 `_support_level`。
+        "level": _support_level(effect, reliability),
+        "reliability": reliability,
         "direction": direction,
-        "effect_size": _effect(abs(pct - 50) * 2, f"因子百分位偏离中位 {abs(pct - 50):.1f} 点"),
-        "coverage": _coverage(coverage_percent, "基金特征完整度"),
+        "effect_size": effect,
+        "coverage": coverage,
         "freshness": _freshness(
             status=state,
             as_of=ic_status.get("run_date") or ic_status.get("generated_at"),
@@ -269,17 +361,27 @@ def _signal_component(signal_entry: dict | None) -> dict | None:
         if is_current_signal
         else f"板块规则历史回测 {label}·{conf.get('basis', '')}（未提供当日触发方向）"
     )
+    # 与因子路同一处理：`reliability` 是这条规则的**回测**可靠性（规则级，不是标的级），
+    # 只负责放行；强度由该规则自己的 edge 提供。此前 `level` 也直接取 conf.level，
+    # 同样是让可靠性冒充强度，会让 `composite.level` 的语义在两条路之间不一致。
+    reliability = _reliability_block(
+        conf.get("level"),
+        basis=str(conf.get("basis") or "未提供回测可靠性依据"),
+        scope="sector_rule",
+        score=_number(conf.get("score")),
+    )
+    effect = _effect(
+        abs(edge) * 5 if edge is not None else None,
+        "相对自然基线的 edge",
+    )
+    effect["metric"] = "backtest_edge_vs_natural_baseline"
     return {
         "source": "signal",
         "role": "return_signal" if is_current_signal else "historical_validation",
-        "level": str(conf.get("level") or "不足"),
-        "reliability": {
-            "level": str(conf.get("level") or "不足"),
-            "score": _number(conf.get("score")),
-            "basis": str(conf.get("basis") or "未提供回测可靠性依据"),
-        },
+        "level": _support_level(effect, reliability),
+        "reliability": reliability,
         "direction": direction,
-        "effect_size": _effect(abs(edge) * 5 if edge is not None else None, "相对自然基线的 edge"),
+        "effect_size": effect,
         "coverage": _coverage(
             min(triggers / 50 * 100, 100) if triggers else 0,
             f"历史触发 {triggers} 次",
