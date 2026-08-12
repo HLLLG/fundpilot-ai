@@ -18,11 +18,18 @@ import pytest
 
 from app.database import (
     _project_discovery_report_diagnostics,
+    list_discovery_report_decision_diagnostics,
+    list_discovery_reports,
     list_report_decision_diagnostics,
     list_reports,
+    save_discovery_report,
     save_report,
 )
-from app.models import Holding, Report, RiskAssessment
+from app.models import FundDiscoveryReport, Holding, Report, RiskAssessment
+from app.services.decision_score_shadow import (
+    build_decision_score_shadow,
+    build_decision_score_shadow_digest,
+)
 from app.services.llm_judge_digest import build_llm_judge_digest
 from app.services.shadow_escalation_digest import build_shadow_escalation_digest
 
@@ -182,6 +189,90 @@ def test_discovery_diagnostic_projection_keeps_hints_and_sector_labels() -> None
     assert projected["candidate_pool"] == [
         {"fund_code": "519212", "sector_label": "白酒"}
     ]
+
+
+# --------------------------------------------------------------------------- #
+# decision score shadow digest —— 与上面同源的第三个消费者，当时被漏掉了
+# --------------------------------------------------------------------------- #
+
+
+def _shadow_artifact() -> dict:
+    return build_decision_score_shadow(
+        [{"fund_code": "519212", "quality_gate": {"status": "eligible"}}],
+        candidate_factor_scores=None,
+        portfolio_gap=None,
+        profile=None,
+        decision_at=datetime.now(timezone.utc),
+        minimum_holding_days=7,
+    )
+
+
+def _discovery_report_with_shadow() -> FundDiscoveryReport:
+    return FundDiscoveryReport(
+        title="测试荐基",
+        discovery_facts={
+            "decision_score_shadow": _shadow_artifact(),
+            "pipeline": {"analysis_mode": "deep"},
+        },
+        candidate_pool=[{"fund_code": "519212", "sector_label": "白酒"}],
+    )
+
+
+def test_discovery_diagnostic_projection_keeps_the_whole_shadow_artifact() -> None:
+    """整份保留，含 rows：validate_* 要逐行复核 row_hash，缺 rows 会判成无效。"""
+    projected = _project_discovery_report_diagnostics(
+        {
+            "discovery_facts": {
+                "decision_score_shadow": {
+                    "schema_version": "decision_score_shadow.v2",
+                    "model_version": "decision_score.v2",
+                    "rows": [{"fund_code": "519212", "row_hash": "deadbeef"}],
+                },
+                "sector_opportunities": [{"sector_label": "白酒"}] * 50,
+            },
+        }
+    )
+
+    facts = projected["discovery_facts"]
+    assert facts["decision_score_shadow"]["rows"] == [
+        {"fund_code": "519212", "row_hash": "deadbeef"}
+    ]
+    # 体积大户照旧不许进来。
+    assert "sector_opportunities" not in facts
+
+
+def test_decision_score_digest_sees_artifacts_through_the_real_read_path() -> None:
+    """不注入：落库一份带制品的荐基报告，digest 必须真的数出来。"""
+    save_discovery_report(_discovery_report_with_shadow())
+
+    digest = build_decision_score_shadow_digest(
+        list_discovery_report_decision_diagnostics(limit=10)
+    )
+
+    assert digest["report_count"] == 1
+    assert digest["total_artifact_count"] == 1
+    assert digest["artifact_count"] == 1
+    assert digest["latest"] is not None
+
+
+def test_old_data_source_would_have_reported_zero_decision_score_artifacts() -> None:
+    """反证：同一份数据用列表投影喂进去，制品数恒为 0，而报告数两边都是 1。
+
+    修复前 evidence-maturity 的 decision_score_shadow 就是这样恒为 0 的，面板却把
+    这个「读不到」显示成「还在积累」，并建议用户多生成报告——那个建议不可能奏效。
+    """
+    save_discovery_report(_discovery_report_with_shadow())
+
+    via_projection = build_decision_score_shadow_digest(list_discovery_reports())
+    via_diagnostics = build_decision_score_shadow_digest(
+        list_discovery_report_decision_diagnostics(limit=10)
+    )
+
+    assert via_projection["report_count"] == 1
+    assert via_projection["total_artifact_count"] == 0
+
+    assert via_diagnostics["report_count"] == 1
+    assert via_diagnostics["total_artifact_count"] == 1
 
 
 # --------------------------------------------------------------------------- #

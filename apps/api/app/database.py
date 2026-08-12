@@ -2423,17 +2423,25 @@ def _project_discovery_report_diagnostics(payload: dict[str, Any]) -> dict[str, 
 
     只保留 `escalation_hints` / `decision_escalation_mode` / `pipeline`，以及候选池里
     「代码 → 板块标签」这一列——摘要要用它给触发项标注板块，但不需要整份候选行。
+
+    `decision_score_shadow` 必须**整份**保留，不能只留 coverage 计数：
+    `validate_decision_score_shadow` 会逐行复核 `rows[].row_hash` 与组件结构，缺了
+    `rows` 会判成 `rows_invalid`，于是 digest 把真实制品数成「0 份有效」。这是它比
+    其它键更重的唯一原因，别按体积把它裁掉——裁掉就等于让 DecisionScore 那条证据线
+    永远停在 0（该缺陷已在 `list_discovery_reports` 那条路上真实发生过一次）。
     """
     facts = payload.get("discovery_facts")
     facts_map = facts if isinstance(facts, dict) else {}
     hints = facts_map.get("escalation_hints")
     pipeline = facts_map.get("pipeline")
+    shadow = facts_map.get("decision_score_shadow")
     return {
         "analysis_mode": payload.get("analysis_mode"),
         "discovery_facts": {
             "escalation_hints": hints if isinstance(hints, dict) else {},
             "decision_escalation_mode": facts_map.get("decision_escalation_mode"),
             "pipeline": pipeline if isinstance(pipeline, dict) else {},
+            **({"decision_score_shadow": shadow} if isinstance(shadow, dict) else {}),
         },
         "candidate_pool": [
             {

@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError
 
 from app.config import get_settings
-from app.database import list_discovery_reports
+from app.database import list_discovery_report_decision_diagnostics
 from app.request_context import get_request_user_id
 from app.services.decision_score_shadow import build_decision_score_shadow_digest
 from app.services.evidence_maturity import build_evidence_maturity_status
@@ -226,8 +226,9 @@ def decision_score_shadow_digest(limit: int = 30) -> dict:
     """Summarize current-user DecisionScore coverage and Top-K differences."""
 
     bounded_limit = max(1, min(limit, 100))
+    # 与 evidence_maturity 同理：列表投影不含 discovery_facts，必须走诊断切片。
     return build_decision_score_shadow_digest(
-        list_discovery_reports(limit=bounded_limit)
+        list_discovery_report_decision_diagnostics(limit=bounded_limit)
     )
 
 

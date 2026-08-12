@@ -109,7 +109,11 @@ def _patch_sources(monkeypatch) -> None:
         "read_factor_ic_universe_history",
         _universe_history,
     )
-    monkeypatch.setattr(evidence_maturity, "list_discovery_reports", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        evidence_maturity,
+        "list_discovery_report_decision_diagnostics",
+        lambda **_kwargs: [],
+    )
     monkeypatch.setattr(
         evidence_maturity,
         "read_latest_decision_quality_snapshot",

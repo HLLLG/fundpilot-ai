@@ -181,6 +181,7 @@ class PointInTimeMember:
     fund_code: str
     fund_type: str = "unknown"
     available_at: datetime | None = None
+    inception_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -255,8 +256,41 @@ def _normalise_members(raw: Any, *, snapshot_date: date) -> tuple[PointInTimeMem
                 row.get("fund_type") or row.get("segment") or "unknown"
             ).lower(),
             available_at=available_at,
+            inception_date=_optional_date(row.get("inception_date")),
         )
     return tuple(members[code] for code in sorted(members))
+
+
+def _optional_date(value: Any) -> date | None:
+    """Tolerant parse for optional member metadata; unusable input means unknown."""
+    if value in (None, ""):
+        return None
+    try:
+        return _parse_date(value, field="member.inception_date")
+    except ValueError:
+        return None
+
+
+def _provably_short_history(
+    calendar: list[str],
+    *,
+    inception_date: date | None,
+    as_of: str,
+    minimum_points: int,
+) -> bool:
+    """True only when the inception date alone proves the feature window is short.
+
+    A missing or unparsable inception date returns False: absent evidence is not
+    disqualifying, and the downstream NAV history check stays authoritative.
+    """
+    if inception_date is None or minimum_points <= 0:
+        return False
+    start = inception_date.isoformat()
+    if start > as_of:
+        return True
+    left = bisect.bisect_left(calendar, start)
+    right = bisect.bisect_right(calendar, as_of)
+    return (right - left) < minimum_points
 
 
 def normalize_universe_snapshots(
@@ -867,6 +901,17 @@ def compute_point_in_time_segmented_ic(
             continue
         by_segment: dict[str, list[str]] = {}
         for member in snapshot.members:
+            if _provably_short_history(
+                calendar,
+                inception_date=member.inception_date,
+                as_of=anchor,
+                minimum_points=factor_lookback,
+            ):
+                # 成立日已证明该锚点上凑不出 factor_lookback 个净值点。这类标的
+                # 本来就被下游 len(history) 检查拒掉、从不进入因子横截面，把它们
+                # 计入分母会让覆盖率变成「样本有多年轻」而不是「历史池有多少可用
+                # 净值」——门槛 0.90 因此长期压在结构上限上。
+                continue
             cohort_memberships += 1
             if member.fund_code not in indexed:
                 continue

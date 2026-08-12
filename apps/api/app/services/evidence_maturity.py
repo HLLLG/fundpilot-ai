@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.background_worker import inspect_worker_health
-from app.database import list_discovery_reports
+from app.database import list_discovery_report_decision_diagnostics
 from app.services.decision_quality_snapshot import (
     MIN_MANUAL_REVIEW_LABEL_COVERAGE_PERCENT,
     MIN_MANUAL_REVIEW_MATURE_DECISION_DAYS,
@@ -338,7 +338,13 @@ def _factor_projection(
 
 
 def _decision_score_projection() -> tuple[dict[str, Any], list[dict[str, str]]]:
-    digest = build_decision_score_shadow_digest(list_discovery_reports(limit=100))
+    # 必须走诊断切片：`list_discovery_reports` 按 `_DISCOVERY_SUMMARY_FIELDS` 投影，
+    # 整个 `discovery_facts` 都不在里面，于是 digest 恒数出 0 份制品，而面板会把这个
+    # 结构性读不到显示成「还在积累」。同类缺陷在 shadow_escalation/llm_judge 两条
+    # 摘要上已经修过一次，这条当时被漏掉了。
+    digest = build_decision_score_shadow_digest(
+        list_discovery_report_decision_diagnostics(limit=100)
+    )
     artifacts = _nonnegative_int(digest.get("artifact_count")) or 0
     candidates = _nonnegative_int(digest.get("candidate_count")) or 0
     scored = _nonnegative_int(digest.get("scored_count")) or 0
