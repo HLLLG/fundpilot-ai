@@ -112,6 +112,14 @@ V3_GATE_THRESHOLDS: dict[str, float] = {
     "participation": 35.0,
     "position": 25.0,
 }
+#: 退出用的趋势线，低于入场线，形成滞回带（60 进 / 52 出）。
+#:
+#: 定义放在这里而不是 `sector_direction_state`：它由 `V3_GATE_THRESHOLDS` 派生，而本模块
+#: 里也有三处需要知道"方向是不是已经破位"——入场等待条件的措辞、成形信号分的档位标签，
+#: 以及 `sector_direction_state` 的滞回。`sector_direction_state` 反过来 import 本模块，
+#: 所以定义留在那边会让本模块只能复写一遍 `- 8.0`，而"全代码库只有一条退出线"这句承诺
+#: 就退化成注释。`sector_direction_state` 继续 re-export 同名常量，既有导入方无需改动。
+EXIT_TREND_THRESHOLD = V3_GATE_THRESHOLDS["trend"] - 8.0
 #: `invalid` 的判定阈值：趋势与参与度**同时**处于低位才算"不具备参与条件"。
 #:
 #: v2 用"5日与20日主力资金同时为负"作硬否决，实测把 91% 的观测打成 invalid，而该桶的
@@ -1319,7 +1327,28 @@ def _linear_signal_score(value: float | None, *, lower: float, upper: float) -> 
     return _clamp((value - lower) / (upper - lower) * 100.0, 0.0, 100.0)
 
 
-def _probability_band(probability: float) -> str:
+def _probability_band(
+    probability: float,
+    *,
+    trend_strength: float | None = None,
+) -> str:
+    """成形信号分的展示档位。趋势已跌破退出线时改用 `trend_breakdown`。
+
+    这个档位只驱动展示文案（前端 `SIGNAL_BAND`：`building`→「信号偏强」、
+    `strong`→「强趋势」）。问题在于**信号分与门禁用的不是同一套权重**：门禁按趋势 0.70
+    定档，而信号分里趋势只占 0.35，另有短期动量 0.20 + 资金加速 0.20。于是一个趋势已经
+    塌到 40 的方向，靠资金与近 5 日涨幅仍然能读出 70+ 分。
+
+    实测（2026-08-12 生产）半导体材料就是这样：趋势 40.19、连续 3 个交易日低于退出线 52、
+    系统同时给出「大幅减仓评估 −50%」，而卡片顶部写着「72/100 信号偏强」。用户据此读成
+    自相矛盾——这是合理的，因为「偏强」确实是在替一个正在走坏的方向背书。
+
+    这里**不改数值**（72 照旧显示，也不隐藏证据），只是在趋势已破位时不再输出强弱标签。
+    档位字符串不参与任何决策分支（全仓库只有本函数产出它、只有展示层消费），所以新增一个
+    取值是安全的。
+    """
+    if trend_strength is not None and trend_strength < EXIT_TREND_THRESHOLD:
+        return "trend_breakdown"
     if probability >= 85.0:
         return "strong"
     if probability >= 75.0:
@@ -1471,7 +1500,7 @@ def _trend_formation_probability_v3(
 
     return {
         "probability": round(probability, 2),
-        "band": _probability_band(probability),
+        "band": _probability_band(probability, trend_strength=trend_strength),
         "tranche_scale": _probability_tranche_scale(probability),
         "leading_flow_confirmed": leading_flow_confirmed,
         "short_momentum_score": round(short_momentum, 2),
@@ -1648,7 +1677,7 @@ def _entry_maturity_v3(
         and flow_improving
         and not structure_broken
     )
-    first_tranche_scale = (
+    overheat_scale = (
         V3_FIRST_TRANCHE_SCALE_CROWDED
         if status == "crowded" or len(overheat_flags) >= 2
         else V3_FIRST_TRANCHE_SCALE.get(len(overheat_flags), V3_FIRST_TRANCHE_SCALE_CROWDED)
@@ -1656,26 +1685,48 @@ def _entry_maturity_v3(
     # 观测用：保留在 payload 里便于对比新旧刻度，**不再参与**比例计算。
     probability_scale = float(formation["tranche_scale"])
     trend_scale = _trend_tranche_scale(trend_strength)
+    # 三条通道对 `entry_state` 各有硬要求（ready_to_start / ready_on_pullback / forming），
+    # 因此互斥；写成 if/elif 与原先三个独立 `if` 等价，只是把「哪条通道都没开」这一种
+    # 情况显式化。
+    #
+    # 那一种情况原先会把过热档原样发布出去：趋势刻度只在 ready_to_start 分支里夹，
+    # forming 压根不走那一步。实测（2026-08-12 生产）半导体材料 entry_state=forming、
+    # 趋势 40.19（入场线 60 与退出线 52 都在上方）、1 个过热标记 → 发布 0.6，于是卡片在
+    # 「加仓资格 本轮不加仓」「大幅减仓评估 −50%」旁边显示「本次比例 计划仓位的 60%」与
+    # 「短期加速·本次金额按 60% 计算」。没有任何通道授权投入的方向不该给出投入比例。
+    #
+    # 发布 `None` 而不是 0.0：本仓消费方一律把 0 读成"没有可用值"而不是"零仓位"——
+    # `recommendation_guard._first_tranche_scaled_percent` 对 `scale <= 0` 直接返回**未缩放**
+    # 的比例，`discovery_allocation_service` 对 `not 0 < scale <= 1` 换成 0.4。发 0 会在这
+    # 两处被静默当成缺数据，比不发更危险；None 与它们既有的 None 分支语义一致（且两处都
+    # 另有 entry_state 门禁在前，本身不会走到）。
+    first_tranche_scale: float | None
     if entry_state == ENTRY_READY_TO_START:
         # 已成熟方向也分段建仓，不把"通过门槛"误解为一次性建满。刻度改用趋势强度：
         # 它是唯一实测有效的轴，而原来那个信号分未经校准（中性方向即读出 56），
         # 不该由它决定投多少钱。
         first_tranche_scale = min(
-            first_tranche_scale,
+            overheat_scale,
             trend_scale if trend_scale > 0 else 0.25,
         )
-    if flow_improving_probe_eligible:
+    elif flow_improving_probe_eligible:
         first_tranche_scale = min(
-            first_tranche_scale,
+            overheat_scale,
             V3_IMPROVING_FLOW_FIRST_TRANCHE_SCALE,
         )
-    if probability_early_probe_eligible:
+    elif probability_early_probe_eligible:
         # 提前试仓通道本身仍以信号分作为**门禁之一**（与趋势、结构、短期动量、资金分位
         # 共同把关，是多条件而非单条件）；但比例只走趋势刻度与本通道的硬上限。
+        #
+        # 这条通道的门槛是 `V3_EARLY_PROBE_MIN_TREND`（52），低于趋势刻度表的起点 60，
+        # 所以它的 `trend_scale` 本来就是 0——不能在这里再夹一次趋势刻度，否则整条通道
+        # 会被归零。比例由本通道自己的硬上限承担。
         first_tranche_scale = min(
-            first_tranche_scale,
+            overheat_scale,
             V3_EARLY_PROBE_FIRST_TRANCHE_CAP,
         )
+    else:
+        first_tranche_scale = None
 
     waiting_reason_code = _waiting_reason_code_v3(
         entry_state=entry_state,
@@ -1913,7 +1964,20 @@ def _entry_triggers_v3(
     if evidence_quality == "insufficient":
         triggers.append("补齐20日价格结构与多维证据")
     if trend_strength < V3_GATE_THRESHOLDS["trend"]:
-        triggers.append("20日相对强度与趋势持续性继续改善")
+        # 「继续改善」预设了"已经在改善"。方向已经跌破退出线时这句话是反的：实测
+        # （2026-08-12 生产）半导体材料趋势 40.19、连续 3 个交易日低于退出线 52、
+        # 同时被判「大幅减仓评估 −50%」，等待条件却写着「继续改善」，用户据此读成
+        # 系统认为方向在好转、与下方的退出判定自相矛盾。
+        #
+        # 两条线本身是嵌套的（回到 52 才停止减仓，爬到 60 才恢复加仓资格），不矛盾；
+        # 矛盾只出在措辞。破位时改为不预设方向的说法，并把当前值与入场线一并给出。
+        if trend_strength < EXIT_TREND_THRESHOLD:
+            triggers.append(
+                "20日相对强度与趋势持续性需先止跌回升至入场线 "
+                f"{V3_GATE_THRESHOLDS['trend']:g}（当前 {trend_strength:.1f}）"
+            )
+        else:
+            triggers.append("20日相对强度与趋势持续性继续改善")
     if status not in _DIRECTIONAL_MAINLINE_STATUSES_V3:
         triggers.append("主线状态升至形成中、已确认或拥挤")
     if participation < V3_GATE_THRESHOLDS["participation"]:

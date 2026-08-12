@@ -23,7 +23,6 @@ import { DecisionEvidenceGrid } from "@/components/DecisionEvidenceGrid";
 import { MethodologyNote } from "@/components/MethodologyNote";
 import { QuantEvidenceSummary } from "@/components/QuantEvidenceSummary";
 import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
-import { FundTradeabilityEvidence } from "@/components/FundTradeabilityEvidence";
 
 // formatter 提到模块作用域：日报按推荐条数逐条渲染金额。无选项的
 // `Intl.NumberFormat(locale)` 与 `n.toLocaleString(locale)` 输出一致。
@@ -507,13 +506,10 @@ export function FundRecommendationCard({
   const divergenceBacktest = holdingFacts?.flow_divergence_backtest ?? null;
   const escalation = holdingFacts?.escalation ?? null;
   const directionExit = holdingFacts?.direction_exit ?? null;
-  const tradeability = item.tradeability ?? holdingFacts?.tradeability;
+  //: 只留 `transaction_execution`：申购/赎回状态徽章已移除，但减仓侧仍要读
+  //: `reduction_amount_status` 来解释"为什么没有减仓金额"。
   const transactionExecution =
     item.transaction_execution ?? holdingFacts?.transaction_execution;
-  const hasTradeability = Boolean(
-    (tradeability && Object.keys(tradeability).length > 0) ||
-      (transactionExecution && Object.keys(transactionExecution).length > 0),
-  );
   const isReductionReview = /减仓|清仓/.test(item.action);
   const icStatus = reportIcStatus(report);
 
@@ -666,20 +662,19 @@ export function FundRecommendationCard({
               <p className="mt-2 text-xs text-[var(--warn-fg)]">指标数据异常，已隐藏</p>
             ) : null}
             <FactorIcNotice status={icStatus} />
-            {hasTradeability ? (
-              <div className="mt-3 space-y-2">
-                <FundTradeabilityEvidence
-                  tradeability={tradeability}
-                  holdingTransactionExecution={transactionExecution}
-                  compact
-                />
-                {isReductionReview &&
-                transactionExecution?.reduction_amount_status === "manual_review" ? (
-                  <p className="rounded-lg border border-[var(--warn-border)] bg-[var(--warn-bg)] px-2.5 py-2 text-[11px] leading-5 text-[var(--warn-fg)]">
-                    逐笔申购时间未核验：减仓前需人工确认锁定期与适用赎回费，系统不自动生成减仓金额。
-                  </p>
-                ) : null}
-              </div>
+            {/* 申购/赎回状态徽章块（申购开放 · 赎回开放 · 首次起购 · 单日限额 · 来源…）
+                已按产品要求移除：「能不能买」由用户自行在支付宝确认，日报不再复述一份可能
+                过期的副本。
+
+                这里刻意**保留**减仓侧的人工复核提示——它回答的不是"能不能买"，而是
+                "这条减仓指令会不会踩到锁定期与赎回费"。没有逐笔申购时间时系统本就不自动
+                生成减仓金额，这句话是那个行为的唯一出口，去掉会让用户看到一个减仓比例却
+                不知道它为什么没有金额。 */}
+            {isReductionReview &&
+            transactionExecution?.reduction_amount_status === "manual_review" ? (
+              <p className="mt-3 rounded-lg border border-[var(--warn-border)] bg-[var(--warn-bg)] px-2.5 py-2 text-[11px] leading-5 text-[var(--warn-fg)]">
+                逐笔申购时间未核验：减仓前需人工确认锁定期与适用赎回费，系统不自动生成减仓金额。
+              </p>
             ) : null}
             {sectorOpportunity ? (
               <SectorOpportunityCard item={sectorOpportunity} divergenceBacktest={divergenceBacktest} />

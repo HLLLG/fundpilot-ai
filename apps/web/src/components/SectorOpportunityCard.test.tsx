@@ -282,3 +282,80 @@ it("keeps key direction facts visible while supporting details start collapsed",
     screen.getByText(/买入并录入持仓后，由日报继续确认趋势强度与资金参与度/),
   ).toBeVisible();
 });
+
+it("stops endorsing a broken-down direction and hides the entry tranche size", () => {
+  // 生产事故（2026-08-12 半导体材料）：同一张卡片上「72/100 信号偏强」+「本次比例 计划仓位的
+  // 60%」与下方的「大幅减仓评估 −50%」「本轮不加仓」并列，读起来自相矛盾。
+  // 后端现在对已跌破退出线的方向发 `trend_breakdown` 档位、并且不再给 first_tranche_scale。
+  render(
+    <SectorOpportunityCard
+      item={{
+        sector_label: "半导体材料",
+        score_policy_version: "sector_entry_maturity.2026-08.v3",
+        entry_state: "forming",
+        direction_score: 53.32,
+        trend_strength_score: 40.19,
+        participation_score: 96.13,
+        position_risk_score: 71.75,
+        trend_formation_probability: 71.82,
+        formation_probability_band: "trend_breakdown",
+        first_tranche_scale: null,
+        overheat_flags: ["近5日涨幅超过12%，短期加速"],
+        today_available: true,
+        today_main_force_net_yi: 5.11,
+        five_day_available: true,
+        cumulative_5d_net_yi: 19.19,
+        entry_triggers: [
+          "20日相对强度与趋势持续性需先止跌回升至入场线 60（当前 40.2）",
+          "主线状态升至形成中、已确认或拥挤",
+        ],
+      }}
+    />,
+  );
+
+  const signal = screen.getByTestId("formation-probability");
+  // 分数照旧展示，不隐藏证据。
+  expect(signal).toHaveTextContent("72");
+  expect(signal).toHaveTextContent("/100");
+  // 但不再用强弱标签替它背书。
+  expect(signal).toHaveTextContent("趋势已破位");
+  expect(signal).not.toHaveTextContent("信号偏强");
+  // 没有任何入场通道授权时不给出仓位比例。
+  expect(signal).toHaveTextContent("本轮不投入");
+  expect(signal).not.toHaveTextContent("计划仓位的");
+  // 过热披露仍在，但不再宣称一个「本次金额」。
+  const overheat = screen.getByTestId("overheat-disclosure");
+  expect(overheat).toHaveTextContent("本轮无入场通道，不产生本次金额");
+  expect(overheat).not.toHaveTextContent("本次金额按 60%");
+  // 等待条件不再预设"已经在改善"。
+  expect(screen.getByText(/需先止跌回升至入场线/)).toBeInTheDocument();
+});
+
+it("still shows the tranche size when a channel actually authorises it", () => {
+  // 别把修复做成"谁都不显示比例"：ready_to_start 必须照旧给出本次比例。
+  render(
+    <SectorOpportunityCard
+      item={{
+        sector_label: "煤炭",
+        score_policy_version: "sector_entry_maturity.2026-08.v3",
+        entry_state: "ready_to_start",
+        direction_score: 80,
+        trend_strength_score: 78,
+        participation_score: 90,
+        position_risk_score: 70,
+        trend_formation_probability: 88,
+        formation_probability_band: "strong",
+        first_tranche_scale: 0.65,
+        today_available: true,
+        today_main_force_net_yi: 12,
+        five_day_available: true,
+        cumulative_5d_net_yi: 15,
+      }}
+    />,
+  );
+
+  const signal = screen.getByTestId("formation-probability");
+  expect(signal).toHaveTextContent("计划仓位的 65%");
+  expect(signal).toHaveTextContent("强趋势");
+  expect(signal).not.toHaveTextContent("本轮不投入");
+});

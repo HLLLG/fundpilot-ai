@@ -34,6 +34,7 @@ from app.services.sector_opportunity_scoring import (
     ENTRY_POLICY_VERSION_V3,
     ENTRY_READY_ON_PULLBACK,
     ENTRY_READY_TO_START,
+    EXIT_TREND_THRESHOLD,
     V3_GATE_THRESHOLDS,
 )
 
@@ -41,8 +42,9 @@ SECTOR_DIRECTION_STATE_SCHEMA_VERSION = "sector_direction_state.v1"
 
 #: 进入「可以开始布局」所需的连续达标交易日数。高弹性机会按当日确认执行。
 READY_CONFIRMATION_DAYS = 1
-#: 退出用的趋势线，低于入场线，形成滞回带。
-EXIT_TREND_THRESHOLD = V3_GATE_THRESHOLDS["trend"] - 8.0
+#: `EXIT_TREND_THRESHOLD`（退出用的趋势线，低于入场线，形成滞回带）现由
+#: `sector_opportunity_scoring` 定义——入场等待条件的措辞与成形信号分的档位标签也要用它，
+#: 而那个模块不能 import 本模块（本模块 import 它）。此处按名字 re-export，既有导入方不变。
 
 
 @dataclass(frozen=True)

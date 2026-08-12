@@ -81,6 +81,10 @@ const SIGNAL_BAND: Record<string, string> = {
   building: "信号偏强",
   confirmed: "趋势较明确",
   strong: "强趋势",
+  // 趋势已跌破退出线时后端只发这一档（见 `_probability_band`）。信号分与门禁不是同一套
+  // 权重（趋势在信号分里只占 0.35），所以趋势塌到 40 的方向仍能读出 70+ 分；分数照旧
+  // 显示，但不再用「信号偏强 / 强趋势」替一个正在被建议减仓的方向背书。
+  trend_breakdown: "趋势已破位",
 };
 
 function entryStateDisplayLabel(item: SectorOpportunity): string {
@@ -163,6 +167,10 @@ export function SectorOpportunityCard({
   const probabilityEarlyPath = item.selection_path === "probability_early_probe";
   const formationSignalScore = item.trend_formation_probability;
   const signalBand = SIGNAL_BAND[item.formation_probability_band ?? ""] ?? "信号评估";
+  //: 后端只在「确有入场通道授权本次投入」时才给出 `first_tranche_scale`（ready_to_start /
+  //: 资金回流试仓 / 提前试仓三条），其余一律为空。0 也视为无授权：本仓其他消费方一律把 0
+  //: 读成「没有可用值」，展示层跟着按同一口径处理，避免出现「计划仓位的 0%」这种读法。
+  const hasFirstTranche = (item.first_tranche_scale ?? 0) > 0;
   const canCollapseDetails = collapsibleDetails && hasEntryMaturity;
   const showDetails = !canCollapseDetails || detailsOpen;
   const detailsContentId = `sector-opportunity-details-${generatedId.replace(/:/g, "")}`;
@@ -295,12 +303,22 @@ export function SectorOpportunityCard({
                     <span className="text-[11px] font-bold text-[var(--info-fg)]">{signalBand}</span>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-[10px] font-bold text-slate-500">本次比例</div>
-                  <div className="mt-0.5 text-sm font-black text-slate-900">
-                    计划仓位的 {formatPercent(item.first_tranche_scale)}
+                {/* `first_tranche_scale` 为空 = 没有任何入场通道授权本次投入（见后端
+                    `_entry_maturity_v3` 的 else 分支）。此时不能显示一个仓位比例：它会紧挨着
+                    「加仓资格 本轮不加仓」和减仓档位出现，读起来像在叫你买。 */}
+                {hasFirstTranche ? (
+                  <div className="text-right">
+                    <div className="text-[10px] font-bold text-slate-500">本次比例</div>
+                    <div className="mt-0.5 text-sm font-black text-slate-900">
+                      计划仓位的 {formatPercent(item.first_tranche_scale)}
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="text-right">
+                    <div className="text-[10px] font-bold text-slate-500">本次比例</div>
+                    <div className="mt-0.5 text-sm font-black text-slate-500">本轮不投入</div>
+                  </div>
+                )}
               </div>
               <div className="h-1.5 bg-slate-100" aria-hidden="true">
                 <div
@@ -313,7 +331,14 @@ export function SectorOpportunityCard({
           {isEntryV3 && formationSignalScore == null && canCollapseDetails ? (
             <div className="mt-2 grid grid-cols-2 gap-1.5 text-xs text-slate-600">
               <Metric label="方向评分" value={`${formatMetric(item.direction_score)} 分`} />
-              <Metric label="本次比例" value={`计划仓位的 ${formatPercent(item.first_tranche_scale)}`} />
+              <Metric
+                label="本次比例"
+                value={
+                  hasFirstTranche
+                    ? `计划仓位的 ${formatPercent(item.first_tranche_scale)}`
+                    : "本轮不投入"
+                }
+              />
             </div>
           ) : null}
           {!isEntryV3 && canCollapseDetails ? (
@@ -406,7 +431,9 @@ export function SectorOpportunityCard({
                   className="mt-2 rounded-lg border border-[var(--warn-border)] bg-[var(--warn-bg)]/60 px-2.5 py-2"
                 >
                   <div className="text-[10px] font-bold text-[var(--warn-fg)]">
-                    短期加速 · 本次金额按 {formatPercent(item.first_tranche_scale)} 计算
+                    {hasFirstTranche
+                      ? `短期加速 · 本次金额按 ${formatPercent(item.first_tranche_scale)} 计算`
+                      : "短期加速 · 本轮无入场通道，不产生本次金额"}
                   </div>
                   {(item.overheat_flags ?? []).slice(0, 2).map((line) => (
                     <p key={line} className="mt-1 break-words text-[11px] leading-4 text-[var(--warn-fg)]">
