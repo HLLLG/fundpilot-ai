@@ -499,6 +499,11 @@ def build_decision_score_shadow_digest(
     top_k_changed_count = 0
     status_counts: dict[str, int] = {}
     missing_counts = {key: 0 for key in REQUIRED_COMPONENTS}
+    # 逐组件按原因码汇总。**刻意在 digest 里做而不是改 artifact 的 `coverage`**：
+    # `coverage` 进 `snapshot_hash`，动它会让既有制品的哈希口径分叉。
+    missing_reason_counts: dict[str, dict[str, int]] = {
+        key: {} for key in REQUIRED_COMPONENTS
+    }
     for _report, artifact in artifacts:
         coverage = artifact.get("coverage") if isinstance(artifact.get("coverage"), Mapping) else {}
         candidate_count += _count(coverage.get("candidate_count"))
@@ -507,6 +512,23 @@ def build_decision_score_shadow_digest(
             values = coverage.get("missing_component_counts")
             if isinstance(values, Mapping):
                 missing_counts[key] += _count(values.get(key))
+        for row in artifact.get("rows") or []:
+            if not isinstance(row, Mapping):
+                continue
+            components = row.get("components")
+            if not isinstance(components, Mapping):
+                continue
+            for key in REQUIRED_COMPONENTS:
+                component = components.get(key)
+                if (
+                    not isinstance(component, Mapping)
+                    or component.get("status") == "available"
+                ):
+                    continue
+                bucket = missing_reason_counts[key]
+                for reason in component.get("reason_codes") or ():
+                    text = str(reason)
+                    bucket[text] = bucket.get(text, 0) + 1
         validation = validate_decision_score_shadow(artifact)
         valid_count += int(validation.get("status") == "valid")
         evaluable_count += int(validation.get("shadow_evaluable") is True)
@@ -568,6 +590,10 @@ def build_decision_score_shadow_digest(
         ),
         "status_counts": dict(sorted(status_counts.items())),
         "missing_component_counts": missing_counts,
+        "missing_component_reason_counts": {
+            key: dict(sorted(value.items()))
+            for key, value in missing_reason_counts.items()
+        },
         "latest": latest,
     }
 
@@ -881,13 +907,34 @@ def _peer_percentile_component(
     if not metric_keys:
         return _missing_component(f"{component}_unsupported_for_peer_profile")
     peer = candidate.get("peer_rank") if isinstance(candidate.get("peer_rank"), Mapping) else {}
+    # `fund_peer_ranking` 已经把「同类目录压根不带这一列」单独列了出来，用它而不是
+    # 自己猜：只有当**本组件真正需要**的那几项落在这份清单里时，才断言这是数据源缺口。
+    uncovered = sorted(
+        set(metric_keys)
+        & {
+            str(field)
+            for field in (peer.get("catalogue_uncovered_metrics") or ())
+            if str(field)
+        }
+    )
     if (
         peer.get("qualified") is not True
         or peer.get("status") != "qualified"
         or peer.get("research_shadow_rerank_eligible") is not True
         or str(peer.get("metric_profile") or "") != peer_profile
     ):
-        return _missing_component("peer_rank_not_shadow_qualified")
+        return _missing_component(
+            "peer_rank_not_shadow_qualified",
+            additional_reasons=(
+                ("peer_catalogue_metric_not_covered",) if uncovered else ()
+            ),
+            evidence={
+                "peer_rank_status": peer.get("status"),
+                "peer_rank_reason": peer.get("reason"),
+                "required_metrics": list(metric_keys),
+                "catalogue_uncovered_required_metrics": uncovered,
+            },
+        )
     metrics = peer.get("metrics") if isinstance(peer.get("metrics"), Mapping) else {}
     values: list[float] = []
     metric_evidence: dict[str, Any] = {}
@@ -900,7 +947,21 @@ def _peer_percentile_component(
             or metric.get("qualified") is not True
             or percentile is None
         ):
-            return _missing_component(f"peer_metric_{key}_unavailable")
+            not_covered = (
+                metric.get("availability") == "not_covered_by_peer_catalogue"
+                or key in uncovered
+            )
+            return _missing_component(
+                f"peer_metric_{key}_unavailable",
+                additional_reasons=(
+                    ("peer_catalogue_metric_not_covered",) if not_covered else ()
+                ),
+                evidence={
+                    "metric": key,
+                    "availability": metric.get("availability"),
+                    "metric_reason": metric.get("reason"),
+                },
+            )
         values.append(percentile)
         metric_evidence[key] = {
             "percentile": percentile,
@@ -1147,14 +1208,21 @@ def _missing_component(
     reason: str,
     *,
     evidence: Mapping[str, Any] | None = None,
+    additional_reasons: Sequence[str] = (),
 ) -> dict[str, Any]:
+    """`additional_reasons` 用来补充「这个缺口会不会自愈」这一维信息。
+
+    主原因码保持稳定（既有消费方与测试按它断言），结构性原因追加在后面——
+    有了它，证据成熟度面板才能把「等时间」与「等数据源」分开，而不是把两者
+    都显示成 collecting。
+    """
     return {
         "status": "unavailable",
         "score": None,
         "raw_value": None,
         "confidence": 0.0,
         "basis": None,
-        "reason_codes": [reason],
+        "reason_codes": list(dict.fromkeys((reason, *additional_reasons))),
         "evidence": dict(evidence or {}),
     }
 

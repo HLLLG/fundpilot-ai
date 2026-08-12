@@ -27,6 +27,8 @@ const STATUS_CLASS: Record<string, string> = {
   collecting: "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]",
   shadow: "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]",
   attention: "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]",
+  // 「等不到数据」与「积累中」必须一眼分开：前者继续等没有用。
+  blocked: "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]",
   stale: "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]",
   unavailable: "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--muted)]",
   not_started: "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--muted)]",
@@ -41,10 +43,25 @@ const STATUS_LABEL: Record<string, string> = {
   collecting: "积累中",
   shadow: "仅影子评估",
   attention: "需检查",
+  blocked: "等不到数据",
   stale: "已过期",
   unavailable: "尚不可用",
   not_started: "尚未开始",
   degraded: "异常",
+};
+
+
+const BLOCKER_CLASS: Record<string, string> = {
+  blocked_on_time: "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]",
+  blocked_on_data_source:
+    "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]",
+  blocked_unclassified: "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--muted)]",
+};
+
+const BLOCKER_ACTION: Record<string, string> = {
+  blocked_on_time: "继续采集即可推进",
+  blocked_on_data_source: "等待无用，需补数据源或改口径",
+  blocked_unclassified: "原因未归类，先查清再排期",
 };
 
 
@@ -330,6 +347,45 @@ function MaturityContent({ data }: { data: EvidenceMaturityStatus }) {
           </p>
         </article>
       </div>
+
+      {data.blockers?.length ? (
+        <div data-testid="evidence-blockers">
+          <h4 className="mb-1 text-sm font-bold text-slate-900">当前卡在哪里</h4>
+          <p className="mb-2 text-[11px] leading-5 text-slate-500">
+            区分「该等」与「该做事」：会自愈的缺口继续采集即可，等不到数据的缺口再等也不会出现。
+          </p>
+          <ul className="grid gap-2">
+            {data.blockers.map((blocker) => (
+              <li
+                key={blocker.code}
+                className="rounded-xl border border-[var(--line)] bg-white p-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-bold text-slate-900">{blocker.label}</p>
+                  <span
+                    className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-bold ${
+                      BLOCKER_CLASS[blocker.blocker] ?? BLOCKER_CLASS.blocked_unclassified
+                    }`}
+                  >
+                    {blocker.blocker_label}
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] leading-5 text-slate-600">
+                  {BLOCKER_ACTION[blocker.blocker] ?? "原因未归类，先查清再排期"}
+                  {blocker.detail ? ` · ${blocker.detail}` : ""}
+                </p>
+                {blocker.reason_counts ? (
+                  <p className="mt-1 break-words text-[11px] leading-5 text-slate-500">
+                    {Object.entries(blocker.reason_counts)
+                      .map(([reason, count]) => `${reason} ×${count}`)
+                      .join(" · ")}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {data.alerts.length ? (
         <div>

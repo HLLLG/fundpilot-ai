@@ -67,6 +67,31 @@ export type EvidenceMaturityMilestone = {
 };
 
 
+/**
+ * 阻塞类型：`blocked_on_time` 会随采集自愈；`blocked_on_data_source` 等待无用，
+ * 必须补数据源或改口径；`blocked_unclassified` 表示原因码尚未归类，不得当作会自愈。
+ */
+export type EvidenceMaturityBlockerKind =
+  | "not_blocked"
+  | "blocked_on_time"
+  | "blocked_on_data_source"
+  | "blocked_unclassified";
+
+export type EvidenceMaturityBlockerDetail = {
+  blocker: EvidenceMaturityBlockerKind | string;
+  blocker_label: string;
+  /** null 表示无法归因，不是"不会自愈"。 */
+  self_healing: boolean | null;
+  reason_counts?: Record<string, number>;
+};
+
+export type EvidenceMaturityBlocker = EvidenceMaturityBlockerDetail & {
+  code: string;
+  label: string;
+  detail?: string;
+};
+
+
 export type EvidenceMaturityStatus = {
   schema_version: "evidence_maturity.v1" | string;
   generated_at: string;
@@ -146,6 +171,11 @@ export type EvidenceMaturityStatus = {
     candidate_count?: number | null;
     scored_count?: number | null;
     scored_coverage_percent?: number | null;
+    missing_component_counts?: Record<string, number> | null;
+    blocker?: string | null;
+    blocker_label?: string | null;
+    self_healing?: boolean | null;
+    component_blockers?: Record<string, EvidenceMaturityBlockerDetail> | null;
     automatic_promotion_allowed: false;
   };
   decision_quality: {
@@ -163,6 +193,8 @@ export type EvidenceMaturityStatus = {
     automatic_promotion_allowed: false;
   };
   milestones: EvidenceMaturityMilestone[];
+  /** 当前所有非空缺口，以及等待到底有没有用。 */
+  blockers?: EvidenceMaturityBlocker[];
   alerts: EvidenceMaturityAlert[];
   notices: string[];
 };

@@ -8,7 +8,7 @@ state in this module can promote a shadow model into live decisions.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from typing import Any
 
@@ -40,6 +40,154 @@ PRIMARY_HORIZON_DAYS = 20
 LONG_HORIZON_DAYS = 60
 THEORETICAL_PRIMARY_TRADING_DAYS = 372
 THEORETICAL_LONG_TRADING_DAYS = 412
+
+# 「该等」与「该做事」必须能一眼分开。此前两类缺口在面板上长得一样（都只是
+# `missing_component_counts` 里的一个数字、外面统一显示 `collecting`），于是无法判断
+# 一条证据线是在推进还是在装死——`decision_score_shadow` 恒为 0 却显示"还在积累"就是
+# 这样活下来的。
+BLOCKER_NONE = "not_blocked"
+BLOCKER_TIME = "blocked_on_time"
+BLOCKER_DATA_SOURCE = "blocked_on_data_source"
+BLOCKER_UNCLASSIFIED = "blocked_unclassified"
+
+# 原因码 → 阻塞类型。**未列出的原因一律落 `blocked_unclassified`，不猜。**
+# 归因依据：
+#   `factor_ic_not_decision_eligible`：等 PIT 锚点与经济显著性样本累积，会自愈。
+#   `peer_catalogue_metric_not_covered`：同类目录里没有任何成员携带该列
+#     （2026-08-12 实测 `max_drawdown_1y_percent` 在 25000 行目录中非空数为 0，
+#     `downside_capture_1y_percent` 字段压根不存在），不补数据源则永远不会出现，
+#     继续等待无用。该原因码由 `fund_peer_ranking.catalogue_uncovered_metrics`
+#     派生，不是这里另编的判断。
+_BLOCKER_BY_REASON: dict[str, str] = {
+    "factor_ic_not_decision_eligible": BLOCKER_TIME,
+    "peer_catalogue_metric_not_covered": BLOCKER_DATA_SOURCE,
+    "peer_catalogue_missing_required_metrics": BLOCKER_DATA_SOURCE,
+}
+
+# 永不自愈的缺口优先：一条线只要含有等不到的原因，就不该整体显示成「在积累」。
+_BLOCKER_PRIORITY = (
+    BLOCKER_DATA_SOURCE,
+    BLOCKER_UNCLASSIFIED,
+    BLOCKER_TIME,
+    BLOCKER_NONE,
+)
+
+# 只有能证明的才给结论；无法归因时是 None（未知），不是 False（不会自愈）。
+_SELF_HEALING_BY_BLOCKER: dict[str, bool | None] = {
+    BLOCKER_TIME: True,
+    BLOCKER_DATA_SOURCE: False,
+    BLOCKER_UNCLASSIFIED: None,
+    BLOCKER_NONE: None,
+}
+
+_BLOCKER_LABELS = {
+    BLOCKER_NONE: "无阻塞",
+    BLOCKER_TIME: "等样本累积（会自愈）",
+    BLOCKER_DATA_SOURCE: "等数据源（不会自愈）",
+    BLOCKER_UNCLASSIFIED: "原因未归类",
+}
+
+
+def _worst_blocker(blockers: Iterable[str]) -> str:
+    present = {str(value) for value in blockers}
+    return next(
+        (name for name in _BLOCKER_PRIORITY if name in present),
+        BLOCKER_NONE,
+    )
+
+
+def _classify_blocker(reason_counts: Any) -> dict[str, Any]:
+    """把一个缺口的原因码分布归成阻塞类型。
+
+    未登记的原因码显式落 `blocked_unclassified`——把它默认成「等时间」会重新制造
+    这次要修的问题（看着在推进，其实永远不动）。
+    """
+    counts = reason_counts if isinstance(reason_counts, Mapping) else {}
+    by_blocker: dict[str, int] = {}
+    normalized: dict[str, int] = {}
+    for reason, raw in counts.items():
+        value = _nonnegative_int(raw) or 0
+        if value <= 0:
+            continue
+        text = str(reason)
+        normalized[text] = value
+        blocker = _BLOCKER_BY_REASON.get(text, BLOCKER_UNCLASSIFIED)
+        by_blocker[blocker] = by_blocker.get(blocker, 0) + value
+    if not by_blocker:
+        return {
+            "blocker": BLOCKER_NONE,
+            "blocker_label": _BLOCKER_LABELS[BLOCKER_NONE],
+            "self_healing": None,
+            "reason_counts": {},
+        }
+    blocker = _worst_blocker(by_blocker)
+    return {
+        "blocker": blocker,
+        "blocker_label": _BLOCKER_LABELS[blocker],
+        "self_healing": _SELF_HEALING_BY_BLOCKER[blocker],
+        "reason_counts": dict(sorted(normalized.items())),
+    }
+
+
+# 与 `pit_universe_stale` / `nav_observation_stale` 两条告警同一阈值，避免两套口径。
+_ACCUMULATION_STALE_AFTER_DAYS = 4
+
+
+def _accumulation_blocker(
+    *,
+    status: Any,
+    age_days: Any = None,
+    stale: Any = None,
+) -> dict[str, Any]:
+    """累积型证据线的阻塞类型。
+
+    采集一旦停了就不能再叫「等样本累积」——那正是这次要拆开的两种情况：会自愈的等待
+    与需要动手的故障，此前都显示成 `collecting`。
+    """
+    text = str(status or "")
+    if text not in {"collecting", "unavailable"}:
+        blocker = BLOCKER_NONE
+    elif (
+        stale is True
+        or text == "unavailable"
+        or (
+            isinstance(age_days, (int, float))
+            and not isinstance(age_days, bool)
+            and age_days > _ACCUMULATION_STALE_AFTER_DAYS
+        )
+    ):
+        blocker = BLOCKER_UNCLASSIFIED
+    else:
+        blocker = BLOCKER_TIME
+    return {
+        "blocker": blocker,
+        "blocker_label": _BLOCKER_LABELS[blocker],
+        "self_healing": _SELF_HEALING_BY_BLOCKER[blocker],
+    }
+
+
+def _blocker_entry(
+    *,
+    code: str,
+    label: str,
+    classified: Mapping[str, Any],
+    detail: str | None = None,
+) -> dict[str, Any] | None:
+    if classified.get("blocker") == BLOCKER_NONE:
+        return None
+    entry: dict[str, Any] = {
+        "code": code,
+        "label": label,
+        "blocker": classified.get("blocker"),
+        "blocker_label": classified.get("blocker_label"),
+        "self_healing": classified.get("self_healing"),
+    }
+    reason_counts = classified.get("reason_counts")
+    if reason_counts:
+        entry["reason_counts"] = reason_counts
+    if detail:
+        entry["detail"] = detail
+    return entry
 
 
 def _utc_now(value: datetime | None = None) -> datetime:
@@ -350,11 +498,30 @@ def _decision_score_projection() -> tuple[dict[str, Any], list[dict[str, str]]]:
     scored = _nonnegative_int(digest.get("scored_count")) or 0
     valid = _nonnegative_int(digest.get("valid_artifact_count")) or 0
     evaluable = _nonnegative_int(digest.get("shadow_evaluable_report_count")) or 0
+    missing_counts = digest.get("missing_component_counts") or {}
+    reason_counts = digest.get("missing_component_reason_counts") or {}
+    component_blockers = {
+        str(key): _classify_blocker(
+            reason_counts.get(key) if isinstance(reason_counts, Mapping) else None
+        )
+        for key in sorted(missing_counts)
+    }
+    line_blocker = _worst_blocker(
+        item["blocker"]
+        for item in component_blockers.values()
+        if item["blocker"] != BLOCKER_NONE
+    )
+    # 有制品但因为等不到的数据而永远打不出分时，显示成 `blocked` 而不是 `collecting`：
+    # 后者会让人以为再等等就好了。校验失败（`attention`）更紧急，仍然优先。
     status = (
         "collecting"
-        if artifacts == 0 or evaluable == 0
+        if artifacts == 0
         else "attention"
         if valid < artifacts
+        else "blocked"
+        if line_blocker == BLOCKER_DATA_SOURCE
+        else "collecting"
+        if evaluable == 0
         else "shadow_ready"
     )
     projection = {
@@ -375,11 +542,47 @@ def _decision_score_projection() -> tuple[dict[str, Any], list[dict[str, str]]]:
         "scored_coverage_percent": (
             round(scored / candidates * 100.0, 2) if candidates else None
         ),
-        "missing_component_counts": digest.get("missing_component_counts") or {},
+        "missing_component_counts": missing_counts,
+        "blocker": line_blocker,
+        "blocker_label": _BLOCKER_LABELS[line_blocker],
+        "self_healing": _SELF_HEALING_BY_BLOCKER[line_blocker],
+        "component_blockers": component_blockers,
         "latest": digest.get("latest"),
         "automatic_promotion_allowed": False,
     }
     alerts: list[dict[str, str]] = []
+    data_source_blocked = sorted(
+        key
+        for key, item in component_blockers.items()
+        if item["blocker"] == BLOCKER_DATA_SOURCE
+    )
+    if data_source_blocked:
+        alerts.append(
+            _alert(
+                "decision_score_component_blocked_on_data_source",
+                "warning",
+                "DecisionScore 有维度等不到数据",
+                "、".join(data_source_blocked)
+                + " 缺的是同类目录里没有任何成员携带的列，继续生成报告或继续等待都不会让它出现。",
+                "按补数据源或改口径排期，不要按「再等等」处理；在补上之前该维度维持 fail-closed。",
+            )
+        )
+    unclassified = sorted(
+        key
+        for key, item in component_blockers.items()
+        if item["blocker"] == BLOCKER_UNCLASSIFIED
+    )
+    if unclassified:
+        alerts.append(
+            _alert(
+                "decision_score_component_blocker_unclassified",
+                "info",
+                "DecisionScore 有维度的缺失原因未归类",
+                "、".join(unclassified)
+                + " 的原因码尚未登记到阻塞分类表，因此无法判断它会不会随时间自愈。",
+                "查清该原因码后登记进 _BLOCKER_BY_REASON，不要先按会自愈处理。",
+            )
+        )
     if artifacts == 0:
         alerts.append(
             _alert(
@@ -632,7 +835,7 @@ def build_evidence_maturity_status(
     elif "warning" in severities:
         overall = "attention"
     elif any(
-        component.get("status") in {"collecting", "unavailable"}
+        component.get("status") in {"collecting", "unavailable", "blocked"}
         for component in (
             universe,
             factor_ic,
@@ -644,6 +847,59 @@ def build_evidence_maturity_status(
         overall = "collecting"
     else:
         overall = "healthy"
+
+    blockers = [
+        entry
+        for entry in (
+            _blocker_entry(
+                code="pit_universe_membership",
+                label="PIT 成员快照锚点",
+                classified=_accumulation_blocker(
+                    status=universe.get("status"),
+                    age_days=universe.get("latest_snapshot_age_days"),
+                ),
+                detail="按 10 个交易日一个锚点累积，快照采集正常时会自行推进。",
+            ),
+            _blocker_entry(
+                code="factor_ic_economic_significance",
+                label="因子经济显著性样本",
+                classified=_accumulation_blocker(
+                    status=factor_ic.get("status"),
+                    stale=factor_ic.get("stale"),
+                ),
+                detail="需要 36 个成熟期；到期也不自动晋级，仍须 FDR 与扣费后门槛。",
+            ),
+            _blocker_entry(
+                code="nav_observation_pit",
+                label="NAV 首次观测时点",
+                classified=_accumulation_blocker(
+                    status=nav_observation.get("status"),
+                    age_days=nav_observation.get("latest_capture_age_days"),
+                ),
+                detail="只能向前追加采集，历史修订时点无法回填。",
+            ),
+            _blocker_entry(
+                code="decision_quality_manual_review",
+                label="决策质量成熟决策日",
+                classified=_accumulation_blocker(
+                    status=decision_quality.get("status"),
+                    age_days=decision_quality.get("snapshot_age_days"),
+                ),
+                detail="标签要求结局观察已终局且成熟，由前瞻窗口结算驱动。",
+            ),
+            *(
+                _blocker_entry(
+                    code=f"decision_score_component.{component}",
+                    label=f"DecisionScore 维度 {component}",
+                    classified=classified,
+                )
+                for component, classified in (
+                    decision_score.get("component_blockers") or {}
+                ).items()
+            ),
+        )
+        if entry is not None
+    ]
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -699,11 +955,14 @@ def build_evidence_maturity_status(
                 ),
             },
         ],
+        "blockers": blockers,
         "alerts": alerts,
         "notices": [
             "空值表示尚无可验证证据，不按 0 分处理。",
             "17.5/19.5 个月是理论最短样本窗口，不是到期自动通过；仍需 FDR、样本外一致性和扣费后经济门槛。",
             "所有新模型继续 shadow/fail-closed，任何成熟状态都不允许自动晋级。",
+            "blockers 区分三类：blocked_on_time 会随采集自愈；blocked_on_data_source 等待无用，"
+            "必须补数据源或改口径；blocked_unclassified 表示原因码尚未归类，不得当作会自愈。",
         ],
     }
 
