@@ -442,9 +442,16 @@ export function ThemeSectorOverview({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <h2 className="text-lg font-bold tracking-tight text-slate-900 sm:text-xl">{themeBoardHeading()}</h2>
+            {/*
+              `stale` 与 `available` 是两件事，此前这里把前者写成了后者的文案。
+              后端 `available = bool(items)`，取不到行情时才把「行情暂不可用，请稍后重试」
+              放进 `message`（下面那行单独渲染）。`stale` 只表示这份快照可能不是最新——
+              典型触发是 api 容器刚重启（`snapshot_refreshed_before_process_boot`），
+              此时榜单仍有完整数据。说成「不可用」会让用户以为下面的数字不能用。
+            */}
             <p className="mt-1 text-xs text-slate-500">
               {formatThemeBoardUpdatedFromIso(data?.refreshed_at)}
-              {data?.stale ? " · 行情暂不可用" : ""}
+              {data?.stale ? " · 可能不是最新，正在刷新" : ""}
             </p>
             {data?.message ? (
               <p className="mt-1 text-xs text-[var(--warn-icon)]">{data.message}</p>

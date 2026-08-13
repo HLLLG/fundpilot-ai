@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from app.services import evidence_maturity
 from app.services.decision_score_shadow import (
     LEGACY_COMPONENT_WEIGHTS,
+    _benchmark_reason_signals,
     build_decision_score_shadow,
     build_decision_score_shadow_digest,
     validate_decision_score_shadow,
@@ -435,6 +436,62 @@ def test_current_v3_artifact_rejects_the_legacy_weight_table() -> None:
     codes = validate_decision_score_shadow(artifact)["error_codes"]
 
     assert "weights_invalid" in codes
+
+
+class TestBenchmarkReasonSignals:
+    """`benchmark_research_not_qualified` 曾把三类原因糊成一个码，面板只能报未归类。"""
+
+    def test_stable_reason_is_passed_through(self) -> None:
+        raw, stable = _benchmark_reason_signals(
+            {"reason_codes": ["point_in_time_benchmark_mapping_unavailable"]}
+        )
+        assert raw == ["point_in_time_benchmark_mapping_unavailable"]
+        assert stable == ("point_in_time_benchmark_mapping_unavailable",)
+
+    def test_reason_carrying_a_component_code_is_normalised(self) -> None:
+        """带成分代码的原因每只都不一样，直接登记永远匹配不上，必须规范化。"""
+        raw, stable = _benchmark_reason_signals(
+            {
+                "reason_codes": [
+                    "benchmark_component_index:AU9999_provider_returned_no_series"
+                ]
+            }
+        )
+        assert raw == [
+            "benchmark_component_index:AU9999_provider_returned_no_series"
+        ]
+        assert stable == ("benchmark_provider_returned_no_series",)
+
+    def test_identity_reason_is_included(self) -> None:
+        raw, stable = _benchmark_reason_signals(
+            {"benchmark_identity_reason": "contract_source_not_verified"}
+        )
+        assert stable == ("contract_source_not_verified",)
+        assert "contract_source_not_verified" in raw
+
+    def test_unknown_reason_is_kept_raw_but_not_registered(self) -> None:
+        """认不出来的原因保留在 evidence 里，但不得伪造成已归类。"""
+        raw, stable = _benchmark_reason_signals({"reason_codes": ["something_new"]})
+        assert raw == ["something_new"]
+        assert stable == ()
+
+
+class TestBenchmarkBlockerClassification:
+    def test_missing_mapping_is_a_data_source_gap(self) -> None:
+        assert _classify_blocker(
+            {"point_in_time_benchmark_mapping_unavailable": 9}
+        )["blocker"] == BLOCKER_DATA_SOURCE
+
+    def test_short_aligned_sample_self_heals(self) -> None:
+        result = _classify_blocker({"aligned_return_sample_insufficient": 2})
+        assert result["blocker"] == BLOCKER_TIME
+        assert result["self_healing"] is True
+
+    def test_the_umbrella_code_alone_stays_unclassified(self) -> None:
+        """反证：只有伞状码时仍是未归类——这正是加粒度原因的理由。"""
+        assert _classify_blocker({"benchmark_research_not_qualified": 12})[
+            "blocker"
+        ] == BLOCKER_UNCLASSIFIED
 
 
 def test_retirement_is_recorded_in_the_artifact(monkeypatch) -> None:

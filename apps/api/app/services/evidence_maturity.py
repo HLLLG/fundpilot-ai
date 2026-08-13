@@ -83,6 +83,16 @@ _BLOCKER_BY_REASON: dict[str, str] = {
     # 这两条是硬门在正确工作：候选本身不合格，不是证据链有缺口。
     "quality_gate_not_eligible": BLOCKER_BY_DESIGN,
     "candidate_fund_code_invalid": BLOCKER_BY_DESIGN,
+    # 基准研究的三类原因。此前它们都被 `benchmark_research_not_qualified` 一个码盖住，
+    # 面板只能报「原因未归类」；由 `_benchmark_reason_signals` 规范化后附加上来。
+    # 判据来自 2026-08-13 生产实测（21 个候选）：
+    #   没有 PIT 基准映射登记 9 只、沪金成分提供方返回空序列 2 只 —— 等待不会让它们出现；
+    #   对齐样本天数不足 2 只 —— 新基金攒够历史就会好；
+    #   基准身份只有聚合源、拿不到核验过的合同基准 4 只 —— 需要合同级基准数据。
+    "point_in_time_benchmark_mapping_unavailable": BLOCKER_DATA_SOURCE,
+    "benchmark_provider_returned_no_series": BLOCKER_DATA_SOURCE,
+    "contract_source_not_verified": BLOCKER_DATA_SOURCE,
+    "aligned_return_sample_insufficient": BLOCKER_TIME,
 }
 
 # 永不自愈的缺口优先：一条线只要含有等不到的原因，就不该整体显示成「在积累」。

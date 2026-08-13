@@ -90,6 +90,44 @@ _DOWNSIDE_METRICS_BY_PROFILE: dict[str, tuple[str, ...]] = {
 
 _FUND_CODE_LENGTH = 6
 
+# `benchmark_research_not_qualified` 把三类完全不同的原因糊成了一个码，证据面板因此只能
+# 报「原因未归类」。这里把基准研究自己的原因收敛成**可登记的稳定码**再附加上去。
+# `benchmark_component_index:AU9999_provider_returned_no_series` 这类带成分代码的原因每只
+# 都不一样，直接登记进阻塞分类表永远匹配不上，所以按标记规范化；原始码进 evidence 供排查。
+_BENCHMARK_STABLE_REASONS = frozenset(
+    {
+        # 该基金没有 PIT 基准映射登记 —— 等待不会让它出现。
+        "point_in_time_benchmark_mapping_unavailable",
+        # 对齐后的收益样本天数不够 —— 新基金攒够历史就会好。
+        "aligned_return_sample_insufficient",
+        # 基准身份只来自聚合源，拿不到核验过的基金合同基准。
+        "contract_source_not_verified",
+    }
+)
+_BENCHMARK_REASON_MARKERS: tuple[tuple[str, str], ...] = (
+    ("provider_returned_no_series", "benchmark_provider_returned_no_series"),
+)
+
+
+def _benchmark_reason_signals(
+    research: Mapping[str, Any],
+) -> tuple[list[str], tuple[str, ...]]:
+    """返回 (原始原因码, 可登记的稳定原因码)。"""
+    raw = [str(code) for code in (research.get("reason_codes") or []) if str(code)]
+    identity = str(research.get("benchmark_identity_reason") or "").strip()
+    if identity:
+        raw.append(identity)
+    stable: list[str] = []
+    for code in raw:
+        if code in _BENCHMARK_STABLE_REASONS:
+            stable.append(code)
+            continue
+        for marker, normalized in _BENCHMARK_REASON_MARKERS:
+            if marker in code:
+                stable.append(normalized)
+                break
+    return sorted(dict.fromkeys(raw)), tuple(dict.fromkeys(stable))
+
 
 def attach_decision_score_shadow(
     discovery_facts: dict[str, Any],
@@ -718,7 +756,15 @@ def _benchmark_component_v2(
     if decision_at is None or _decision_text(research.get("decision_at")) != decision_at:
         return _missing_component("benchmark_research_decision_at_mismatch")
     if research.get("status") != "qualified" or research.get("qualified") is not True:
-        return _missing_component("benchmark_research_not_qualified")
+        raw_reasons, stable_reasons = _benchmark_reason_signals(research)
+        return _missing_component(
+            "benchmark_research_not_qualified",
+            additional_reasons=stable_reasons,
+            evidence={
+                "benchmark_status": research.get("status"),
+                "benchmark_reason_codes": raw_reasons,
+            },
+        )
     comparison_policy = (
         research.get("comparison_policy")
         if isinstance(research.get("comparison_policy"), Mapping)
@@ -739,7 +785,18 @@ def _benchmark_component_v2(
             or research.get("formal_excess_eligible") is not True
             or research.get("contract_verification_kind") != "verified_fund_contract"
         ):
-            return _missing_component("formal_contract_benchmark_unavailable")
+            raw_reasons, stable_reasons = _benchmark_reason_signals(research)
+            return _missing_component(
+                "formal_contract_benchmark_unavailable",
+                additional_reasons=stable_reasons,
+                evidence={
+                    "comparison_role": research.get("comparison_role"),
+                    "contract_verification_kind": research.get(
+                        "contract_verification_kind"
+                    ),
+                    "benchmark_reason_codes": raw_reasons,
+                },
+            )
         horizons = (
             research.get("horizons")
             if isinstance(research.get("horizons"), Mapping)
