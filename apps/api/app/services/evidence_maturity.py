@@ -48,6 +48,9 @@ THEORETICAL_LONG_TRADING_DAYS = 412
 BLOCKER_NONE = "not_blocked"
 BLOCKER_TIME = "blocked_on_time"
 BLOCKER_DATA_SOURCE = "blocked_on_data_source"
+# 第三类：消费方仍在读一个上游已经不再产出的输入。既不是等时间也不是等外部数据源，
+# 修法是改代码——恢复上游产出，或者让消费方退休。
+BLOCKER_REMOVED_INPUT = "blocked_on_removed_input"
 BLOCKER_UNCLASSIFIED = "blocked_unclassified"
 
 # 原因码 → 阻塞类型。**未列出的原因一律落 `blocked_unclassified`，不猜。**
@@ -58,14 +61,27 @@ BLOCKER_UNCLASSIFIED = "blocked_unclassified"
 #     `downside_capture_1y_percent` 字段压根不存在），不补数据源则永远不会出现，
 #     继续等待无用。该原因码由 `fund_peer_ranking.catalogue_uncovered_metrics`
 #     派生，不是这里另编的判断。
+#   `tradeability_gate_not_eligible` / `holding_period_cost_gate_not_executable` /
+#     `cost_probe_amount_unavailable`：DecisionScore v2 仍在读 `candidate.tradeability`，
+#     而荐基链路在 2026-08-04 的 `33639fb`（remove discovery tradeability gate）之后
+#     不再产出它——`discovery_candidate_pool.py` 现在对 `tradeability` 零引用。
+#     `build_tradeability_gate(None)` 必然落 `watch_only`，于是 hard gate 拦住每一行
+#     （线上实测 134/134 行 `hard_gate_blocked`、候选池 0/134 带 tradeability）。
+#     这类缺口靠等和买数据都解决不了，只能改代码；一旦上游恢复产出，这些原因码就不再
+#     出现，映射会自行失效，不会留下一条骗人的分类。
 _BLOCKER_BY_REASON: dict[str, str] = {
     "factor_ic_not_decision_eligible": BLOCKER_TIME,
     "peer_catalogue_metric_not_covered": BLOCKER_DATA_SOURCE,
     "peer_catalogue_missing_required_metrics": BLOCKER_DATA_SOURCE,
+    "tradeability_gate_not_eligible": BLOCKER_REMOVED_INPUT,
+    "holding_period_cost_gate_not_executable": BLOCKER_REMOVED_INPUT,
+    "cost_probe_amount_unavailable": BLOCKER_REMOVED_INPUT,
 }
 
 # 永不自愈的缺口优先：一条线只要含有等不到的原因，就不该整体显示成「在积累」。
+# 契约失效排在最前——它是唯一"改代码今天就能解决"的一类，最该被先看到。
 _BLOCKER_PRIORITY = (
+    BLOCKER_REMOVED_INPUT,
     BLOCKER_DATA_SOURCE,
     BLOCKER_UNCLASSIFIED,
     BLOCKER_TIME,
@@ -76,6 +92,7 @@ _BLOCKER_PRIORITY = (
 _SELF_HEALING_BY_BLOCKER: dict[str, bool | None] = {
     BLOCKER_TIME: True,
     BLOCKER_DATA_SOURCE: False,
+    BLOCKER_REMOVED_INPUT: False,
     BLOCKER_UNCLASSIFIED: None,
     BLOCKER_NONE: None,
 }
@@ -84,8 +101,12 @@ _BLOCKER_LABELS = {
     BLOCKER_NONE: "无阻塞",
     BLOCKER_TIME: "等样本累积（会自愈）",
     BLOCKER_DATA_SOURCE: "等数据源（不会自愈）",
+    BLOCKER_REMOVED_INPUT: "上游输入已移除（需改代码）",
     BLOCKER_UNCLASSIFIED: "原因未归类",
 }
+
+# 这些阻塞类别表示"等下去没有意义"，一条线命中任一类就不该显示成 collecting。
+_TERMINAL_BLOCKERS = frozenset({BLOCKER_DATA_SOURCE, BLOCKER_REMOVED_INPUT})
 
 
 def _worst_blocker(blockers: Iterable[str]) -> str:
@@ -506,12 +527,16 @@ def _decision_score_projection() -> tuple[dict[str, Any], list[dict[str, str]]]:
         )
         for key in sorted(missing_counts)
     }
+    # hard gate 先于组件生效：被它拦住的行走不到"缺哪个组件"那一步，所以它必须单独
+    # 露出来，否则「每一行都被硬门拦死」会被组件缺口的数字盖住。
+    hard_gate_blocked = _nonnegative_int(digest.get("hard_gate_blocked_count")) or 0
+    hard_gate_blocker = _classify_blocker(digest.get("hard_gate_reason_counts"))
     line_blocker = _worst_blocker(
         item["blocker"]
-        for item in component_blockers.values()
+        for item in (*component_blockers.values(), hard_gate_blocker)
         if item["blocker"] != BLOCKER_NONE
     )
-    # 有制品但因为等不到的数据而永远打不出分时，显示成 `blocked` 而不是 `collecting`：
+    # 有制品但被"等下去没有意义"的原因卡住时，显示成 `blocked` 而不是 `collecting`：
     # 后者会让人以为再等等就好了。校验失败（`attention`）更紧急，仍然优先。
     status = (
         "collecting"
@@ -519,7 +544,7 @@ def _decision_score_projection() -> tuple[dict[str, Any], list[dict[str, str]]]:
         else "attention"
         if valid < artifacts
         else "blocked"
-        if line_blocker == BLOCKER_DATA_SOURCE
+        if line_blocker in _TERMINAL_BLOCKERS
         else "collecting"
         if evaluable == 0
         else "shadow_ready"
@@ -543,6 +568,11 @@ def _decision_score_projection() -> tuple[dict[str, Any], list[dict[str, str]]]:
             round(scored / candidates * 100.0, 2) if candidates else None
         ),
         "missing_component_counts": missing_counts,
+        "hard_gate_blocked_count": hard_gate_blocked,
+        "hard_gate_blocked_percent": (
+            round(hard_gate_blocked / candidates * 100.0, 2) if candidates else None
+        ),
+        "hard_gate_blocker": hard_gate_blocker,
         "blocker": line_blocker,
         "blocker_label": _BLOCKER_LABELS[line_blocker],
         "self_healing": _SELF_HEALING_BY_BLOCKER[line_blocker],
@@ -551,6 +581,27 @@ def _decision_score_projection() -> tuple[dict[str, Any], list[dict[str, str]]]:
         "automatic_promotion_allowed": False,
     }
     alerts: list[dict[str, str]] = []
+    if candidates and hard_gate_blocked >= candidates:
+        alerts.append(
+            _alert(
+                "decision_score_all_rows_hard_gate_blocked",
+                "warning",
+                "DecisionScore 每个候选都被硬门拦住",
+                f"{hard_gate_blocked}/{candidates} 行在评分之前就被 hard gate 拦下，"
+                "因此组件缺口的数字并不是它打不出分的真正原因。",
+                "先看 hard_gate 原因；若原因是上游已移除的输入，需决定恢复上游还是让消费方退休。",
+            )
+        )
+    if hard_gate_blocker["blocker"] == BLOCKER_REMOVED_INPUT:
+        alerts.append(
+            _alert(
+                "decision_score_hard_gate_reads_removed_input",
+                "warning",
+                "DecisionScore 硬门读的是已移除的输入",
+                "hard gate 原因指向荐基链路已不再产出的字段，等待与补外部数据源都无法解决。",
+                "改代码：恢复上游产出，或让该门禁与依赖它的维度一起退休。",
+            )
+        )
     data_source_blocked = sorted(
         key
         for key, item in component_blockers.items()
@@ -887,6 +938,16 @@ def build_evidence_maturity_status(
                 ),
                 detail="标签要求结局观察已终局且成熟，由前瞻窗口结算驱动。",
             ),
+            _blocker_entry(
+                code="decision_score_hard_gate",
+                label="DecisionScore 硬门（先于所有维度）",
+                classified=decision_score.get("hard_gate_blocker") or {},
+                detail=(
+                    f"{decision_score.get('hard_gate_blocked_count')}"
+                    f"/{decision_score.get('candidate_count')} 个候选在评分前被拦下；"
+                    "硬门不过时组件缺口不是真正原因。"
+                ),
+            ),
             *(
                 _blocker_entry(
                     code=f"decision_score_component.{component}",
@@ -961,8 +1022,10 @@ def build_evidence_maturity_status(
             "空值表示尚无可验证证据，不按 0 分处理。",
             "17.5/19.5 个月是理论最短样本窗口，不是到期自动通过；仍需 FDR、样本外一致性和扣费后经济门槛。",
             "所有新模型继续 shadow/fail-closed，任何成熟状态都不允许自动晋级。",
-            "blockers 区分三类：blocked_on_time 会随采集自愈；blocked_on_data_source 等待无用，"
-            "必须补数据源或改口径；blocked_unclassified 表示原因码尚未归类，不得当作会自愈。",
+            "blockers 区分四类：blocked_on_time 会随采集自愈；blocked_on_data_source 等待无用，"
+            "必须补数据源或改口径；blocked_on_removed_input 是消费方仍在读上游已移除的输入，"
+            "只能改代码；blocked_unclassified 表示原因码尚未归类，不得当作会自愈。",
+            "hard gate 先于所有维度生效：它不过时，组件缺口的数字不是打不出分的真正原因。",
         ],
     }
 

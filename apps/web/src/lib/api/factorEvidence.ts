@@ -75,6 +75,8 @@ export type EvidenceMaturityBlockerKind =
   | "not_blocked"
   | "blocked_on_time"
   | "blocked_on_data_source"
+  /** 消费方仍在读上游已移除的输入：等和买数据都无效，只能改代码。 */
+  | "blocked_on_removed_input"
   | "blocked_unclassified";
 
 export type EvidenceMaturityBlockerDetail = {
@@ -172,6 +174,10 @@ export type EvidenceMaturityStatus = {
     scored_count?: number | null;
     scored_coverage_percent?: number | null;
     missing_component_counts?: Record<string, number> | null;
+    /** 硬门先于所有维度生效：它拦住时组件缺口不是真正原因。 */
+    hard_gate_blocked_count?: number | null;
+    hard_gate_blocked_percent?: number | null;
+    hard_gate_blocker?: EvidenceMaturityBlockerDetail | null;
     blocker?: string | null;
     blocker_label?: string | null;
     self_healing?: boolean | null;

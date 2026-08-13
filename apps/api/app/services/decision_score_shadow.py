@@ -504,10 +504,16 @@ def build_decision_score_shadow_digest(
     missing_reason_counts: dict[str, dict[str, int]] = {
         key: {} for key in REQUIRED_COMPONENTS
     }
+    # hard gate 先于组件生效：被它拦住的行压根走不到"缺哪个组件"那一步。只汇总
+    # `missing_component_counts` 会让「每一行都被硬门拦死」完全隐形——线上实测 134/134
+    # 行都是 `hard_gate_blocked`，而面板此前只显示组件缺口。
+    hard_gate_blocked_count = 0
+    hard_gate_reason_counts: dict[str, int] = {}
     for _report, artifact in artifacts:
         coverage = artifact.get("coverage") if isinstance(artifact.get("coverage"), Mapping) else {}
         candidate_count += _count(coverage.get("candidate_count"))
         scored_count += _count(coverage.get("scored_count"))
+        hard_gate_blocked_count += _count(coverage.get("hard_gate_blocked_count"))
         for key in REQUIRED_COMPONENTS:
             values = coverage.get("missing_component_counts")
             if isinstance(values, Mapping):
@@ -515,6 +521,13 @@ def build_decision_score_shadow_digest(
         for row in artifact.get("rows") or []:
             if not isinstance(row, Mapping):
                 continue
+            hard_gate = row.get("hard_gate")
+            if isinstance(hard_gate, Mapping) and hard_gate.get("eligible") is not True:
+                for reason in hard_gate.get("reason_codes") or ():
+                    text = str(reason)
+                    hard_gate_reason_counts[text] = (
+                        hard_gate_reason_counts.get(text, 0) + 1
+                    )
             components = row.get("components")
             if not isinstance(components, Mapping):
                 continue
@@ -583,6 +596,8 @@ def build_decision_score_shadow_digest(
         "top_k_changed_report_count": top_k_changed_count,
         "candidate_count": candidate_count,
         "scored_count": scored_count,
+        "hard_gate_blocked_count": hard_gate_blocked_count,
+        "hard_gate_reason_counts": dict(sorted(hard_gate_reason_counts.items())),
         "scored_coverage_percent": (
             round(scored_count / candidate_count * 100.0, 4)
             if candidate_count

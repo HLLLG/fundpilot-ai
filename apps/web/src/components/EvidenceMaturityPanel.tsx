@@ -55,12 +55,15 @@ const BLOCKER_CLASS: Record<string, string> = {
   blocked_on_time: "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]",
   blocked_on_data_source:
     "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]",
+  blocked_on_removed_input:
+    "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]",
   blocked_unclassified: "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--muted)]",
 };
 
 const BLOCKER_ACTION: Record<string, string> = {
   blocked_on_time: "继续采集即可推进",
   blocked_on_data_source: "等待无用，需补数据源或改口径",
+  blocked_on_removed_input: "上游已不再产出该输入，需恢复上游或让消费方退休",
   blocked_unclassified: "原因未归类，先查清再排期",
 };
 
@@ -306,6 +309,19 @@ function MaturityContent({ data }: { data: EvidenceMaturityStatus }) {
               <dt className="text-slate-500">候选评分覆盖</dt>
               <dd className="mt-0.5 font-bold text-slate-800">
                 <EvidenceValue value={score.scored_coverage_percent} suffix="%" />
+              </dd>
+            </div>
+            {/* 硬门先于所有维度生效：它拦住时，组件缺口不是打不出分的真正原因。 */}
+            <div>
+              <dt className="text-slate-500">硬门拦住</dt>
+              <dd className="mt-0.5 font-bold text-slate-800">
+                <EvidenceValue value={score.hard_gate_blocked_percent} suffix="%" />
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">被拦候选</dt>
+              <dd className="mt-0.5 font-bold text-slate-800">
+                <EvidenceValue value={score.hard_gate_blocked_count} suffix=" 个" />
               </dd>
             </div>
           </dl>

@@ -25,6 +25,7 @@ from app.services.decision_score_shadow import (
 from app.services.evidence_maturity import (
     BLOCKER_DATA_SOURCE,
     BLOCKER_NONE,
+    BLOCKER_REMOVED_INPUT,
     BLOCKER_TIME,
     BLOCKER_UNCLASSIFIED,
     _accumulation_blocker,
@@ -56,10 +57,30 @@ class TestClassifyBlocker:
         assert result["self_healing"] is False
 
     def test_unregistered_reason_is_never_assumed_self_healing(self) -> None:
-        """未登记的原因码不得被默认成「等时间」——那会重新制造这次要修的问题。"""
-        result = _classify_blocker({"cost_probe_amount_unavailable": 12})
+        """未登记的原因码不得被默认成「等时间」——那会重新制造这次要修的问题。
+
+        `benchmark_research_not_qualified` 在生产里真实出现（845 次）但尚未归因，
+        正是这一类的代表。
+        """
+        result = _classify_blocker({"benchmark_research_not_qualified": 12})
         assert result["blocker"] == BLOCKER_UNCLASSIFIED
         assert result["self_healing"] is None
+
+    def test_removed_upstream_input_is_its_own_category(self) -> None:
+        """读上游已移除的输入既不是等时间也不是等数据源，修法是改代码。"""
+        result = _classify_blocker({"tradeability_gate_not_eligible": 134})
+        assert result["blocker"] == BLOCKER_REMOVED_INPUT
+        assert result["self_healing"] is False
+
+    def test_removed_input_outranks_a_data_source_gap(self) -> None:
+        """契约失效排最前：它是唯一改代码今天就能解决的一类。"""
+        result = _classify_blocker(
+            {
+                "peer_catalogue_metric_not_covered": 100,
+                "tradeability_gate_not_eligible": 1,
+            }
+        )
+        assert result["blocker"] == BLOCKER_REMOVED_INPUT
 
     def test_data_source_gap_outranks_a_time_gap(self) -> None:
         result = _classify_blocker(
@@ -283,7 +304,6 @@ def test_data_source_blocked_line_is_reported_as_blocked_not_collecting(
     score = result["decision_score_shadow"]
 
     assert score["status"] == "blocked"
-    assert score["blocker"] == BLOCKER_DATA_SOURCE
     assert score["self_healing"] is False
     downside = score["component_blockers"]["downside_control"]
     assert downside["blocker"] == BLOCKER_DATA_SOURCE
@@ -291,10 +311,40 @@ def test_data_source_blocked_line_is_reported_as_blocked_not_collecting(
     # 同一份制品里，PIT 依赖那一维仍应标成会自愈。
     assert score["component_blockers"]["factor_peer"]["blocker"] == BLOCKER_TIME
     assert score["component_blockers"]["factor_peer"]["self_healing"] is True
+    # 这份 fixture 的候选没有 tradeability，因此同时复现了生产的硬门情形；契约失效
+    # 优先级高于数据源，所以整条线的 blocker 是 removed_input，而逐维分类仍各自准确。
+    assert score["hard_gate_blocker"]["blocker"] == BLOCKER_REMOVED_INPUT
+    assert score["blocker"] == BLOCKER_REMOVED_INPUT
 
     codes = {alert["code"] for alert in result["alerts"]}
     assert "decision_score_component_blocked_on_data_source" in codes
     assert "decision_score_shadow_empty" not in codes
+
+
+def test_hard_gate_blocking_every_row_is_surfaced(monkeypatch) -> None:
+    """硬门先于组件生效：全量拦住时必须单独报出来，否则组件缺口会盖住真正原因。"""
+    _patch_sources(
+        monkeypatch,
+        reports=[_report_with(_artifact(uncovered=["max_drawdown_1y_percent"]))],
+    )
+
+    result = evidence_maturity.build_evidence_maturity_status(user_id=7, now=NOW)
+    score = result["decision_score_shadow"]
+
+    assert score["hard_gate_blocked_count"] == score["candidate_count"]
+    assert score["hard_gate_blocked_percent"] == 100.0
+    assert (
+        "tradeability_gate_not_eligible"
+        in score["hard_gate_blocker"]["reason_counts"]
+    )
+
+    codes = {alert["code"] for alert in result["alerts"]}
+    assert "decision_score_all_rows_hard_gate_blocked" in codes
+    assert "decision_score_hard_gate_reads_removed_input" in codes
+
+    by_code = {entry["code"]: entry for entry in result["blockers"]}
+    assert by_code["decision_score_hard_gate"]["blocker"] == BLOCKER_REMOVED_INPUT
+    assert by_code["decision_score_hard_gate"]["self_healing"] is False
 
 
 def test_blocker_rollup_lists_gaps_with_whether_waiting_helps(monkeypatch) -> None:

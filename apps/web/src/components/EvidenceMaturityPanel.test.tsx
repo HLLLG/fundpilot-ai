@@ -34,9 +34,12 @@ function status(
     nav_observation: { status: "collecting" },
     decision_score_shadow: {
       status: "blocked",
-      blocker: "blocked_on_data_source",
-      blocker_label: "等数据源（不会自愈）",
+      blocker: "blocked_on_removed_input",
+      blocker_label: "上游输入已移除（需改代码）",
       self_healing: false,
+      candidate_count: 134,
+      hard_gate_blocked_count: 134,
+      hard_gate_blocked_percent: 100,
       automatic_promotion_allowed: false,
     },
     decision_quality: { status: "collecting" },
@@ -56,6 +59,15 @@ function status(
         blocker_label: "等数据源（不会自愈）",
         self_healing: false,
         reason_counts: { peer_catalogue_metric_not_covered: 162 },
+      },
+      {
+        code: "decision_score_hard_gate",
+        label: "DecisionScore 硬门（先于所有维度）",
+        blocker: "blocked_on_removed_input",
+        blocker_label: "上游输入已移除（需改代码）",
+        self_healing: false,
+        reason_counts: { tradeability_gate_not_eligible: 134 },
+        detail: "134/134 个候选在评分前被拦下；硬门不过时组件缺口不是真正原因。",
       },
     ],
     alerts: [],
@@ -96,6 +108,28 @@ describe("EvidenceMaturityPanel 阻塞清单", () => {
 
     expect(await screen.findByTestId("evidence-maturity-content")).toBeInTheDocument();
     expect(screen.getAllByText("等不到数据").length).toBeGreaterThan(0);
+  });
+
+  it("契约失效与等数据源给出不同的行动指引", async () => {
+    vi.mocked(fetchEvidenceMaturityStatus).mockResolvedValue(status());
+
+    render(<EvidenceMaturityPanel enabled />);
+
+    expect(await screen.findByTestId("evidence-blockers")).toBeInTheDocument();
+    expect(
+      screen.getByText(/上游已不再产出该输入，需恢复上游或让消费方退休/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/等待无用，需补数据源或改口径/)).toBeInTheDocument();
+  });
+
+  it("把硬门拦住比例摆到卡片上，避免组件缺口盖住真正原因", async () => {
+    vi.mocked(fetchEvidenceMaturityStatus).mockResolvedValue(status());
+
+    render(<EvidenceMaturityPanel enabled />);
+
+    expect(await screen.findByText("硬门拦住")).toBeInTheDocument();
+    expect(screen.getByText("被拦候选")).toBeInTheDocument();
+    expect(screen.getByText("134 个")).toBeInTheDocument();
   });
 
   it("没有缺口时不渲染清单，避免空区块", async () => {
