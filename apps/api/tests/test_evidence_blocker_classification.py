@@ -25,6 +25,7 @@ from app.services.decision_score_shadow import (
     validate_decision_score_shadow,
 )
 from app.services.evidence_maturity import (
+    BLOCKER_BY_DESIGN,
     BLOCKER_DATA_SOURCE,
     BLOCKER_NONE,
     BLOCKER_REMOVED_INPUT,
@@ -83,6 +84,22 @@ class TestClassifyBlocker:
             }
         )
         assert result["blocker"] == BLOCKER_REMOVED_INPUT
+
+    def test_quality_gate_rejection_is_not_reported_as_a_gap(self) -> None:
+        """门禁拒收不合格候选是系统在正常工作，不该报成「原因未归类」。"""
+        result = _classify_blocker({"quality_gate_not_eligible": 3})
+        assert result["blocker"] == BLOCKER_BY_DESIGN
+        assert result["self_healing"] is None
+
+    def test_a_real_gap_outranks_a_by_design_exclusion(self) -> None:
+        """按设计排除排最后：只要还有真缺口，真缺口更该被看到。"""
+        result = _classify_blocker(
+            {
+                "quality_gate_not_eligible": 100,
+                "peer_catalogue_metric_not_covered": 1,
+            }
+        )
+        assert result["blocker"] == BLOCKER_DATA_SOURCE
 
     def test_data_source_gap_outranks_a_time_gap(self) -> None:
         result = _classify_blocker(
@@ -372,6 +389,8 @@ def test_a_real_hard_gate_reason_is_still_surfaced(monkeypatch) -> None:
     # 已退休的原因码不得再出现。
     assert "tradeability_gate_not_eligible" not in reasons
     assert "holding_period_cost_gate_not_executable" not in reasons
+    # 门禁正常拒收不该被报成缺口。
+    assert score["hard_gate_blocker"]["blocker"] == BLOCKER_BY_DESIGN
 
     codes = {alert["code"] for alert in result["alerts"]}
     assert "decision_score_all_rows_hard_gate_blocked" in codes

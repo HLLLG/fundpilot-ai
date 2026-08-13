@@ -51,6 +51,10 @@ BLOCKER_DATA_SOURCE = "blocked_on_data_source"
 # 第三类：消费方仍在读一个上游已经不再产出的输入。既不是等时间也不是等外部数据源，
 # 修法是改代码——恢复上游产出，或者让消费方退休。
 BLOCKER_REMOVED_INPUT = "blocked_on_removed_input"
+# 第五类：不是缺口，而是按设计排除。基金没过质量门禁属于系统正确工作，报成「原因未归类」
+# 会让人去查一个不需要查的东西——那与这几轮在修的"面板不诚实"是同一类问题。仍然进清单
+# （100% 被排除是异常信号），但明确标注无需行动，也不触发未归类告警。
+BLOCKER_BY_DESIGN = "excluded_by_design"
 BLOCKER_UNCLASSIFIED = "blocked_unclassified"
 
 # 原因码 → 阻塞类型。**未列出的原因一律落 `blocked_unclassified`，不猜。**
@@ -76,15 +80,20 @@ _BLOCKER_BY_REASON: dict[str, str] = {
     "tradeability_gate_not_eligible": BLOCKER_REMOVED_INPUT,
     "holding_period_cost_gate_not_executable": BLOCKER_REMOVED_INPUT,
     "cost_probe_amount_unavailable": BLOCKER_REMOVED_INPUT,
+    # 这两条是硬门在正确工作：候选本身不合格，不是证据链有缺口。
+    "quality_gate_not_eligible": BLOCKER_BY_DESIGN,
+    "candidate_fund_code_invalid": BLOCKER_BY_DESIGN,
 }
 
 # 永不自愈的缺口优先：一条线只要含有等不到的原因，就不该整体显示成「在积累」。
 # 契约失效排在最前——它是唯一"改代码今天就能解决"的一类，最该被先看到。
+# 按设计排除排在最后：它不是缺口，只要还有别的原因，别的原因更该被看到。
 _BLOCKER_PRIORITY = (
     BLOCKER_REMOVED_INPUT,
     BLOCKER_DATA_SOURCE,
     BLOCKER_UNCLASSIFIED,
     BLOCKER_TIME,
+    BLOCKER_BY_DESIGN,
     BLOCKER_NONE,
 )
 
@@ -93,6 +102,7 @@ _SELF_HEALING_BY_BLOCKER: dict[str, bool | None] = {
     BLOCKER_TIME: True,
     BLOCKER_DATA_SOURCE: False,
     BLOCKER_REMOVED_INPUT: False,
+    BLOCKER_BY_DESIGN: None,
     BLOCKER_UNCLASSIFIED: None,
     BLOCKER_NONE: None,
 }
@@ -102,6 +112,7 @@ _BLOCKER_LABELS = {
     BLOCKER_TIME: "等样本累积（会自愈）",
     BLOCKER_DATA_SOURCE: "等数据源（不会自愈）",
     BLOCKER_REMOVED_INPUT: "上游输入已移除（需改代码）",
+    BLOCKER_BY_DESIGN: "按设计排除（无需行动）",
     BLOCKER_UNCLASSIFIED: "原因未归类",
 }
 
@@ -1022,9 +1033,10 @@ def build_evidence_maturity_status(
             "空值表示尚无可验证证据，不按 0 分处理。",
             "17.5/19.5 个月是理论最短样本窗口，不是到期自动通过；仍需 FDR、样本外一致性和扣费后经济门槛。",
             "所有新模型继续 shadow/fail-closed，任何成熟状态都不允许自动晋级。",
-            "blockers 区分四类：blocked_on_time 会随采集自愈；blocked_on_data_source 等待无用，"
+            "blockers 区分五类：blocked_on_time 会随采集自愈；blocked_on_data_source 等待无用，"
             "必须补数据源或改口径；blocked_on_removed_input 是消费方仍在读上游已移除的输入，"
-            "只能改代码；blocked_unclassified 表示原因码尚未归类，不得当作会自愈。",
+            "只能改代码；excluded_by_design 是门禁正常拒收不合格候选、无需行动；"
+            "blocked_unclassified 表示原因码尚未归类，不得当作会自愈。",
             "hard gate 先于所有维度生效：它不过时，组件缺口的数字不是打不出分的真正原因。",
         ],
     }

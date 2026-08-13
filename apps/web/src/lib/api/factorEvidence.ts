@@ -77,6 +77,8 @@ export type EvidenceMaturityBlockerKind =
   | "blocked_on_data_source"
   /** 消费方仍在读上游已移除的输入：等和买数据都无效，只能改代码。 */
   | "blocked_on_removed_input"
+  /** 不是缺口：候选没过门禁属于系统正常工作，无需行动。 */
+  | "excluded_by_design"
   | "blocked_unclassified";
 
 export type EvidenceMaturityBlockerDetail = {

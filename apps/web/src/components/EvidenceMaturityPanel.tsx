@@ -57,6 +57,7 @@ const BLOCKER_CLASS: Record<string, string> = {
     "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]",
   blocked_on_removed_input:
     "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]",
+  excluded_by_design: "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--muted)]",
   blocked_unclassified: "border-[var(--line)] bg-[var(--surface-muted)] text-[var(--muted)]",
 };
 
@@ -64,6 +65,7 @@ const BLOCKER_ACTION: Record<string, string> = {
   blocked_on_time: "继续采集即可推进",
   blocked_on_data_source: "等待无用，需补数据源或改口径",
   blocked_on_removed_input: "上游已不再产出该输入，需恢复上游或让消费方退休",
+  excluded_by_design: "门禁在正常工作，候选本身不合格；只有全量被排除才值得查",
   blocked_unclassified: "原因未归类，先查清再排期",
 };
 
