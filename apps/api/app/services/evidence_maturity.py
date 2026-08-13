@@ -66,9 +66,9 @@ BLOCKER_UNCLASSIFIED = "blocked_unclassified"
 #     而荐基链路在 2026-08-04 的 `33639fb`（remove discovery tradeability gate）之后
 #     不再产出它——`discovery_candidate_pool.py` 现在对 `tradeability` 零引用。
 #     `build_tradeability_gate(None)` 必然落 `watch_only`，于是 hard gate 拦住每一行
-#     （线上实测 134/134 行 `hard_gate_blocked`、候选池 0/134 带 tradeability）。
-#     这类缺口靠等和买数据都解决不了，只能改代码；一旦上游恢复产出，这些原因码就不再
-#     出现，映射会自行失效，不会留下一条骗人的分类。
+#     （线上实测 772/1046 行 `hard_gate_blocked`、候选池 0/134 带 tradeability）。
+#     **v3 已把该维度与硬门一起退休**，所以这三个原因码不再新产生；这里继续保留是为了
+#     给**存量 v2 制品**正确归因——删掉它们会让历史缺口退回"原因未归类"。
 _BLOCKER_BY_REASON: dict[str, str] = {
     "factor_ic_not_decision_eligible": BLOCKER_TIME,
     "peer_catalogue_metric_not_covered": BLOCKER_DATA_SOURCE,

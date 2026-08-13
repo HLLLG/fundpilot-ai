@@ -19,8 +19,10 @@ from datetime import datetime, timezone
 
 from app.services import evidence_maturity
 from app.services.decision_score_shadow import (
+    LEGACY_COMPONENT_WEIGHTS,
     build_decision_score_shadow,
     build_decision_score_shadow_digest,
+    validate_decision_score_shadow,
 )
 from app.services.evidence_maturity import (
     BLOCKER_DATA_SOURCE,
@@ -154,7 +156,6 @@ def _artifact(*, uncovered: list[str]) -> dict:
         portfolio_gap=None,
         profile=None,
         decision_at=NOW,
-        minimum_holding_days=7,
     )
 
 
@@ -311,18 +312,23 @@ def test_data_source_blocked_line_is_reported_as_blocked_not_collecting(
     # 同一份制品里，PIT 依赖那一维仍应标成会自愈。
     assert score["component_blockers"]["factor_peer"]["blocker"] == BLOCKER_TIME
     assert score["component_blockers"]["factor_peer"]["self_healing"] is True
-    # 这份 fixture 的候选没有 tradeability，因此同时复现了生产的硬门情形；契约失效
-    # 优先级高于数据源，所以整条线的 blocker 是 removed_input，而逐维分类仍各自准确。
-    assert score["hard_gate_blocker"]["blocker"] == BLOCKER_REMOVED_INPUT
-    assert score["blocker"] == BLOCKER_REMOVED_INPUT
+    # tradeability 硬门退休后，没有该字段的候选不再被拦，整条线的 blocker 回到数据源缺口。
+    assert score["blocker"] == BLOCKER_DATA_SOURCE
 
     codes = {alert["code"] for alert in result["alerts"]}
     assert "decision_score_component_blocked_on_data_source" in codes
     assert "decision_score_shadow_empty" not in codes
 
 
-def test_hard_gate_blocking_every_row_is_surfaced(monkeypatch) -> None:
-    """硬门先于组件生效：全量拦住时必须单独报出来，否则组件缺口会盖住真正原因。"""
+def test_candidate_without_tradeability_is_no_longer_hard_gate_blocked(
+    monkeypatch,
+) -> None:
+    """退休生效的正面证据。
+
+    修复前：`build_tradeability_gate(None)` 必然落 `watch_only` → `tradeability_gate_
+    not_eligible` → 每一行 `hard_gate_blocked`（线上 772/1046）。这份 fixture 的候选
+    压根没有 `tradeability`，现在必须能通过硬门。
+    """
     _patch_sources(
         monkeypatch,
         reports=[_report_with(_artifact(uncovered=["max_drawdown_1y_percent"]))],
@@ -331,20 +337,99 @@ def test_hard_gate_blocking_every_row_is_surfaced(monkeypatch) -> None:
     result = evidence_maturity.build_evidence_maturity_status(user_id=7, now=NOW)
     score = result["decision_score_shadow"]
 
+    assert score["candidate_count"] == 1
+    assert score["hard_gate_blocked_count"] == 0
+    assert score["hard_gate_blocker"]["blocker"] == BLOCKER_NONE
+    assert score["hard_gate_blocker"]["reason_counts"] == {}
+
+    codes = {alert["code"] for alert in result["alerts"]}
+    assert "decision_score_all_rows_hard_gate_blocked" not in codes
+    assert "decision_score_hard_gate_reads_removed_input" not in codes
+    by_code = {entry["code"] for entry in result["blockers"]}
+    assert "decision_score_hard_gate" not in by_code
+
+
+def test_a_real_hard_gate_reason_is_still_surfaced(monkeypatch) -> None:
+    """可见性本身不能跟着退休：质量门禁不合格时仍须单独报出硬门拦住。"""
+    candidate = _candidate(uncovered=["max_drawdown_1y_percent"])
+    candidate["quality_gate"] = {"status": "watch_only"}
+    artifact = build_decision_score_shadow(
+        [candidate],
+        candidate_factor_scores=None,
+        portfolio_gap=None,
+        profile=None,
+        decision_at=NOW,
+    )
+    _patch_sources(monkeypatch, reports=[_report_with(artifact)])
+
+    result = evidence_maturity.build_evidence_maturity_status(user_id=7, now=NOW)
+    score = result["decision_score_shadow"]
+
     assert score["hard_gate_blocked_count"] == score["candidate_count"]
     assert score["hard_gate_blocked_percent"] == 100.0
-    assert (
-        "tradeability_gate_not_eligible"
-        in score["hard_gate_blocker"]["reason_counts"]
-    )
+    reasons = score["hard_gate_blocker"]["reason_counts"]
+    assert "quality_gate_not_eligible" in reasons
+    # 已退休的原因码不得再出现。
+    assert "tradeability_gate_not_eligible" not in reasons
+    assert "holding_period_cost_gate_not_executable" not in reasons
 
     codes = {alert["code"] for alert in result["alerts"]}
     assert "decision_score_all_rows_hard_gate_blocked" in codes
-    assert "decision_score_hard_gate_reads_removed_input" in codes
+    # 质量门禁不是"已移除的输入"，因此不该报成契约失效。
+    assert "decision_score_hard_gate_reads_removed_input" not in codes
 
-    by_code = {entry["code"]: entry for entry in result["blockers"]}
-    assert by_code["decision_score_hard_gate"]["blocker"] == BLOCKER_REMOVED_INPUT
-    assert by_code["decision_score_hard_gate"]["self_healing"] is False
+
+def test_legacy_v2_artifact_is_validated_against_its_own_contract() -> None:
+    """存量 v2 制品是五维权重。
+
+    `weights` / `required_components` 的相等断言原本不分版本，拿 v3 的四维口径去量会把
+    41 份既有制品判成 `weights_invalid`——它们并没有错，只是被取代了，那会让面板误报
+    「部分制品未通过校验」并把整条线拉成 attention。
+    """
+    legacy = {
+        "schema_version": "decision_score_shadow.v2",
+        "model_version": "decision_score.v2",
+        "mode": "shadow_record_only",
+        "decision_at": "2026-08-01T00:00:00+00:00",
+        "selection_effect": "none_shadow_only",
+        "actual_decision_unchanged": True,
+        "automatic_promotion_allowed": False,
+        "allocation_tilt_eligible": False,
+        "weights": dict(LEGACY_COMPONENT_WEIGHTS),
+        "required_components": list(LEGACY_COMPONENT_WEIGHTS),
+        "rows": [],
+    }
+
+    codes = validate_decision_score_shadow(legacy)["error_codes"]
+
+    assert "weights_invalid" not in codes
+    assert "required_components_invalid" not in codes
+    assert "schema_version_invalid" not in codes
+    assert "model_version_invalid" not in codes
+
+
+def test_current_v3_artifact_rejects_the_legacy_weight_table() -> None:
+    """反证：v3 制品若带 v2 的五维权重，必须判非法，否则版本门形同虚设。"""
+    artifact = _artifact(uncovered=[])
+    artifact["weights"] = dict(LEGACY_COMPONENT_WEIGHTS)
+
+    codes = validate_decision_score_shadow(artifact)["error_codes"]
+
+    assert "weights_invalid" in codes
+
+
+def test_retirement_is_recorded_in_the_artifact(monkeypatch) -> None:
+    """退休写进制品，避免以后被当成遗漏又加回来；四维权重仍须和为 1。"""
+    artifact = _artifact(uncovered=[])
+
+    assert "cost_efficiency" not in artifact["required_components"]
+    assert artifact["retired_components"]["cost_efficiency"].startswith("upstream_")
+    assert "tradeability_gate" in artifact["retired_hard_gates"]
+    assert round(sum(artifact["weights"].values()), 6) == 1.0
+    row = artifact["rows"][0]
+    assert "cost_efficiency" not in row["components"]
+    assert "cost" not in artifact["policies"]
+    assert "fee_evidence" not in artifact["policy_versions"]
 
 
 def test_blocker_rollup_lists_gaps_with_whether_waiting_helps(monkeypatch) -> None:

@@ -203,7 +203,6 @@ def _shadow_artifact() -> dict:
         portfolio_gap=None,
         profile=None,
         decision_at=datetime.now(timezone.utc),
-        minimum_holding_days=7,
     )
 
 
@@ -224,8 +223,8 @@ def test_discovery_diagnostic_projection_keeps_the_whole_shadow_artifact() -> No
         {
             "discovery_facts": {
                 "decision_score_shadow": {
-                    "schema_version": "decision_score_shadow.v2",
-                    "model_version": "decision_score.v2",
+                    "schema_version": "decision_score_shadow.v3",
+                    "model_version": "decision_score.v3",
                     "rows": [{"fund_code": "519212", "row_hash": "deadbeef"}],
                 },
                 "sector_opportunities": [{"sector_label": "白酒"}] * 50,

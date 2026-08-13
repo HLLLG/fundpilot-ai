@@ -17,28 +17,56 @@ import math
 from typing import Any
 
 from app.services.factor_ic_research import EXECUTION_QUALIFICATION_METHOD
-from app.services.fund_tradeability import (
-    assess_tradeability_for_amount,
-    build_tradeability_gate,
-)
 
 
-LEGACY_DECISION_SCORE_SHADOW_SCHEMA_VERSION = "decision_score_shadow.v1"
-LEGACY_DECISION_SCORE_MODEL_VERSION = "decision_score.v1"
-DECISION_SCORE_SHADOW_SCHEMA_VERSION = "decision_score_shadow.v2"
-DECISION_SCORE_MODEL_VERSION = "decision_score.v2"
+# v3 退休了 `cost_efficiency` 维度与 tradeability 硬门。**原因不是它们没用，而是它们读的
+# 输入已经不存在**：两者都依赖 `candidate.tradeability`，而荐基链路在 2026-08-04 的
+# `33639fb`（remove discovery tradeability gate）之后不再产出该字段
+# （`discovery_candidate_pool.py` 现在对它零引用）。`build_tradeability_gate(None)` 必然
+# 落 `watch_only`，于是硬门在评分之前拦下 73.8% 的候选（线上实测 772/1046），组件缺口的
+# 数字从此不是真正原因。留着它等于让整个影子模型为一个已被产品移除的输入永久归零。
+LEGACY_DECISION_SCORE_SHADOW_SCHEMA_VERSION = "decision_score_shadow.v2"
+LEGACY_DECISION_SCORE_MODEL_VERSION = "decision_score.v2"
+DECISION_SCORE_SHADOW_SCHEMA_VERSION = "decision_score_shadow.v3"
+DECISION_SCORE_MODEL_VERSION = "decision_score.v3"
 DECISION_SCORE_MODE = "shadow_record_only"
 BENCHMARK_POLICY_VERSION = "fund_type_benchmark_policy.2026-07.v2"
-FEE_EVIDENCE_POLICY_VERSION = "candidate_fee_evidence.2026-07.v2"
 
+# 退休登记：写进制品，避免以后被当成遗漏又加回来。
+RETIRED_COMPONENTS: dict[str, str] = {
+    "cost_efficiency": (
+        "upstream_discovery_pipeline_stopped_emitting_candidate_tradeability"
+    ),
+}
+RETIRED_HARD_GATES: dict[str, str] = {
+    "tradeability_gate": (
+        "upstream_discovery_pipeline_stopped_emitting_candidate_tradeability"
+    ),
+    "holding_period_cost_gate": (
+        "upstream_discovery_pipeline_stopped_emitting_candidate_tradeability"
+    ),
+}
+
+# v3：四维保持 v2 的相对比例（各除以 0.90），**不另编权重**。
 COMPONENT_WEIGHTS: dict[str, float] = {
+    "factor_peer": 0.3333,
+    "benchmark_consistency": 0.2778,
+    "downside_control": 0.2222,
+    "portfolio_diversification": 0.1667,
+}
+REQUIRED_COMPONENTS = tuple(COMPONENT_WEIGHTS)
+
+# v2 的契约。保留它是为了让**存量制品按它自己的口径**校验：`weights` 与
+# `required_components` 的相等断言不分版本，若拿 v3 的口径去量 v2，41 份既有制品会被判
+# `weights_invalid`——它们并没有错，只是被取代了，那会让面板误报"制品未通过校验"。
+LEGACY_COMPONENT_WEIGHTS: dict[str, float] = {
     "factor_peer": 0.30,
     "benchmark_consistency": 0.25,
     "downside_control": 0.20,
     "portfolio_diversification": 0.15,
     "cost_efficiency": 0.10,
 }
-REQUIRED_COMPONENTS = tuple(COMPONENT_WEIGHTS)
+LEGACY_REQUIRED_COMPONENTS = tuple(LEGACY_COMPONENT_WEIGHTS)
 
 _FORMAL_EXCESS_PROFILES = {
     "equity",
@@ -68,7 +96,6 @@ def attach_decision_score_shadow(
     candidate_pool: Sequence[Mapping[str, Any]],
     *,
     decision_at: datetime | str | None,
-    minimum_holding_days: int | None,
 ) -> dict[str, Any]:
     """Build and persist the shadow artifact without exposing it to the LLM."""
 
@@ -100,7 +127,6 @@ def attach_decision_score_shadow(
             else None
         ),
         decision_at=effective_decision_at,
-        minimum_holding_days=minimum_holding_days,
     )
     discovery_facts["decision_score_shadow"] = artifact
     return artifact
@@ -114,7 +140,6 @@ def build_decision_score_shadow(
     profile: Mapping[str, Any] | None,
     source_candidate_selection_audit: Mapping[str, Any] | None = None,
     decision_at: datetime | str | None,
-    minimum_holding_days: int | None,
     top_k: int = 3,
 ) -> dict[str, Any]:
     """Build a self-validating shadow-only score from frozen discovery facts."""
@@ -131,16 +156,14 @@ def build_decision_score_shadow(
         code = _fund_code(raw.get("fund_code"))
         peer_profile = _peer_profile(raw)
         quality_gate = raw.get("quality_gate") if isinstance(raw.get("quality_gate"), Mapping) else {}
-        tradeability = raw.get("tradeability") if isinstance(raw.get("tradeability"), Mapping) else None
-        tradeability_gate = build_tradeability_gate(tradeability)
 
+        # 硬门只保留能自证的两条。tradeability 门禁已退休（见 RETIRED_HARD_GATES）：
+        # 它读的字段荐基链路不再产出，留着只会把每一行拦死。
         hard_gate_reasons: list[str] = []
         if code is None:
             hard_gate_reasons.append("candidate_fund_code_invalid")
         if str(quality_gate.get("status") or "watch_only") != "eligible":
             hard_gate_reasons.append("quality_gate_not_eligible")
-        if str(tradeability_gate.get("status") or "watch_only") != "eligible":
-            hard_gate_reasons.append("tradeability_gate_not_eligible")
 
         factor_component = _factor_component(
             factor_rows.get(code or ""),
@@ -162,20 +185,11 @@ def build_decision_score_shadow(
             portfolio_gap=gap,
             profile=profile_snapshot,
         )
-        cost_component, cost_blocks_execution = _cost_component(
-            tradeability,
-            tradeability_gate=tradeability_gate,
-            minimum_holding_days=minimum_holding_days,
-        )
-        if cost_blocks_execution:
-            hard_gate_reasons.append("holding_period_cost_gate_not_executable")
-
         components = {
             "factor_peer": factor_component,
             "benchmark_consistency": benchmark_component,
             "downside_control": downside_component,
             "portfolio_diversification": diversification_component,
-            "cost_efficiency": cost_component,
         }
         for key, component in components.items():
             component["weight"] = COMPONENT_WEIGHTS[key]
@@ -202,7 +216,6 @@ def build_decision_score_shadow(
         )
 
     _assign_benchmark_percentiles(rows)
-    _assign_cost_percentiles(rows)
     _calculate_scores(rows)
     scored_rows = sorted(
         (row for row in rows if row["status"] == "scored"),
@@ -240,6 +253,13 @@ def build_decision_score_shadow(
         "weights": dict(COMPONENT_WEIGHTS),
         "required_components": list(REQUIRED_COMPONENTS),
         "missing_component_policy": "no_imputation_no_zero_fill_no_weight_renormalization",
+        # 退休不是"缺失"：`missing_component_policy` 管的是运行时某个维度取不到值，这里
+        # 记的是维度已从模型定义里移除，以及为什么——避免以后被当成遗漏加回来。
+        "retired_components": dict(RETIRED_COMPONENTS),
+        "retired_hard_gates": dict(RETIRED_HARD_GATES),
+        "weight_rebase_policy": (
+            "v2_relative_weights_divided_by_remaining_total_not_reinvented"
+        ),
         "policies": {
             "factor": (
                 "pit_v3_execution_qualified_and_type_factor_complete_only"
@@ -252,15 +272,10 @@ def build_decision_score_shadow(
             "diversification": (
                 "pre_decision_sector_capacity_proxy_not_correlation_or_risk_contribution"
             ),
-            "cost": (
-                "public_standard_fee_upper_bound_not_actual_channel_fee_at_"
-                "effective_initial_minimum_and_strategy_horizon"
-            ),
             "ranking": "score_desc_then_fund_code",
         },
         "policy_versions": {
             "benchmark": BENCHMARK_POLICY_VERSION,
-            "fee_evidence": FEE_EVIDENCE_POLICY_VERSION,
         },
         "top_k": normalized_top_k,
         "source_top_k_fund_codes": [
@@ -316,9 +331,18 @@ def validate_decision_score_shadow(artifact: Mapping[str, Any]) -> dict[str, Any
         errors.append("automatic_promotion_must_be_false")
     if artifact.get("allocation_tilt_eligible") is not False:
         errors.append("allocation_tilt_must_be_false")
-    if artifact.get("weights") != COMPONENT_WEIGHTS:
+    # 每个版本按**它自己**的维度契约校验。拿 v3 的四维口径去量 v2 的五维制品会把它们
+    # 判成非法，而它们只是被取代了——那会让面板误报"部分制品未通过校验"。
+    is_legacy = version_pair == legacy_pair
+    expected_weights = (
+        LEGACY_COMPONENT_WEIGHTS if is_legacy else COMPONENT_WEIGHTS
+    )
+    expected_components = (
+        LEGACY_REQUIRED_COMPONENTS if is_legacy else REQUIRED_COMPONENTS
+    )
+    if artifact.get("weights") != expected_weights:
         errors.append("weights_invalid")
-    if artifact.get("required_components") != list(REQUIRED_COMPONENTS):
+    if artifact.get("required_components") != list(expected_components):
         errors.append("required_components_invalid")
     if version_pair == current_pair:
         policy_versions = (
@@ -328,8 +352,10 @@ def validate_decision_score_shadow(artifact: Mapping[str, Any]) -> dict[str, Any
         )
         if policy_versions.get("benchmark") != BENCHMARK_POLICY_VERSION:
             errors.append("benchmark_policy_version_invalid")
-        if policy_versions.get("fee_evidence") != FEE_EVIDENCE_POLICY_VERSION:
-            errors.append("fee_evidence_policy_version_invalid")
+        if artifact.get("retired_components") != RETIRED_COMPONENTS:
+            errors.append("retired_components_invalid")
+        if artifact.get("retired_hard_gates") != RETIRED_HARD_GATES:
+            errors.append("retired_hard_gates_invalid")
     if _decision_text(artifact.get("decision_at")) is None:
         errors.append("decision_at_invalid")
 
@@ -366,7 +392,9 @@ def validate_decision_score_shadow(artifact: Mapping[str, Any]) -> dict[str, Any
             hard_gate = {}
             errors.append("hard_gate_invalid")
         components = row.get("components")
-        if not isinstance(components, Mapping) or set(components) != set(REQUIRED_COMPONENTS):
+        if not isinstance(components, Mapping) or set(components) != set(
+            expected_components
+        ):
             errors.append("scored_components_invalid")
             continue
         if any(
@@ -374,7 +402,7 @@ def validate_decision_score_shadow(artifact: Mapping[str, Any]) -> dict[str, Any
             or components[key].get("status") != "available"
             or _bounded_number(components[key].get("score"), 0.0, 100.0) is None
             or _bounded_number(components[key].get("confidence"), 0.0, 1.0) is None
-            for key in REQUIRED_COMPONENTS
+            for key in expected_components
         ):
             errors.append("scored_component_unavailable")
             continue
@@ -392,27 +420,13 @@ def validate_decision_score_shadow(artifact: Mapping[str, Any]) -> dict[str, Any
                 != BENCHMARK_POLICY_VERSION
             ):
                 errors.append("benchmark_component_policy_invalid")
-            cost = components["cost_efficiency"]
-            cost_evidence = (
-                cost.get("evidence")
-                if isinstance(cost.get("evidence"), Mapping)
-                else {}
-            )
-            if (
-                cost_evidence.get("fee_evidence_policy_version")
-                != FEE_EVIDENCE_POLICY_VERSION
-                or cost_evidence.get("fee_evidence_basis")
-                != "public_standard_fee_upper_bound"
-                or cost_evidence.get("actual_channel_fee_available") is not False
-            ):
-                errors.append("cost_component_evidence_policy_invalid")
         base = sum(
-            COMPONENT_WEIGHTS[key] * float(components[key]["score"])
-            for key in REQUIRED_COMPONENTS
+            expected_weights[key] * float(components[key]["score"])
+            for key in expected_components
         )
         confidence = sum(
-            COMPONENT_WEIGHTS[key] * float(components[key]["confidence"])
-            for key in REQUIRED_COMPONENTS
+            expected_weights[key] * float(components[key]["confidence"])
+            for key in expected_components
         )
         expected = round(base * confidence, 4)
         if not _close(row.get("base_component_score"), round(base, 4)):
@@ -1049,93 +1063,6 @@ def _diversification_component(
     )
 
 
-def _cost_component(
-    tradeability: Mapping[str, Any] | None,
-    *,
-    tradeability_gate: Mapping[str, Any],
-    minimum_holding_days: int | None,
-) -> tuple[dict[str, Any], bool]:
-    amount = _positive_number(tradeability_gate.get("effective_initial_min_purchase_yuan"))
-    if amount is None:
-        return _missing_component("cost_probe_amount_unavailable"), True
-    if not isinstance(minimum_holding_days, int) or isinstance(minimum_holding_days, bool) or minimum_holding_days <= 0:
-        return _missing_component("strategy_minimum_holding_days_unavailable"), True
-    assessment = assess_tradeability_for_amount(
-        tradeability,
-        amount_yuan=amount,
-        hold_horizon=f"DecisionScore v2 最短持有期 {minimum_holding_days} 天",
-        minimum_holding_days=minimum_holding_days,
-    )
-    if assessment.get("executable") is not True:
-        return (
-            _missing_component(
-                "holding_period_cost_assessment_not_executable",
-                evidence={
-                    "probe_amount_yuan": amount,
-                    "minimum_holding_days": minimum_holding_days,
-                    "block_reasons": list(assessment.get("block_reasons") or []),
-                },
-            ),
-            True,
-        )
-    raw_cost = _nonnegative_number(
-        assessment.get("estimated_total_cost_upper_bound_percent")
-    )
-    if raw_cost is None:
-        return _missing_component("holding_period_cost_upper_bound_unavailable"), True
-    return (
-        {
-            "status": "available",
-            "score": None,
-            "raw_value": round(raw_cost, 6),
-            "confidence": 0.75,
-            "basis": "cross_sectional_lower_cost_percentile",
-            "reason_codes": [],
-            "evidence": {
-                "probe_amount_yuan": round(amount, 2),
-                "minimum_holding_days": minimum_holding_days,
-                "fee_status": assessment.get("fee_status"),
-                "fee_components_complete": assessment.get("fee_components_complete"),
-                "estimated_total_cost_upper_bound_percent": round(raw_cost, 6),
-                "fee_evidence_policy_version": FEE_EVIDENCE_POLICY_VERSION,
-                "fee_evidence_basis": "public_standard_fee_upper_bound",
-                "actual_channel_fee_available": False,
-                "actual_channel_fee_reason": "candidate_channel_transaction_not_observed",
-                "source_ids": list((tradeability or {}).get("source_ids") or []),
-                "checked_at": (tradeability or {}).get("checked_at"),
-                "fee_checked_at": (tradeability or {}).get("fee_checked_at"),
-            },
-        },
-        False,
-    )
-
-
-def _assign_cost_percentiles(rows: Sequence[dict[str, Any]]) -> None:
-    by_profile: dict[str, list[float]] = {}
-    for row in rows:
-        component = row["components"]["cost_efficiency"]
-        raw = _nonnegative_number(component.get("raw_value"))
-        if (
-            row.get("hard_gate", {}).get("eligible") is True
-            and component.get("status") == "available"
-            and raw is not None
-        ):
-            by_profile.setdefault(str(row.get("peer_profile") or "unknown"), []).append(raw)
-    for row in rows:
-        component = row["components"]["cost_efficiency"]
-        raw = _nonnegative_number(component.get("raw_value"))
-        population = by_profile.get(str(row.get("peer_profile") or "unknown"), [])
-        if (
-            row.get("hard_gate", {}).get("eligible") is not True
-            or component.get("status") != "available"
-            or raw is None
-            or not population
-        ):
-            continue
-        worse = sum(value > raw for value in population)
-        tied = sum(math.isclose(value, raw, rel_tol=0.0, abs_tol=1e-12) for value in population)
-        component["score"] = round((worse + 0.5 * tied) / len(population) * 100.0, 4)
-        component["evidence"]["peer_profile_cost_sample_count"] = len(population)
 
 
 def _calculate_scores(rows: Sequence[dict[str, Any]]) -> None:

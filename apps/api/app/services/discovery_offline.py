@@ -16,7 +16,6 @@ from app.services.discovery_allocation_service import (
 from app.services.discovery_guard import apply_discovery_guards
 from app.services.discovery_strategy import (
     discovery_horizon_label,
-    discovery_minimum_holding_days,
     strategy_from_facts,
 )
 from app.services.discovery_recommendation_scope import (
@@ -162,10 +161,6 @@ def build_offline_discovery_report(
         discovery_facts,
         candidate_pool,
         decision_at=decision_at,
-        minimum_holding_days=discovery_minimum_holding_days(
-            discovery_strategy,
-            profile,
-        ),
     )
     actionable_count = sum(
         item.action == "分批买入" and item.suggested_amount_yuan is not None

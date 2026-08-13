@@ -60,10 +60,7 @@ from app.services.provider_call_trace import (
 from app.services.decision_contract import POLICY_VERSION
 from app.services.decision_repository import canonical_json
 from app.services.report_pipeline import build_pipeline_metadata
-from app.services.discovery_strategy import (
-    discovery_minimum_holding_days,
-    strategy_from_facts,
-)
+from app.services.discovery_strategy import strategy_from_facts
 
 ProgressCallback = Callable[[str, str], None]
 logger = logging.getLogger(__name__)
@@ -705,10 +702,6 @@ def build_discovery_report_from_parsed(
         discovery_facts,
         candidate_pool,
         decision_at=decision_at,
-        minimum_holding_days=discovery_minimum_holding_days(
-            strategy_from_facts(discovery_facts),
-            profile,
-        ),
     )
     caveats = _as_str_list(parsed.get("caveats"))
     caveats.extend(scope_caveats)
