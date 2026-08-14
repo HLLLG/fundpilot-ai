@@ -228,6 +228,82 @@ TTL 天数等。
 
 ---
 
+## 加仓梯形对比（仓位路径模拟）
+
+`sector_direction_backtest` 评的是**信号质量**：每个观测都是「D+1 收盘买 1 单位、持有 h 天」，
+因此它对「同一个信号下，资金该怎么分批投进去」完全不敏感——所有梯形在它的标尺上得分一模一样。
+而 `_resolve_deterministic_position_change` 的四档（20/15/10/5，分母是**当前持仓市值**）与任何
+金字塔式建仓法的差别恰恰只在资金路径上。本脚本补的就是这一层。
+
+```bash
+# 单组参数（零网络，价格与资金同源，读项目自己的 sector_spot_cache）
+python scripts/run_position_sizing_backtest.py --sqlite-cache ../../data/app.db
+
+# 参数敏感性：(最长持有期 x 止损幅度) 3x3 网格，看排序稳不稳
+python scripts/run_position_sizing_backtest.py --sqlite-cache ../../data/app.db --sweep
+```
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--sqlite-cache` | 必填 | 从 `sector_spot_cache` 的 `board-flow-hist:v2` 缓存离线取数 |
+| `--max-days` | 40 | 单个 episode 最长持有交易日数 |
+| `--stop-percent` | 10 | 从最高收盘起算的移动止损幅度 |
+| `--no-trend-exit` | 关 | 只用移动止损，不叠加生产的趋势退出线 |
+| `--base-fraction` | 0.20 | 现状类梯形的首仓占预算比例（取自 discovery 首仓上限） |
+| `--sweep` | 关 | 在参数网格上重跑并附敏感性表 |
+| `--sweep-tier-thresholds` | 关 | 固定「现状 + 浮亏封档」梯形，只扫加仓档位**分界线**（生产等分 vs 换锚/平移/不分档），逐变体与生产边界配对检验 |
+| `--out-dir` | `var/position_sizing` | 输出目录 |
+
+档位百分比集合（20/15/10/5）是产品策略、sweep 不动它；扫的是 `_v3_add_tier_thresholds`
+那条"等分 gate→85"分界线本身——它此前没有任何回测依据。
+
+入场信号由 `replay_sector_direction` 逐日 PIT 重放**生产打分器**，档位调生产
+`_resolve_sector_add_tier`、系数用 `V3_TREND_TRANCHE_SCALES`、退出线用 `EXIT_TREND_THRESHOLD`；
+脚本只在上面加资金路径（T+1 成交、申购费逐笔、赎回费按先进先出且不足 7 天收惩罚性费率、
+止损收盘触发次日执行）。任何一处改成副本，结论就不再描述线上行为。
+
+读结果时必须一起读三件事：
+
+* **配对检验才是结论**，不是两个均值。报告底部按「同一批 episode 逐个相减」给出均值差、中位差、
+  占优比例与 t 值——梯形之间的差异普遍在 0.3 个百分点以内，只比均值会把噪声读成优劣。
+* **样本期基调**会打印在表头（基准累计涨跌、最大回撤、全板块无条件持有 h 日的收益分布）。
+  「加仓该不该更大」在涨市与跌市里答案本来不同，下行区间对「少加仓」类结论天然友好。
+* 标的是**板块指数**，不是可买到的基金；过热缩放、基金证据降档、载体质量降档、集中度与新闻
+  门禁均未建模。完整缺口见报告末尾的 caveat 列表与 `summary.json` 的 `caveats`。
+
+`shadow_record_only`：研究输出，不自动改动任何线上权重、阈值、Prompt、Guard 或仓位。当前唯一
+据它落地的线上规则是「该仓未转正时加仓档位封到最低档」，口径与样本限制见
+[`docs/PROJECT_CONTEXT.md`](../../../docs/PROJECT_CONTEXT.md#2-决策事实仓位与-dataevidence)。
+
+---
+
+## 方向退出参数回测入口
+
+`sector_direction_exit` 的两个新设参数（`PERSISTENT_BREAKDOWN_DAYS=3`、
+`RELATIVE_TREND_DECAY_POINTS=12`）契约标注**未经回测**（`thresholds_validated=false`）。
+本脚本是给它们补回测的入口：同一批 PIT 重放入场信号上，模拟生产的**分档减仓路径**
+（跌破首日 −25%（浮盈 −1/3）→ 连续 ≥N 日 −50% → invalid+持续则清仓，按状态升级每档执行一次），
+只换 (连续天数 × 回落分数) 参数，另设「不减仓·持有到期」与「首破即全退」两组对照。
+
+```bash
+python scripts/run_direction_exit_backtest.py --sqlite-cache ../../data/app.db
+```
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--sqlite-cache` | 必填 | 与加仓梯形脚本同一数据源 |
+| `--max-days` | 40 | 单个 episode 最长持有交易日数 |
+| `--min-episodes` | 30 | **数据充分性门槛**：episode 少于它不产出任何结论 |
+| `--min-decision-days` | 60 | 同上：重放决策日门槛 |
+| `--out-dir` | `var/direction_exit_backtest` | 输出目录 |
+
+样本不足时输出 `status=insufficient_data` 并以退出码 2 结束——这不是失败，是"数据还
+不够、不配下结论"。移动止损刻意未启用（单独度量方向退出档位的贡献）；重放信号是生产
+打分器的 PIT 重算，与线上逐日账本可能有差异，`sector_direction_states` 账本攒够真实
+历史后应以账本重跑、以账本为准。`shadow_record_only`：占优取值也只取得人工评审资格。
+
+---
+
 ## 板块方向状态每日捕获 / 历史回填
 
 退出侧（`sector_direction_exit`）要回答「趋势连续跌破退出线几天了」，而

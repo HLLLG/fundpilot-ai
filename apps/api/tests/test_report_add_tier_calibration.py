@@ -43,6 +43,13 @@ def _v3_row(direction_score: float, **overrides) -> dict:
         "entry_state": "ready_to_start",
         "opportunity_available": True,
         "confidence": "高",
+        # 1.0 = 方向层授权满额投入、不做缩放，把「分段试仓系数」这条独立维度隔离出去
+        # （契约 5 由 `test_first_tranche_scale_still_shrinks_the_v3_tier` 单独锁）。
+        #
+        # 这个键不能省：`describe_sector_opportunity` 对每个 V3 行都会写它，`None` 的语义
+        # 是"本轮没有任何入场通道授权投入"，`_first_tranche_scaled_percent` 因此对 V3 行
+        # fail-closed（缺席即不授权加仓）。省掉它会让本文件测的是一条生产中不存在的行。
+        "first_tranche_scale": 1.0,
     }
     row.update(overrides)
     return row

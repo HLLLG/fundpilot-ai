@@ -1116,6 +1116,9 @@ def apply_discovery_guards(
             copy.validation_notes = [
                 value for value in copy.validation_notes if not contains_executable_decision_text(value)
             ] + ["字段级证据时点校验未通过，买入动作与金额已被确定性阻断。"]
+        held_note = _held_same_sector_note(copy, discovery_facts)
+        if held_note:
+            copy.validation_notes = [*copy.validation_notes, held_note]
         _enforce_discovery_execution_projection(copy)
         copy.news_bullish = _filter_news_titles(copy.news_bullish, titles)
         _humanize_recommendation_text(copy)
@@ -1630,6 +1633,49 @@ def _sector_opportunities_by_label(facts: dict) -> dict[str, dict]:
         if label:
             result[label] = item
     return result
+
+
+def _held_same_sector_note(
+    rec: DiscoveryRecommendation,
+    discovery_facts: dict | None,
+) -> str | None:
+    """买入类推荐与用户既有持仓同方向时的职责边界披露；无重叠或非买入类返回 None。
+
+    与日报侧的 `_discovery_cross_reference_note` 互为镜像：同一天里发现基金推荐买板块 A
+    的新基金、日报可能按住同板块的老持仓，两个结论都对，但必须各自说明分工。金额侧的
+    同板块集中度扣减已经存在，这里补的是**结论层面**的一句话。
+    """
+    if not isinstance(discovery_facts, dict):
+        return None
+    from app.services.decision_guard_shared import (
+        ACTION_BUCKET_ADD,
+        classify_action_bucket,
+    )
+
+    if classify_action_bucket(rec.action) < ACTION_BUCKET_ADD:
+        return None
+    rec_label = normalize_sector_label(rec.sector_name)
+    if not rec_label:
+        return None
+    portfolio = discovery_facts.get("portfolio")
+    rows = portfolio.get("holdings_slim") if isinstance(portfolio, dict) else None
+    if not isinstance(rows, list):
+        return None
+    held_same_sector = [
+        row
+        for row in rows
+        if isinstance(row, dict)
+        and normalize_sector_label(str(row.get("sector_name") or "")) == rec_label
+    ]
+    if not held_same_sector:
+        return None
+    first = held_same_sector[0]
+    name = str(first.get("fund_name") or "").strip() or str(first.get("fund_code") or "").strip()
+    extra = f" 等 {len(held_same_sector)} 只" if len(held_same_sector) > 1 else ""
+    return (
+        f"你已持有同方向的 {name}{extra}；该持仓的加/减/退由日报负责，"
+        "本推荐只回答新资金选哪只载体，两者结论各自独立、不构成矛盾。"
+    )
 
 
 def _align_candidate_identity(rec: DiscoveryRecommendation, pool_item: dict) -> bool:

@@ -337,8 +337,9 @@ def resolve_escalation_floor(
     has_unrealized_gain: bool,
     decision_style: str,
     direction_exit: dict | None = None,
+    nav_trend: dict | None = None,
 ) -> dict[str, object]:
-    """升级下限 = max(保守程度) over {量价背离风险共振, 方向退出}。
+    """升级下限 = max(保守程度) over {量价背离风险共振, 方向退出, 基金相对板块跑输}。
 
     `direction_exit` 是 `sector_direction_exit.assess_direction_exit()` 的输出（2026-08
     新增）。加它是因为原来这条链路**听不见方向信号**：下面的风险判定开头两道早退要求
@@ -346,7 +347,12 @@ def resolve_escalation_floor(
     背离置信度只有"中"、但趋势已经从 69 掉到 41 的方向，产不出任何减仓档位——用户只能
     自己判断该不该走，而这正是浮盈被拿回去的地方。
 
-    两个来源各自独立判定，最后取**更保守**的那一档（bucket 数值更小者胜），理由合并。
+    `nav_trend` 是该持仓自己的净值走势摘要（2026-08 新增第三源）。加它是因为前两个来源
+    的主语都是**板块**：一只基金若持续跑输自己所属的板块，只要板块方向还在线上，整条
+    减仓链路对它没有任何信号——加仓侧有基金证据、载体质量、用户成本三道基金层门禁，
+    减仓侧此前一道都没有。见 `_resolve_fund_lag_floor`。
+
+    各来源独立判定，最后取**更保守**的那一档（bucket 数值更小者胜），理由合并。
     这样既不放松既有的风险升级，也让方向失效能真正落成动作。
     """
     risk = _resolve_risk_divergence_floor(
@@ -358,7 +364,64 @@ def resolve_escalation_floor(
         decision_style=decision_style,
     )
     direction = _resolve_direction_exit_floor(direction_exit)
-    return _merge_escalation_floors(risk, direction)
+    fund_lag = _resolve_fund_lag_floor(nav_trend, sector_opportunity)
+    return _merge_escalation_floors(
+        _merge_escalation_floors(risk, direction),
+        fund_lag,
+    )
+
+
+#: 基金近 20 日总收益落后所属板块多少个百分点算「载体明显没跟上方向」。
+#: **新设参数，未经回测**——因此它只封加仓（暂停追涨），不产生任何减仓比例；把它顶到
+#: 减仓档等于用未标定的阈值处置真实仓位（与 `sector_direction_exit` 对承诺失效条件的
+#: 处理同一纪律）。取 8 个点是在"主动基金正常跟踪差"之上留了余量：基金持仓不完全等于
+#: 板块成分、股票仓位通常 ~90%，20 日窗口 2~4 个点的偏离属常态；QDII 净值滞后 1~2 个
+#: 交易日造成的窗口错位也被这个余量覆盖。
+FUND_SECTOR_LAG_THRESHOLD_20D = 8.0
+
+
+def _resolve_fund_lag_floor(
+    nav_trend: dict | None,
+    sector_opportunity: dict | None,
+) -> dict[str, object]:
+    """基金自身相对所属板块显著跑输时，禁止继续加仓（不要求卖出）。
+
+    对比口径：基金 `nav_trend.return_20d_percent`（官方日增长率优先重建的 20 交易日总
+    收益）vs 板块 `mainline_regime.features.return_20d_percent`（同窗口板块指数/BK 收益）。
+    两个数字**任一缺失就不判**——"不知道"不等于"在跑输"，与浮亏门禁对 `None` 的处理
+    同一纪律。板块行必须真的带主线快照（旧口径行没有 20 日收益轴，不硬凑）。
+
+    只到暂停追涨，刻意不给减仓档位：跑输识别的是"载体没跟上方向"，正确动作往往是换
+    载体而不是清出方向，而"该换成哪只"是发现基金的职责——这里只负责把"继续往这只上
+    加钱"按住，并在理由里指向载体替换评估。
+    """
+    if not isinstance(nav_trend, dict) or not isinstance(sector_opportunity, dict):
+        return dict(_NO_ESCALATION)
+    fund_20d = as_float(nav_trend.get("return_20d_percent"))
+    mainline = sector_opportunity.get("mainline_regime")
+    features = mainline.get("features") if isinstance(mainline, dict) else None
+    sector_20d = (
+        as_float(features.get("return_20d_percent"))
+        if isinstance(features, dict)
+        else None
+    )
+    if fund_20d is None or sector_20d is None:
+        return dict(_NO_ESCALATION)
+    lag = fund_20d - sector_20d
+    if lag > -FUND_SECTOR_LAG_THRESHOLD_20D:
+        return dict(_NO_ESCALATION)
+    reasons = [
+        f"该基金近20日收益 {fund_20d:+.2f}% 落后所属板块 {sector_20d:+.2f}% 达 "
+        f"{abs(lag):.1f} 个百分点，载体未跟上方向；本轮暂停加仓，"
+        "并建议评估同方向是否有更合适的载体（该阈值未经回测，故不据此要求卖出）"
+    ]
+    return {
+        "min_bucket": ACTION_BUCKET_PAUSE,
+        "min_action_label": ACTION_BUCKET_LABELS[ACTION_BUCKET_PAUSE],
+        "reasons": reasons,
+        "suggested_position_change_percent": None,
+        "basis": "；".join(reasons),
+    }
 
 
 def _resolve_direction_exit_floor(direction_exit: dict | None) -> dict[str, object]:

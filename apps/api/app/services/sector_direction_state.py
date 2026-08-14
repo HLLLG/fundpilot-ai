@@ -125,12 +125,19 @@ def apply_direction_state_hysteresis(
         item["state_trade_date"] = trade_date
         item["state_previous_trade_date"] = previous_trade_date
         item["ready_confirmation_days"] = ready_confirmation_days
+        # 滞回**保留**（而不是重新确认）ready_to_start 时，授权本轮投入的仍然是当日原始
+        # 档位上开的那条提前试仓通道——`first_tranche_scale` 也是它算出来的，本函数不重算
+        # 分数与比例。按 `entry_state` 判会把通道判成失活，却继续沿用它的比例，状态与比例
+        # 变成两套口径（2026-08-13 线上：数字经济 flow_improving_probe_eligible=true、
+        # _active=false，而 first_tranche_scale=0.4 正来自该通道）。
+        hysteresis_held = entry_state == ENTRY_READY_TO_START and not qualifies
+        probe_state = raw_state if hysteresis_held else entry_state
         flow_probe_active = bool(
-            raw_flow_probe and entry_state == ENTRY_READY_ON_PULLBACK
+            raw_flow_probe and probe_state == ENTRY_READY_ON_PULLBACK
         )
         probability_probe_active = bool(
             raw_probability_probe
-            and entry_state in {ENTRY_FORMING, ENTRY_READY_ON_PULLBACK}
+            and probe_state in {ENTRY_FORMING, ENTRY_READY_ON_PULLBACK}
         )
         item["flow_improving_probe_active"] = flow_probe_active
         item["probability_early_probe_active"] = probability_probe_active
@@ -166,7 +173,17 @@ def apply_direction_state_hysteresis(
             item["entry_reason"] = (
                 "趋势强度仍在退出线之上，维持可布局状态；跌破退出线才会降级。"
             )
-            item["entry_hint"] = "已确认方向仍在滞回带内，本次投入保持小额"
+            # 提示语必须跟着 `first_tranche_scale` 走。此前一律写「本次投入保持小额」，
+            # 而没有任何通道授权投入时该字段是 `None`（卡片同时显示「本轮不投入」）——
+            # 同一行里一句说"保持小额"、一句说"不投入"，用户无从判断哪句为准。
+            tranche_authorized = (
+                _num(item.get("first_tranche_scale")) or 0.0
+            ) > 0.0
+            item["entry_hint"] = (
+                "已确认方向仍在滞回带内，本次投入保持小额"
+                if tranche_authorized
+                else "已确认方向仍在滞回带内，仅持有观察，本轮不新增投入"
+            )
             item["entry_triggers"] = [
                 f"趋势强度保持在退出线 {exit_trend_threshold:g} 以上",
                 "买入并录入持仓后，由日报根据资金参与度与价格位置决定是否加仓",

@@ -78,3 +78,24 @@ def test_focus_sector_labels_are_normalised_to_whitelist_labels() -> None:
     """关注方向要用归一后的标签比对，否则会在某一步静默失配。"""
     assert resolve_focus_sector_labels(["半导体", " 半导体 ", ""]) == ["半导体"]
     assert resolve_focus_sector_labels(None) == []
+
+
+def test_gap_quota_counts_normalised_focus_labels_as_focus() -> None:
+    """缺口配额不得把「归一后改了名的关注方向」误计为缺口板块。
+
+    回归背景：`_select_portfolio_gap_sectors` 曾用**用户原始输入**（"半导体主题"）比对
+    已归一的 `ordered`（"半导体"），于是关注方向被误计入 3 个缺口名额，热度表里真正的
+    缺口板块被提前截断。
+    """
+    heat = [{"sector_label": label} for label in ("银行", "煤炭", "有色金属", "医疗")]
+    # "半导体主题" 会被 registry 归一为 "半导体"，与原始输入字符串不相等。
+    target = select_target_sectors(
+        [],
+        ["半导体主题"],
+        heat,
+        InvestorProfile(),
+        scan_mode="portfolio_gap",
+    )
+
+    # 关注方向占首位，其后必须补满 3 个真正的缺口板块（修复前只会补 2 个）。
+    assert target == ["半导体", "银行", "煤炭", "有色金属"]

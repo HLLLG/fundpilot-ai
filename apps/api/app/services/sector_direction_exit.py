@@ -57,6 +57,7 @@ ready→forming 的滞回；这里让它同时承担持仓退出，全代码库�
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 import logging
 import re
 from typing import Any, Mapping, Sequence
@@ -87,6 +88,14 @@ PERSISTENT_BREAKDOWN_DAYS = 3
 #: 趋势仍在退出线上方、但相对入场时回落多少分算「方向转弱」，据此禁止继续加仓。
 #: **新设参数，未经回测。** 仅在拿到入场契约（相对模式）时生效。
 RELATIVE_TREND_DECAY_POINTS = 12.0
+#: 实际买入日晚于推荐日多少个自然日以内，仍认为"这笔买入执行的就是那次推荐"、推荐日的
+#: 方向分可以直接当入场基线。超过它就要把基线**重定**到实际买入日（见
+#: `reconcile_entry_contract_with_holding`）。这是数据代表性判断参数（不进任何收益规则、
+#: 不决定档位），5 天覆盖「推荐当周内买入」：申购确认本身要 T+1~T+2，再留用户两三天犹豫。
+ENTRY_REBASE_TOLERANCE_DAYS = 5
+#: 基线重定时，允许从实际买入日往前最多找多少个自然日内的有证据分数。账本缺买入日当天
+#: 的行很常见（周末买入、捕获断更一天），但太早的分数同样不能代表买入时的状态。
+_REBASE_LOOKBACK_DAYS = 5
 
 _NO_EXIT: dict[str, Any] = {
     "policy_version": DIRECTION_EXIT_POLICY_VERSION,
@@ -432,6 +441,11 @@ def _resolve_entry_reference(
     """
     if not isinstance(entry_contract, Mapping):
         return None, None
+    # 契约在核对阶段（`reconcile_entry_contract_with_holding`）被判定不能代表这笔持仓时，
+    # 与分类漂移同一处理：拒绝相对模式，但把原因披露出来而不是静默为 null。
+    disqualified = str(entry_contract.get("disqualified_reason") or "").strip()
+    if disqualified:
+        return None, disqualified
     contract_label = str(entry_contract.get("sector_label") or "").strip()
     if contract_label and sector_label and contract_label != sector_label:
         entry_date = str(entry_contract.get("entry_date") or "").strip()
@@ -465,6 +479,10 @@ def _normalize_entry_contract(
         "entry_tranche_scale": _num(entry_contract.get("entry_tranche_scale")),
         "thesis_event_id": str(entry_contract.get("thesis_event_id") or "").strip() or None,
     }
+    # 基线被重定到实际买入日时保留原推荐日，让文案能说清"基线取自买入日，推荐发生在 X"。
+    rebased_from = str(entry_contract.get("entry_rebased_from") or "").strip()
+    if rebased_from:
+        normalized["entry_rebased_from"] = rebased_from
     return normalized
 
 
@@ -601,6 +619,70 @@ def _row_value(row: Any, key: str) -> Any:
         return None
 
 
+def load_direction_ledger_health(
+    as_of_trade_date: str | None,
+) -> dict[str, Any]:
+    """方向状态账本的捕获健康度：`{last_captured_trade_date, expected_trade_date, stale, note}`。
+
+    退出侧的「连续跌破天数」完全依赖每交易日 19:10 的定时捕获往 `sector_direction_states`
+    写行；捕获一旦断更，天数会停在 1、−50% 那一档实际不可达——而这**不会**产生任何报错，
+    只是该升的档位安静地不升。健康度必须随退出判定一起披露，否则"连续天数是下界"只是一句
+    没人能核实的免责声明。
+
+    判定基准是**上一交易日**而不是当天：日报白天生成时，当天的捕获（19:10）还没跑，账本
+    最新覆盖到上一交易日就是健康的。只统计 `source='captured'`（含存量 NULL，语义与
+    `load_previous_direction_states` 一致）：回填行是补数手段，不代表捕获链路活着。
+
+    stale 只用于披露，不修正任何动作——断更让连续天数**偏小**，方向只会"该升未升"，
+    不存在误升级，因此不需要拦截，只需要让用户知道天数不可信。
+    """
+    result: dict[str, Any] = {
+        "last_captured_trade_date": None,
+        "expected_trade_date": None,
+        "stale": True,
+        "note": None,
+    }
+    try:
+        from app.database import _connect
+        from app.services.trading_session import get_previous_trade_date
+
+        expected = (
+            get_previous_trade_date(str(as_of_trade_date).strip())
+            if str(as_of_trade_date or "").strip()
+            else None
+        )
+        result["expected_trade_date"] = expected
+        with _connect() as connection:
+            row = connection.execute(
+                "SELECT MAX(trade_date) AS last_captured FROM sector_direction_states "
+                "WHERE (source IS NULL OR source = 'captured')",
+            ).fetchone()
+        last_captured = (
+            str(_row_value(row, "last_captured") or "").strip() or None
+            if row is not None
+            else None
+        )
+        result["last_captured_trade_date"] = last_captured
+        if last_captured is None:
+            result["note"] = (
+                "方向状态账本尚无捕获记录，连续跌破天数只能从今日起算（下界）"
+            )
+            return result
+        # 交易日字符串同为 ISO 日期，字典序即时间序。expected 不可得时保守判 stale。
+        stale = expected is None or last_captured < expected
+        result["stale"] = stale
+        if stale:
+            result["note"] = (
+                f"方向状态账本最后捕获日为 {last_captured}"
+                f"（应覆盖到 {expected or '未知'}），连续跌破天数为下界、可能低估"
+            )
+        return result
+    except Exception:  # noqa: BLE001 — 健康度是披露项，查不到不能拖垮日报
+        logger.warning("读取方向状态账本健康度失败", exc_info=True)
+        result["note"] = "方向状态账本健康度不可得，连续跌破天数按下界解读"
+        return result
+
+
 def load_direction_entry_contracts(
     fund_codes: Sequence[str],
     *,
@@ -641,6 +723,142 @@ def load_direction_entry_contracts(
         if contract is not None:
             contracts[code] = contract
     return contracts
+
+
+def reconcile_entry_contract_with_holding(
+    contract: Mapping[str, Any],
+    *,
+    first_purchase_date: str | None,
+    first_seen_date: str | None,
+    rebase_score_loader: Any = None,
+    tolerance_days: int = ENTRY_REBASE_TOLERANCE_DAYS,
+) -> dict[str, Any]:
+    """把入场契约与这笔持仓的真实时间线核对，返回（可能被修正的）契约。
+
+    契约来自 discovery 的 buy 决策事件——它在**报告生成时**就冻结了，代表的是"那天系统
+    推荐买入时方向长什么样"，不是"用户实际买入时方向长什么样"。两者错位时相对退出基线
+    （"买入时 69 分、现在 41 分"）从第一天就是错的，比没有基线更危险。三种情形：
+
+    1. **推荐之前就已持有**（购入日/首见日早于推荐日）：这笔推荐根本不是这笔持仓的入场，
+       契约打上 `disqualified_reason`，退化为绝对模式并披露。首见日是"实际买入日的上界"，
+       它早于推荐日即可确定持有在前——反过来（首见晚于推荐）不能确定什么，导入截图有延迟。
+    2. **实际买入日晚于推荐日超过容差**：推荐日的分数不再代表买入决策。尝试从方向状态
+       账本取买入日当天或此前 `_REBASE_LOOKBACK_DAYS` 个自然日内的有证据趋势分作新基线
+       （`entry_rebased_from` 保留原推荐日；参与度/价格位置清空，账本里没有对应快照就不
+       编造）；取不到 → `disqualified_reason`，绝对模式并披露。
+    3. **容差以内**：这笔买入执行的就是那次推荐，契约原样生效。
+
+    只在两个日期都可解析时核对；解析不了就原样返回——"不知道"不等于"错位"，与
+    `_unrealized_loss_add_percent` 对 `None` 的处理同一纪律。`rebase_score_loader`
+    由调用方注入（签名 `(sector_label, on_or_before, not_before) -> (trade_date, score) | None`），
+    本函数自身无 IO、可直接单测。
+    """
+    result = dict(contract)
+    entry_date = _parse_iso_date(result.get("entry_date"))
+    if entry_date is None:
+        return result
+
+    purchase = _parse_iso_date(first_purchase_date)
+    first_seen = _parse_iso_date(first_seen_date)
+
+    held_before = None
+    if purchase is not None and purchase < entry_date:
+        held_before = (str(first_purchase_date), "购入日")
+    elif first_seen is not None and first_seen < entry_date:
+        held_before = (str(first_seen_date), "持仓首次出现日")
+    if held_before is not None:
+        when, kind = held_before
+        result["disqualified_reason"] = (
+            f"该持仓的{kind} {when} 早于 {result.get('entry_date')} 的买入推荐，"
+            "这笔推荐不是该持仓的入场决策，不能用它的方向分做相对比较，本次按绝对退出线判定"
+        )
+        return result
+
+    if purchase is None:
+        return result
+    gap_days = (purchase - entry_date).days
+    if gap_days <= max(0, int(tolerance_days)):
+        return result
+
+    original_entry_date = str(result.get("entry_date") or "")
+    rebased = None
+    if callable(rebase_score_loader):
+        not_before = (purchase - timedelta(days=_REBASE_LOOKBACK_DAYS)).isoformat()
+        try:
+            rebased = rebase_score_loader(
+                str(result.get("sector_label") or ""),
+                purchase.isoformat(),
+                not_before,
+            )
+        except Exception:  # noqa: BLE001 — 基线重定是增强项，查询失败按取不到处理
+            logger.warning("入场基线重定查询失败", exc_info=True)
+            rebased = None
+    if rebased is not None:
+        rebased_date, rebased_score = rebased
+        result.update(
+            entry_date=str(rebased_date),
+            entry_trend=float(rebased_score),
+            # 账本里只有趋势分数轴可靠可回读（参见回填契约：participation 是中性填充）。
+            # 买入日的参与度/价格位置没有可信快照，清空而不是留着推荐日的旧值冒充。
+            entry_participation=None,
+            entry_position_risk=None,
+            entry_rebased_from=original_entry_date,
+        )
+        return result
+
+    result["disqualified_reason"] = (
+        f"实际购入日 {first_purchase_date} 晚于 {original_entry_date} 的买入推荐超过 "
+        f"{int(tolerance_days)} 天，且方向账本没有购入日附近的有证据分数，"
+        "无法建立可信的入场基线，本次按绝对退出线判定"
+    )
+    return result
+
+
+def load_trend_score_on_or_before(
+    sector_label: str,
+    on_or_before: str,
+    not_before: str,
+) -> tuple[str, float] | None:
+    """从方向状态账本取 `[not_before, on_or_before]` 内最近一天的有证据趋势分。
+
+    供入场基线重定使用。`captured` 与 `backfilled` 都收——与退出侧趋势历史同一取数
+    契约（回填行的趋势轴是纯函数重算的真实值，只有滞回三列不可信）。占位值行
+    （`trend_evidence_coverage` 为 0/NULL）照旧排除。
+    """
+    label = str(sector_label or "").strip()
+    if not label or not str(on_or_before or "").strip() or not str(not_before or "").strip():
+        return None
+    try:
+        from app.database import _connect
+
+        with _connect() as connection:
+            row = connection.execute(
+                "SELECT trade_date, trend_strength_score FROM sector_direction_states "
+                "WHERE sector_label = ? AND trade_date <= ? AND trade_date >= ? "
+                "AND trend_evidence_coverage > 0 "
+                "AND trend_strength_score IS NOT NULL "
+                "ORDER BY trade_date DESC LIMIT 1",
+                (label, str(on_or_before), str(not_before)),
+            ).fetchone()
+    except Exception:  # noqa: BLE001 — 查不到只是基线重定失败，不拖垮日报
+        logger.warning("读取买入日附近的方向分失败", exc_info=True)
+        return None
+    if row is None:
+        return None
+    score = _num(row["trend_strength_score"])
+    if score is None:
+        return None
+    return str(row["trade_date"]), score
+
+
+def _parse_iso_date(value: object) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
 
 
 def _entry_contract_from_event(event: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -774,6 +992,7 @@ def _num(value: object) -> float | None:
 
 __all__ = [
     "DIRECTION_EXIT_POLICY_VERSION",
+    "ENTRY_REBASE_TOLERANCE_DAYS",
     "EXIT_STATE_DEEP_REDUCE",
     "EXIT_STATE_EXIT",
     "EXIT_STATE_HOLD",
@@ -784,5 +1003,8 @@ __all__ = [
     "RELATIVE_TREND_DECAY_POINTS",
     "assess_direction_exit",
     "load_direction_entry_contracts",
+    "load_direction_ledger_health",
     "load_direction_trend_history",
+    "load_trend_score_on_or_before",
+    "reconcile_entry_contract_with_holding",
 ]

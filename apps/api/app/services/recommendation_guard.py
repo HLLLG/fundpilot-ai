@@ -41,8 +41,10 @@ from app.services.investment_presets import is_short_term_style
 from app.services.sector_labels import normalize_sector_label
 from app.services.sector_opportunity_scoring import (
     ENTRY_POLICY_VERSION_V3,
+    EXIT_TREND_THRESHOLD,
     V3_BLOCK_WEIGHTS,
     V3_GATE_THRESHOLDS,
+    V3_IMPROVING_FLOW_FIRST_TRANCHE_SCALE,
 )
 from app.services.signal_guard_policy import resolve_signal_guard_policy
 from app.services.recommendations import build_offline_fund_recommendation
@@ -187,6 +189,9 @@ def apply_recommendation_guards(
                 else None
             )
             or (facts_row or {}).get("direction_exit"),
+            # 基金层第三源：与 analysis_facts._attach_escalation_to_holdings 传同一个
+            # facts 键，guard 侧与 facts 侧的升级判定不得各看一套数据。
+            nav_trend=(facts_row or {}).get("nav_trend"),
         )
         today_news_required_missing = bool(
             not short_term and settings.news_require_today_for_add and not today_signal
@@ -355,8 +360,18 @@ def apply_recommendation_guards(
         if promoted is not None:
             if proposal_enforced:
                 normalized = promoted
+                # 措辞必须与实际跑过的门禁一致。旧文案一律写「量化证据与风险门禁均通过」，
+                # 但基金侧量化证据自 2026-08-12 起**刻意不再单独否决**（弱只降档，不可用
+                # 时连降档都不做），当前配置下 `reliability.usable` 恒为 false——那句话
+                # 宣称通过的是一道压根没被咨询的门。用户读到「证据不足」却看到
+                # 「证据均通过」，只会认为系统在自说自话。
+                evidence_clause = (
+                    "量化证据可用"
+                    if _fund_evidence_is_usable(evidence)
+                    else "基金侧量化证据本轮不可用、未参与结论"
+                )
                 proposal_note = (
-                    f"系统按确定性规则（方向已就绪、量化证据与风险门禁均通过）提议"
+                    f"系统按确定性规则（方向已就绪、{evidence_clause}、风险门禁通过）提议"
                     f"「{promoted}」，模型草案为「{llm_action}」，最终以系统提议为准。"
                 )
             else:
@@ -391,6 +406,12 @@ def apply_recommendation_guards(
             sector_opportunity=sector_opportunity,
             evidence=evidence,
             vehicle_quality=vehicle_quality,
+            # 与上面 `has_unrealized_gain` 取同一个数：加仓侧封档与减仓侧升档必须共用
+            # 一套持有收益口径，否则同一份日报会出现"按浮亏封了加仓档、又按浮盈升了
+            # 减仓档"这种自相矛盾的组合。
+            holding_return_percent=_num(
+                (facts_row or {}).get("estimated_holding_return_percent")
+            ),
         )
         if (
             _execution_direction(normalized) == "add"
@@ -524,6 +545,19 @@ def apply_recommendation_guards(
             vehicle_quality,
         )
         _enforce_public_ic_evidence(copy, evidence, ic_status, vehicle_quality)
+        if sector_absence_reason:
+            # 兜底披露：方向层证据缺失的持仓不只是"不能加仓"（弱证据降级已经拦了），
+            # 它同时**收不到任何方向退出/确定性减仓信号**——退出侧的主语全是板块，没有
+            # 板块方向证据的仓位在这条链路上是盲区。不说出来，"系统没让我卖"会被读成
+            # "系统认为不用卖"。
+            copy.validation_notes = [
+                *copy.validation_notes,
+                f"{sector_absence_reason}；方向退出与确定性减仓信号对该持仓不可用，"
+                "涨跌风险需自行跟踪。",
+            ]
+        cross_note = _discovery_cross_reference_note(facts, holding)
+        if cross_note:
+            copy.validation_notes = [*copy.validation_notes, cross_note]
         if shadow_note is not None:
             # M6：灰度提示须始终可见（不受 `_backfill_decision_fields` 只在为空时才
             # 回填的规则影响），追加到 validation_notes 末尾，与其它校验备注共存。
@@ -939,26 +973,233 @@ def _direction_continuity_evidence(sector_opportunity: dict | None) -> str | Non
     return f"方向已至少连续 {int(days)} 个交易日通过入场线"
 
 
+def _hysteresis_held_raw_entry_state(sector_opportunity: dict | None) -> str | None:
+    """滞回把档位**保留**在 ready_to_start 时返回当日原始档位，否则 None。
+
+    `apply_direction_state_hysteresis` 在"昨天已 ready 且趋势未跌破退出线"时把
+    `entry_state` 抬回 `ready_to_start`，同时留下 `raw_entry_state`（当日原始档位）与
+    `qualifies_for_ready=False`（今天并没有重新通过入场线）。三者同时出现就是滞回保留。
+
+    判据要同时看 `qualifies_for_ready`：只比较 raw≠entry 会把"延迟确认"那条相反的分支
+    （raw=ready_to_start 被压成 forming）也算进来，那种情况 entry_state 不是 ready，
+    本函数已在第一步返回 None，但显式判 `qualifies_for_ready` 让语义不依赖分支顺序。
+    """
+    if not isinstance(sector_opportunity, dict):
+        return None
+    if str(sector_opportunity.get("entry_state") or "") != _ENTRY_STATE_READY:
+        return None
+    if sector_opportunity.get("qualifies_for_ready") is True:
+        return None
+    raw_state = str(sector_opportunity.get("raw_entry_state") or "")
+    if not raw_state or raw_state == _ENTRY_STATE_READY:
+        return None
+    return raw_state
+
+
+#: V3 三块入场门禁：`(行上的分数键, V3_GATE_THRESHOLDS 的键, 展示名)`。
+_V3_GATE_LABELS: tuple[tuple[str, str, str], ...] = (
+    ("trend_strength_score", "trend", "趋势强度"),
+    ("participation_score", "participation", "资金参与度"),
+    ("position_risk_score", "position", "价格位置"),
+)
+
+
+def _v3_failed_gates(
+    sector_opportunity: dict | None,
+) -> list[tuple[str, str, float, float]]:
+    """今日未通过的 V3 入场门禁项：`(gate_key, 展示名, 实测值, 门槛)`。
+
+    直接对着 `V3_GATE_THRESHOLDS` 逐项比，不复用
+    `_ENTRY_STATES_BLOCKING_ADD[raw_state]` 那句话——`ready_on_pullback` 的既有文案是
+    「当前位置不宜追高」，但 `classify_entry_state_v3` 里该档位由**资金参与度或价格位置**
+    任一项未过触发（煤炭 2026-08-13 实测就是参与度 28.93<35，价格位置 84.6 远超门槛 25）。
+    照搬那句话会把原因说反。
+
+    返回结构化元组而不是拼好的字符串：调用方要按 `gate_key` 区分"趋势"与"非趋势"失败项，
+    对中文文案做前缀/`in` 匹配的判据改一个字就会静默失效（本仓已有先例，见
+    `signal_synthesis` 里删掉的符号翻转）。
+    """
+    if not isinstance(sector_opportunity, dict):
+        return []
+    failed: list[tuple[str, str, float, float]] = []
+    for score_key, gate_key, label in _V3_GATE_LABELS:
+        value = _num(sector_opportunity.get(score_key))
+        threshold = _num(V3_GATE_THRESHOLDS.get(gate_key))
+        if value is None or threshold is None:
+            continue
+        if value < threshold:
+            failed.append((gate_key, label, value, threshold))
+    return failed
+
+
+def _format_failed_gates(failed: list[tuple[str, str, float, float]]) -> str:
+    return "、".join(
+        f"{label} {value:.1f}<{threshold:g}" for _key, label, value, threshold in failed
+    )
+
+
+#: 滞回态小额试探的试仓系数。**取既有常量，不引入新数字**：本仓所有"已授权试仓通道"
+#: 用的都是 0.4（`V3_IMPROVING_FLOW_FIRST_TRANCHE_SCALE` == `V3_EARLY_PROBE_FIRST_TRANCHE_CAP`
+#: == `V3_TREND_TRANCHE_SCALES` 的地板，后者的注释写明"刚过线只给 0.4，说明够格买不等于
+#: 够格买满"）。系数说的是"这是一次试仓"，档位说的是"而且是最弱的一种"——见
+#: `_hysteresis_probe_eligible`。
+_HYSTERESIS_PROBE_TRANCHE_SCALE = V3_IMPROVING_FLOW_FIRST_TRANCHE_SCALE
+
+
+def _hysteresis_probe_eligible(sector_opportunity: dict | None) -> bool:
+    """滞回态是否够格给一次**最低档小额试探**（而不是完全不加）。
+
+    四个条件全要满足：
+
+    1. **确实是滞回保留**（`_hysteresis_held_raw_entry_state` 非空）；
+    2. **方向层本轮没有任何已授权的投入比例**（`first_tranche_scale` 缺席或非正）。这一条
+       划定了本通道的适用边界：它**只用来替代 fail-closed**，绝不盖过已标定的通道。
+       2026-08-13 的数字经济同时满足前后几条，但它的 `flow_improving_probe_eligible=true`
+       已经授权了 0.4——那是"今日资金确认转强"换来的、比本通道强的证据，若让试探档抢先
+       封顶，它会从应得的 4% 被降到 2%，等于用更弱的判据覆盖更强的判据；
+    3. **失败项里有非趋势门禁**——只有趋势在带内抖动的那种情况压根不走试探路径，它按
+       `test_report_direction_hysteresis` 契约 3 拿的是正常加仓资格；
+    4. **趋势本身仍在入场线之上**。滞回只保证趋势 ≥ 退出线 52，而"次要门禁滑了一下、我们
+       真正信的那根轴还在过线"与"两根轴一起掉下来"是两回事，后者不给试探。这条不引入新
+       阈值，用的还是 `V3_GATE_THRESHOLDS["trend"]`。
+
+    **为什么档位要单独封顶、不能只靠系数。** 加仓档位由 `direction_score` 决定，而它给趋势
+    的权重是 0.70（`V3_BLOCK_WEIGHTS`）。滞回态这批行的共同特征恰恰是"趋势强、参与度弱"，
+    所以它们的 `direction_score` 天然偏高——2026-08-13 线上黄金 78.92（强机会档 20%）而
+    参与度是 **0.0**。只乘一个系数的话，参与度最差的那只反而拿到最大的试探仓位（20%×0.4=8%
+    > 数字经济那条已标定通道的 4%），倒挂原样保留。因此档位另外封到既有阶梯的最低档
+    （`_ADD_TIER_PERCENTS[-1]`，本仓命名为「小机会试探档」），三只一律 5%×0.4=**2%**——
+    刻意不做区分，因为我们并没有能区分它们的证据。
+
+    这样排序才是对的：滞回态试探 2% < 已标定试仓通道 4%（数字经济，今日资金确认转强）
+    < 当日三块全过 8%（医疗）。
+
+    注意这道口子开得比看起来窄：`_weak_evidence_reasons` 的板块侧检查仍在它之后生效，
+    所以 `pattern_label ∈ {distribution, weak_outflow}` 的方向照样被拦——2026-08-13 的
+    黄金与稀土正是这样，最终只有资金形态中性的煤炭能拿到这 2%。
+    """
+    if _hysteresis_held_raw_entry_state(sector_opportunity) is None:
+        return False
+    assert isinstance(sector_opportunity, dict)  # 上一步已保证
+    authorized_scale = _num(sector_opportunity.get("first_tranche_scale"))
+    if authorized_scale is not None and authorized_scale > 0.0:
+        return False
+    failed = _v3_failed_gates(sector_opportunity)
+    if not [row for row in failed if row[0] != "trend"]:
+        return False
+    trend = _num(sector_opportunity.get("trend_strength_score"))
+    trend_gate = _num(V3_GATE_THRESHOLDS.get("trend"))
+    return trend is not None and trend_gate is not None and trend >= trend_gate
+
+
+def _hysteresis_hold_add_block_reason(sector_opportunity: dict) -> str | None:
+    """滞回保留档位时，加仓是否仍被拦；滞回带覆盖得住就返回 None。
+
+    **滞回带只对趋势定义。** `EXIT_TREND_THRESHOLD = V3_GATE_THRESHOLDS["trend"] - 8`，
+    而 `apply_direction_state_hysteresis` 的保留条件也只校验一件事：
+    `trend >= exit_trend_threshold`。所以这条带子只能为"趋势在入场线附近抖动"背书——那正
+    是它被造出来的场景，也是 `test_report_direction_hysteresis` 契约 3 锁住的行为：趋势 55
+    落在 [52, 60) 内、参与度与价格位置都过线时，方向在荐基与日报都应保持可加仓，否则同一
+    板块两个界面结论相反。
+
+    **它背书不了别的门禁。** 资金参与度或价格位置今天没过，与"趋势在带内"没有任何关系，
+    可此前这里只读 `entry_state`，滞回于是把它们一并放过去：2026-08-13 线上煤炭趋势 67.28
+    （在入场线之上、压根不在带内），失败项是参与度 28.93 < 35，就这样把模型草案「观察」
+    抬成「分批加仓 +10%」，而同一行的 `first_tranche_scale` 是 `None`（卡片显示
+    「本轮不投入」）。当天 5 只持仓有 4 只处于同样的滞回态，另外 3 只只是恰好被"板块资金流
+    偏弱"或"涨后回吐"这些**无关**的门禁挡住。
+
+    参与度略低于门槛本来就有专门的标定通道（`flow_improving_probe_eligible`，条件是
+    `V3_IMPROVING_FLOW_PARTICIPATION_FLOOR <= participation < 门槛` 且今日资金转强），调用方
+    在本函数之前先判它。同一天的数字经济（参与度 29.24）正是走那条通道拿到小额加仓，而煤炭
+    / 黄金 / 稀土 不符合该通道的条件——系统本来就有正确的机制，缺陷是滞回把它绕过去了。
+
+    **非趋势门禁未过时不再一律封死，改为最低档小额试探**（用户决策，2026-08-13）：条件与
+    比例见 `_hysteresis_probe_eligible`，够格时本函数返回 None（放行），由
+    `_resolve_deterministic_position_change` 把档位封到最低档并套上试仓系数。仍够不上试探
+    的（趋势也掉到入场线以下、或命中非数值否决项）照旧封死。
+    """
+    if _hysteresis_probe_eligible(sector_opportunity):
+        return None
+    failed = _v3_failed_gates(sector_opportunity)
+    non_trend_failed = [row for row in failed if row[0] != "trend"]
+    trend = _num(sector_opportunity.get("trend_strength_score"))
+    trend_gate = _num(V3_GATE_THRESHOLDS.get("trend"))
+    trend_inside_band = (
+        trend is not None
+        and trend_gate is not None
+        and EXIT_TREND_THRESHOLD <= trend < trend_gate
+    )
+    if not non_trend_failed and trend_inside_band:
+        return None
+    if non_trend_failed:
+        # 走到这里说明试探也不够格——趋势同时掉到入场线以下，两根轴一起坏了。
+        return (
+            f"方向今日未重新通过入场线（{_format_failed_gates(non_trend_failed)}），"
+            "且趋势已回落到入场线之下，滞回带不覆盖这些门禁"
+        )
+    # 三块分数都在门槛之上却仍未达标：`classify_entry_state_v3` 的非数值否决项
+    # （证据质量不可用、主线状态非方向性）命中了。同样不构成"可以继续加"的依据。
+    return "方向今日未重新通过入场线（滞回带内保留），本轮只支持持有、不支持加仓"
+
+
 def _entry_state_add_block_reason(sector_opportunity: dict | None) -> str | None:
-    """方向成熟度档位是否拦住加仓。快照缺席（无 entry_state）时返回 None，不拦。"""
+    """方向成熟度档位是否拦住加仓。快照缺席（无 entry_state）时返回 None，不拦。
+
+    **滞回保留的 ready_to_start 不自动等于"今日可以继续加"。** 这是本函数最容易读错的一点：
+    `apply_direction_state_hysteresis` 的职责是压掉方向标签在阈值边界上的抖动
+    （「不改变任何分数，也不放宽入场线」是它自己的 docstring），而它的保留条件只校验趋势。
+    此前这里只读 `entry_state`，于是滞回抬起来的档位被当成"今日三块入场门禁都已通过"，
+    参与度与价格位置在滞回之后**再没有任何地方复查**——荐基对同一状态给出的
+    `entry_triggers` 写的正是「买入并录入持仓后，由日报根据资金参与度与价格位置决定是否
+    加仓」，复查本来就该由日报做。判定细节与实测证据见
+    `_hysteresis_hold_add_block_reason`。
+    """
     if not isinstance(sector_opportunity, dict):
         return None
     state = str(sector_opportunity.get("entry_state") or "")
-    if not state or state == _ENTRY_STATE_READY:
+    if not state:
+        return None
+    held_raw_state = _hysteresis_held_raw_entry_state(sector_opportunity)
+    if held_raw_state is None and state == _ENTRY_STATE_READY:
         return None
     # 荐基对这两类"早期试仓"开了口子（资金刚转强 / 趋势成形信号分够），日报沿用同一判定，
     # 否则同一天同一板块两个界面结论相反。它们仍会通过 first_tranche_scale 缩小比例。
+    #
+    # 放在滞回判定**之前**是刻意的：这两条通道由当日原始档位开出，滞回不影响它们的成立性，
+    # 所以滞回态下它们照样有效（2026-08-13 的数字经济就是这条路，参与度 29.24 略低于门槛
+    # 但今日资金转强，按 40% 试仓系数拿到小额加仓）。
     if sector_opportunity.get("flow_improving_probe_eligible") is True:
         return None
     if sector_opportunity.get("probability_early_probe_eligible") is True:
         return None
+    if held_raw_state is not None:
+        return _hysteresis_hold_add_block_reason(sector_opportunity)
     return _ENTRY_STATES_BLOCKING_ADD.get(state)
+
+
+def _apply_tranche_scale(
+    current_percent: float,
+    scale: float,
+    *,
+    detail: str | None = None,
+) -> tuple[float, str | None]:
+    """把试仓系数乘上去（只降不升），返回 `(比例, 依据文案)`。
+
+    乘法与"向下取整到 0.1"只写一处：`first_tranche_scale` 与滞回态试探两条路径都要用它，
+    各写一遍必然在取整口径上漂移。
+    """
+    scaled = floor(max(current_percent * scale, 0.0) * 10) / 10
+    if scaled >= current_percent:
+        return current_percent, None
+    suffix = f"（{detail}）" if detail else ""
+    return scaled, f"方向分段试仓系数 {scale:.0%}{suffix}，本次比例缩至 {scaled:g}%"
 
 
 def _first_tranche_scaled_percent(
     current_percent: float,
     sector_opportunity: dict | None,
-) -> tuple[float, str | None]:
+) -> tuple[float | None, str | None]:
     """按方向成熟度的 `first_tranche_scale` 缩小本次加仓比例。
 
     与 `_fund_evidence_add_percent` / `_vehicle_quality_add_percent` 的"沿档位阶梯降一级"
@@ -967,23 +1208,44 @@ def _first_tranche_scaled_percent(
     也会与荐基对同一方向给出的金额不一致。
 
     同样只降不升：`scale >= 1` 时原样返回。
+
+    **返回 `None` 表示本轮不授权加仓**（调用方据此把动作降为观察）。这条分支修的是一个
+    静默失败：`describe_sector_opportunity` 在"没有任何入场通道授权投入"时发布
+    `first_tranche_scale = None`（前端渲染成「本轮不投入」），而
+    `sector_opportunity_scoring.py` 里选择发 `None` 而不是 `0.0` 的注释写着「两处都另有
+    entry_state 门禁在前，本身不会走到」——滞回把 `entry_state` 抬成 ready_to_start 之后
+    这个前提不成立了，于是 `None` 在这里被当成"没有可用的缩放系数"，**原样返回满档比例**。
+    2026-08-13 线上实测：煤炭 `first_tranche_scale=None` 却发出「分批加仓 +10%」，
+    同一天黄金（20% 档）与稀土（15% 档）也带着 `None`，只是被别的门禁挡住了。
+
+    只在成熟度层**确实在场**（`score_policy_version` 为 V3）时 fail-closed。旧口径行没有
+    这一层，缺 `first_tranche_scale` 是"本来就没有这个概念"而不是"没被授权"，行为必须与
+    接入成熟度层之前完全一致（见 `test_absent_maturity_layer_changes_nothing`）。
     """
     if not isinstance(sector_opportunity, dict):
         return current_percent, None
     scale = _num(sector_opportunity.get("first_tranche_scale"))
-    if scale is None or scale >= 1.0 or scale <= 0.0:
+    maturity_present = (
+        str(sector_opportunity.get("score_policy_version") or "") == ENTRY_POLICY_VERSION_V3
+    )
+    if scale is None or scale <= 0.0:
+        if maturity_present:
+            return None, (
+                "方向层本轮未授权任何投入比例（first_tranche_scale 缺席），"
+                "不得据此加仓，已降为观察。"
+            )
         return current_percent, None
-    scaled = floor(max(current_percent * scale, 0.0) * 10) / 10
-    if scaled >= current_percent:
+    if scale >= 1.0:
         return current_percent, None
     overheat = [
         str(item).strip()
         for item in sector_opportunity.get("overheat_flags") or []
         if str(item).strip()
     ]
-    detail = f"（{'、'.join(overheat[:2])}）" if overheat else ""
-    return scaled, (
-        f"方向分段试仓系数 {scale:.0%}{detail}，本次比例缩至 {scaled:g}%"
+    return _apply_tranche_scale(
+        current_percent,
+        scale,
+        detail="、".join(overheat[:2]) or None,
     )
 
 
@@ -1025,6 +1287,60 @@ def _vehicle_quality_add_percent(
     return stepped, f"被动载体质量未达标{detail}，档位下调至 {stepped:g}%"
 
 
+def _unrealized_loss_add_percent(
+    current_percent: float,
+    holding_return_percent: float | None,
+) -> tuple[float, str | None]:
+    """该仓自身还没转正时，把加仓档位封到阶梯最低档，返回 `(比例, 依据文案)`。
+
+    **这道门禁量的是"你自己的成本"，与既有的任何一道都不重叠。** 板块层的
+    `position_risk`（界面写作「结构修复度」）量的是**板块自己的价格位置**，`direction_score`
+    量的是方向强度，`first_tranche_scale` 量的是"本轮授权投入多少"——三者都不知道**你**是在
+    什么价位买进来的。此前 `estimated_holding_return_percent` 在本模块只被读过一次，而且只
+    用在减仓侧（`resolve_escalation_floor` 的 `has_unrealized_gain`，决定 −1/4 还是 −1/3），
+    加仓侧完全没有成本基准判据：一只已经浮亏 8% 的持仓，只要板块方向还在线上，就会拿到与
+    浮盈 8% 那只完全相同的档位。
+
+    **实测依据。** `scripts/run_position_sizing_backtest.py` 在同一批 PIT 入场信号上做配对
+    比较（逐 episode 相减，两边共用同一批 episode 与同一套退出规则），本档位封顶口径相对
+    现状：9 组 (最长持有期 × 止损幅度) 参数下**均值差全部为正**，7 组 |t| >= 2；20 日 / −10%
+    那组为 +0.157%（t=2.90），87.2% 的 episode 上不劣于现状。同时它**更省**：平均投出
+    47.5%（现状 51.4%）、费用 0.36%（现状 0.40%）。
+
+    它不是靠提高胜率赚钱——中位差是 0.000%，绝大多数 episode 没有变化——而是砍掉了"在亏损
+    里越买越多"那条尾巴。这也是它为什么被选中：收益是尾部保护，代价接近零。
+
+    **两处刻意的保守。**
+
+    1. 更强的口径（浮亏时**完全不加**）在同一份数据上更好（20 日 / −10% 为 +0.259%，
+       t=3.03；相对本口径再 +0.101%，t=2.62），但它会把"方向仍然成立、只是买点略差"的仓位
+       也一并冻住。这里先取弱口径，强口径留作后续决策。
+    2. 判据用 `> 0` 而不是"> 往返费率"，因为回测验证的就是 `> 0`；换成费率门槛等于引入一个
+       没测过的阈值。
+
+    **样本限制必须一起读**：71 个 episode、2026-01~08 单一**下行**区间（等权基准 −6.59%、
+    最大回撤 −19.55%），标的是板块指数而非可买到的基金。下行区间对"少加仓"这类结论天然友好，
+    所以这里只取了受该偏置影响最小的那一条（条件规则，涨市里大部分时候压根不触发），并且
+    没有据此调整任何档位数值本身。
+
+    ``holding_return_percent`` 为 ``None`` 时**不封顶**：那表示"这一轮拿不到持有收益口径"，
+    与"确实在亏"是两件事。生产路径由 `apply_recommendation_guards` 从 `analysis_facts` 的
+    `estimated_holding_return_percent` 透传（与界面「持有」列、减仓侧 `has_unrealized_gain`
+    同一个数），不在这里重算——`holding_estimates` 的权威实现需要逐持仓的 `FundProfile`，
+    而 `analysis_facts` 特意用 `resolve_matched_profiles` 批量取过了。无成熟度层的旧口径行
+    同样保持原样（见 `test_absent_maturity_layer_changes_nothing`）。
+    """
+    if holding_return_percent is None or holding_return_percent > 0:
+        return current_percent, None
+    floor_percent = _ADD_TIER_PERCENTS[-1]
+    if current_percent <= floor_percent:
+        return current_percent, None
+    return floor_percent, (
+        f"该仓估算持有收益 {holding_return_percent:+.2f}% 尚未转正，"
+        f"档位封到最低档 {floor_percent:g}%"
+    )
+
+
 def _resolve_deterministic_position_change(
     action: str,
     *,
@@ -1034,6 +1350,7 @@ def _resolve_deterministic_position_change(
     sector_opportunity: dict | None,
     evidence: dict | None = None,
     vehicle_quality: dict | None = None,
+    holding_return_percent: float | None = None,
 ) -> tuple[float | None, str, str | None]:
     """Return a server-owned percentage relative to the estimated holding value.
 
@@ -1068,6 +1385,31 @@ def _resolve_deterministic_position_change(
         )
 
     sector_percent, sector_tier_basis = _resolve_sector_add_tier(sector_opportunity)
+    # 滞回态小额试探：档位封到既有阶梯最低档。必须在基金证据/载体质量降档之前封，否则
+    # 「降一级」会从一个本不该出现的高档位起算（黄金 20% 降一级仍是 15%，而这批行本来就
+    # 只配最低档）。理由与排序见 `_hysteresis_probe_eligible`。
+    hysteresis_probe = _hysteresis_probe_eligible(sector_opportunity)
+    if hysteresis_probe:
+        probe_tier = _ADD_TIER_PERCENTS[-1]
+        if probe_tier < sector_percent:
+            failed = _format_failed_gates(
+                [
+                    row
+                    for row in _v3_failed_gates(sector_opportunity)
+                    if row[0] != "trend"
+                ]
+            )
+            sector_percent = probe_tier
+            sector_tier_basis = (
+                f"方向今日未重新通过入场线（{failed}）但趋势仍在入场线之上，"
+                f"滞回带内按最低档小额试探 {probe_tier:g}%"
+            )
+    # 该仓自身未转正时封到最低档。必须与滞回试探同样在基金证据/载体质量降档**之前**封，
+    # 理由相同：「降一级」若从一个本不该出现的高档位起算，20% 降一级仍是 15%。
+    sector_percent, loss_basis = _unrealized_loss_add_percent(
+        sector_percent,
+        holding_return_percent,
+    )
     # 板块决定机会档位，基金自身证据与被动载体质量各自只能把它往下调一级，不能提额。
     base_percent, evidence_basis = _fund_evidence_add_percent(sector_percent, evidence)
     base_percent, vehicle_basis = _vehicle_quality_add_percent(
@@ -1075,10 +1417,25 @@ def _resolve_deterministic_position_change(
         vehicle_quality,
     )
     # 方向成熟度的分段试仓系数最后作用（乘法缩放，语义是"本次投入占计划仓位的比例"）。
-    base_percent, tranche_basis = _first_tranche_scaled_percent(
-        base_percent,
-        sector_opportunity,
-    )
+    # 返回 None 表示方向层本轮压根没授权投入——此时不能退回"不缩放"，必须放弃这次加仓。
+    #
+    # 滞回态试探自带系数：这批行的 `first_tranche_scale` 恰恰是 `None`（原始档位没开任何
+    # 通道，正是它触发了 fail-closed），所以试探路径必须显式提供系数，否则会被自己的
+    # fail-closed 挡回去。取值与"已授权试仓通道"同一个 0.4，档位那层已经把它压到最低档。
+    if hysteresis_probe:
+        base_percent, tranche_basis = _apply_tranche_scale(
+            base_percent,
+            _HYSTERESIS_PROBE_TRANCHE_SCALE,
+            detail="滞回带内试探",
+        )
+    else:
+        scaled_percent, tranche_basis = _first_tranche_scaled_percent(
+            base_percent,
+            sector_opportunity,
+        )
+        if scaled_percent is None:
+            return None, "", tranche_basis
+        base_percent = scaled_percent
     limit_ratio = max(min(float(profile.concentration_limit_percent), 100.0), 0.0) / 100
     max_add_amount: float | None
     if profile.expected_investment_amount is not None and profile.expected_investment_amount > 0:
@@ -1115,6 +1472,8 @@ def _resolve_deterministic_position_change(
         )
 
     basis = f"相对当前估算持仓计算；{sector_tier_basis}"
+    if loss_basis:
+        basis += f"；{loss_basis}"
     if evidence_basis:
         basis += f"；{evidence_basis}"
     if vehicle_basis:
@@ -1689,6 +2048,36 @@ def _evidence_composite_summary(evidence: dict | None, ic_status: dict | None) -
 
 # 方向证据**整层**缺席时的降级原因。区分两种缺席是为了让用户和运维能分辨"这只持仓压根
 # 没有板块"与"今天板块证据没取到"——前者要去补板块映射，后者等下一份日报就好。
+def _discovery_cross_reference_note(facts: dict | None, holding) -> str | None:
+    """当日发现基金对该持仓所属板块推荐了新载体时的披露文案；没有就 None。
+
+    只解释"两侧为什么不矛盾"，不搬动作：发现的推荐面向新资金（买哪只更好的载体），
+    本卡片只对已持有的这只负责，方向判断两侧共用同一套打分。命中多只时只点名第一只、
+    带上数量——validation_notes 是披露渠道，不是第二份推荐列表。
+    """
+    if not isinstance(facts, dict) or holding is None:
+        return None
+    cross = facts.get("discovery_cross_reference")
+    if not isinstance(cross, dict) or not cross.get("available"):
+        return None
+    label = normalize_sector_label(getattr(holding, "sector_name", None))
+    if not label:
+        return None
+    rows = (cross.get("buy_recommendations_by_sector") or {}).get(label) or []
+    rows = [row for row in rows if isinstance(row, dict)]
+    if not rows:
+        return None
+    first = rows[0]
+    name = str(first.get("fund_name") or "").strip() or str(first.get("fund_code") or "").strip()
+    action = str(first.get("action") or "").strip() or "分批买入"
+    extra = f" 等 {len(rows)} 只" if len(rows) > 1 else ""
+    return (
+        f"发现基金今日报告对「{label}」方向另推荐了新的候选载体（{name}{extra}，"
+        f"动作「{action}」）；该推荐面向新资金入场，与本卡片对已持仓的结论各自独立，"
+        "方向判断两侧共用同一套打分，不构成矛盾。"
+    )
+
+
 _SECTOR_DIRECTION_ABSENT_NO_SECTOR = "该持仓未识别到所属板块，无法做方向判断"
 _SECTOR_DIRECTION_ABSENT_UNAVAILABLE = "本轮板块方向证据未取到"
 

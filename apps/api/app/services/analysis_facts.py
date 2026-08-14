@@ -371,6 +371,8 @@ def _attach_escalation_to_holdings(
             has_unrealized_gain=(row.get("estimated_holding_return_percent") or 0) > 0,
             decision_style=profile.decision_style,
             direction_exit=direction_exit,
+            # 基金层第三源：该持仓自己的净值走势，用于"载体跑输板块"的加仓禁止。
+            nav_trend=row.get("nav_trend"),
         )
         if isinstance(direction_exit, dict):
             row["direction_exit"] = direction_exit
@@ -915,6 +917,17 @@ def build_analysis_facts(
         "reason": sector_opportunity.get("reason"),
         "market_top": sector_opportunity.get("market_top", []),
     }
+    # 跨报告披露：当日发现基金报告对持仓同板块推荐了新载体时，把它结构化地带进日报——
+    # 方向层两侧共用同一套打分不会矛盾，但基金层"发现推荐买 Y、日报按住持仓 X"看起来
+    # 就是打架，必须有一句话解释。只披露、不仲裁（见模块 docstring）。
+    from app.services.report_discovery_cross_reference import (
+        build_discovery_cross_reference,
+    )
+
+    facts["discovery_cross_reference"] = build_discovery_cross_reference(
+        holdings,
+        decision_at=decision_at,
+    )
     # 方向成熟度这一层是否生效必须单独可见：`entry_state` 在主线快照缺席时压根不出现，
     # 下游要能区分"方向尚未成熟"与"今天没有主线快照可复用"。
     facts["sector_direction_maturity"] = (

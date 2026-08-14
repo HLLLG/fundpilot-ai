@@ -647,6 +647,7 @@ def _attach_direction_exit(
         from app.services.sector_direction_exit import (
             assess_direction_exit,
             load_direction_entry_contracts,
+            load_direction_ledger_health,
             load_direction_trend_history,
         )
         from app.services.sector_direction_state import EXIT_TREND_THRESHOLD
@@ -663,8 +664,16 @@ def _attach_direction_exit(
             labels,
             before_trade_date=history_cutoff,
         )
+        # 账本捕获健康度随每份退出判定一起披露：连续跌破天数完全依赖 19:10 定时捕获，
+        # 断更时天数停在 1、该升的档位安静地不升——必须让下游能看到"天数是下界"这件事
+        # 有没有实据。整批持仓共用同一份健康度，只查一次。
+        ledger_health = load_direction_ledger_health(history_cutoff)
         contracts_by_code = load_direction_entry_contracts(
             [holding.fund_code for holding in holdings],
+        )
+        contracts_by_code = _reconcile_contracts_with_holdings(
+            contracts_by_code,
+            holdings=holdings,
         )
         # 板块行的基线：同一方向可能对应多只基金，取最早那笔买入（先买的那笔才是"当初
         # 为什么进这个方向"）。这里按**基金当前所属板块**归并，而不是按契约里记录的板块
@@ -703,7 +712,7 @@ def _attach_direction_exit(
                 gain_by_label[label] = True
 
         for label, row in held.items():
-            row["direction_exit"] = assess_direction_exit(
+            exit_row = assess_direction_exit(
                 sector_label=label,
                 entry_state=row.get("entry_state"),
                 trend_strength=row.get("trend_strength_score"),
@@ -714,6 +723,8 @@ def _attach_direction_exit(
                 # 今天这一行的失效条件判定，用来和买入时冻结的承诺逐条对照。
                 invalidation_checks=row.get("invalidation_checks"),
             )
+            exit_row["ledger_health"] = dict(ledger_health)
+            row["direction_exit"] = exit_row
 
         # 逐基金：用**这只基金自己**的入场契约，对着它当前板块的方向行判一次。
         by_fund_code: dict[str, dict] = {}
@@ -727,7 +738,7 @@ def _attach_direction_exit(
             if contract is None:
                 # 没有自己的契约时不必单独算：板块行那份已经是它能得到的最好判定。
                 continue
-            by_fund_code[code] = assess_direction_exit(
+            fund_exit_row = assess_direction_exit(
                 sector_label=label,
                 entry_state=row.get("entry_state"),
                 trend_strength=row.get("trend_strength_score"),
@@ -737,10 +748,60 @@ def _attach_direction_exit(
                 has_unrealized_gain=gain_by_code.get(code, False),
                 invalidation_checks=row.get("invalidation_checks"),
             )
+            fund_exit_row["ledger_health"] = dict(ledger_health)
+            by_fund_code[code] = fund_exit_row
         return by_fund_code
     except Exception:  # noqa: BLE001 — 绝不阻塞日报
         logger.warning("方向退出判定失败，本次跳过", exc_info=True)
         return {}
+
+
+def _reconcile_contracts_with_holdings(
+    contracts_by_code: dict[str, dict],
+    *,
+    holdings: list[Holding],
+) -> dict[str, dict]:
+    """把每份入场契约与该持仓的购入日/首见日核对（确认成交闭环的读取侧）。
+
+    契约是 discovery **推荐时**冻结的事件，不是成交回执；真实账户里用户可能推荐前就持有
+    （契约根本不属于这笔持仓）、也可能拖了几周才买（推荐日的分数早已不代表买入决策）。
+    核对逻辑与基线重定见 `reconcile_entry_contract_with_holding`；这里只负责取数——
+    `fund_profiles` 的 `first_purchase_date`（用户购入日）与 `first_seen_date`
+    （持仓首次出现日）由 OCR 导入链路自动维护，正是"用户实际什么时候有这笔仓"的最好证据。
+
+    best-effort：档案读不到就原样返回契约（"不知道"不等于"错位"），绝不阻塞日报。
+    """
+    if not contracts_by_code:
+        return contracts_by_code
+    try:
+        from app.services.holding_profile_batch import resolve_matched_profiles
+        from app.services.sector_direction_exit import (
+            load_trend_score_on_or_before,
+            reconcile_entry_contract_with_holding,
+        )
+
+        profiles = resolve_matched_profiles(holdings)
+        profile_by_code = {
+            str(holding.fund_code or "").strip(): profile
+            for holding, profile in zip(holdings, profiles)
+            if profile is not None
+        }
+        reconciled: dict[str, dict] = {}
+        for code, contract in contracts_by_code.items():
+            profile = profile_by_code.get(str(code or "").strip())
+            if profile is None:
+                reconciled[code] = contract
+                continue
+            reconciled[code] = reconcile_entry_contract_with_holding(
+                contract,
+                first_purchase_date=profile.first_purchase_date,
+                first_seen_date=profile.first_seen_date,
+                rebase_score_loader=load_trend_score_on_or_before,
+            )
+        return reconciled
+    except Exception:  # noqa: BLE001 — 核对是增强项，失败退回未核对的契约
+        logger.warning("入场契约与持仓时间线核对失败，沿用原契约", exc_info=True)
+        return contracts_by_code
 
 
 def _resolve_previous_trade_date(trade_date: str | None) -> str | None:

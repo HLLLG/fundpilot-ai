@@ -232,6 +232,10 @@ def _supporting_facts() -> dict:
                     "opportunity_available": True,
                     "confidence": "高",
                     "track": "momentum",
+                    # `describe_sector_opportunity` 对每个 V3 行都会写这个键；`None` 的语义是
+                    # "本轮没有任何入场通道授权投入"，`_first_tranche_scaled_percent` 因此对
+                    # V3 行 fail-closed。1.0 = 授权满额、不缩放，让本文件只测提议与提升逻辑。
+                    "first_tranche_scale": 1.0,
                 },
                 "evidence": {
                     "composite": {"level": "高", "score": 3.0},

@@ -93,6 +93,10 @@ def _select_portfolio_gap_sectors(
 ) -> list[str]:
     """缺口模式：热度靠前且未重仓的板块 ∪ 用户 focus_sectors。"""
     ordered = resolve_focus_sector_labels(focus_sectors)
+    # 缺口配额要用**归一化后**的关注方向判定。`ordered` 里是白名单标签（"半导体主题"
+    # 已归一成"半导体"），拿用户原始输入比对会把归一后改了名的关注方向误计入缺口名额，
+    # 实际补充的缺口方向随之变少。
+    focus_labels = set(ordered)
     seen: set[str] = set(ordered)
 
     held_weights = _sector_weights(holdings, profile)
@@ -105,7 +109,7 @@ def _select_portfolio_gap_sectors(
             continue
         seen.add(label)
         ordered.append(label)
-        if len([s for s in ordered if s not in (focus_sectors or [])]) >= 3:
+        if len([s for s in ordered if s not in focus_labels]) >= 3:
             break
 
     if not ordered:
