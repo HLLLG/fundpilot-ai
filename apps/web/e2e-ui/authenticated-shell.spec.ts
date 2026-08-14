@@ -296,7 +296,7 @@ test("模拟登录态可进入响应式应用壳层", async ({ page }) => {
 
   await expect(page.getByRole("heading", { level: 1, name: "账户持仓" })).toBeAttached();
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
-  const holdingsTab = page.getByRole("button", { name: "持仓" });
+  const holdingsTab = page.getByRole("button", { name: "持仓", exact: true });
   await expect(holdingsTab).toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("link", { name: "跳到主要内容" })).toHaveAttribute(
     "href",
