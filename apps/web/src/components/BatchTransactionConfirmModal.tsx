@@ -281,15 +281,25 @@ export function BatchTransactionConfirmModal({
     };
   }, [recordedLookupKey]);
 
+  const transactionsRef = useRef(transactions);
+  const heldFundsRef = useRef(heldFunds);
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    transactionsRef.current = transactions;
+    heldFundsRef.current = heldFunds;
+    onChangeRef.current = onChange;
+  }, [heldFunds, onChange, transactions]);
+
   useEffect(() => {
     let cancelled = false;
-    const snapshot = transactions;
+    const snapshot = transactionsRef.current;
+    const held = heldFundsRef.current ?? [];
     const withHeldCodes = snapshot.map((tx) => {
       if (tx.fund_code) {
         return tx;
       }
-      const held = pickUniqueFundMatch(tx.fund_name, heldFunds);
-      return held ? { ...tx, fund_code: held.fund_code } : tx;
+      const match = pickUniqueFundMatch(tx.fund_name, held);
+      return match ? { ...tx, fund_code: match.fund_code } : tx;
     });
     const stillUnmatched = withHeldCodes
       .map((tx, index) => ({ tx, index }))
@@ -299,7 +309,7 @@ export function BatchTransactionConfirmModal({
         return;
       }
       if (next.some((tx, index) => tx.fund_code !== snapshot[index]?.fund_code)) {
-        onChange(next);
+        onChangeRef.current(next);
       }
     };
     if (stillUnmatched.length === 0) {
@@ -327,7 +337,6 @@ export function BatchTransactionConfirmModal({
     return () => {
       cancelled = true;
     };
-    // 确认页打开时只自动补码一次；依赖 transactions 会在写回后重复搜索。
   }, []);
 
   const [feeInputs, setFeeInputs] = useState<string[]>(() =>
