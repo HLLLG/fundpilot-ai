@@ -27,9 +27,9 @@ export function FundHoldingTransactions({
       .then((result) => {
         if (!cancelled) {
           setTransactions(
-            [...result.transactions]
-              .filter((tx) => tx.status !== "skipped" && tx.status !== "superseded")
-              .sort((left, right) => right.trade_time.localeCompare(left.trade_time)),
+            result.transactions.filter(
+              (tx) => tx.status !== "skipped" && tx.status !== "superseded",
+            ),
           );
         }
       })

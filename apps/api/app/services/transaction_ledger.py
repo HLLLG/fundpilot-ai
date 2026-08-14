@@ -47,6 +47,16 @@ _ORIGINAL_UPDATE_FUND_TRANSACTION = update_fund_transaction
 _CN_TZ = ZoneInfo("Asia/Shanghai")
 
 
+def sort_transactions_for_display(
+    transactions: list[FundTransaction],
+) -> list[FundTransaction]:
+    """进行中/待确认在前，已确认在后；组内按成交时间、创建时间降序。"""
+    ordered = list(transactions)
+    ordered.sort(key=lambda tx: (tx.trade_time, tx.created_at), reverse=True)
+    ordered.sort(key=lambda tx: 0 if (tx.in_progress or tx.status == "pending") else 1)
+    return ordered
+
+
 class TransactionTruthConflict(ValueError):
     def __init__(self, conflicts: list[dict[str, object]]) -> None:
         super().__init__("重复交易与已保存的确认真值不一致，请先核对或执行显式更正")

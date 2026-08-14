@@ -883,8 +883,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | PUT | `/api/portfolio/ledger-baseline` | 可选的专业对账/审计入口：记录实际份额、总成本和现金；不是 C 端日报前置步骤，主存储不可用时 503 |
 | POST | `/api/transactions/ocr` | 支付宝交易 OCR/文本预览；解析和补全确认日，不直接写账本 |
 | POST | `/api/transactions/apply` | 交易 + ledger 原子双写；实际份额优先、未知费用保持 null、冲突 409、主存储不可用 503 |
-| GET | `/api/transactions` | 当前用户全部流水，按 `trade_time` 降序 |
-| GET | `/api/funds/{code}/transactions` | 单基金交易历史（含确认份额、费用来源与状态） |
+| GET | `/api/transactions` | 当前用户全部流水；进行中/待确认在前，已确认在后，组内按 `trade_time` 降序 |
+| GET | `/api/funds/{code}/transactions` | 单基金交易历史（含确认份额、费用来源与状态）；排序与 `/api/transactions` 相同 |
 | POST | `/api/portfolio/settle-official-nav` | 非盘中按有效交易日滚官方净值；顺带确认到期 pending（含进行中）并吸收新建仓写入快照；盘中/收盘前跳过 |
 | DELETE | `/api/portfolio/holdings/{code}` | 删除持仓并追加零份额关闭事件，避免账本 ghost |
 | GET | `/api/portfolio/summary` | 账户汇总 + 全部档案 |

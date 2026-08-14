@@ -1,6 +1,7 @@
 "use client";
 
 import type { FundTransaction } from "@/lib/api";
+import { sortLedgerTransactions } from "@/lib/transactionList";
 
 const MONEY = new Intl.NumberFormat("zh-CN", {
   minimumFractionDigits: 2,
@@ -45,13 +46,14 @@ export function FundTransactionList({
   showFundName?: boolean;
   emptyText?: string;
 }) {
-  if (transactions.length === 0) {
+  const ordered = sortLedgerTransactions(transactions);
+  if (ordered.length === 0) {
     return <p className="px-1 py-8 text-center text-sm text-slate-500">{emptyText}</p>;
   }
 
   return (
     <ul className="divide-y divide-slate-100">
-      {transactions.map((tx) => {
+      {ordered.map((tx) => {
         const buy = tx.direction === "buy";
         const status = statusLabel(tx);
         return (

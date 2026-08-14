@@ -22,6 +22,38 @@ def _transaction(**overrides) -> FundTransaction:
     return FundTransaction(**payload)
 
 
+def test_display_sort_puts_in_progress_above_confirmed() -> None:
+    confirmed_newer = _transaction(
+        id="c-new",
+        trade_time="2026-08-14 14:56:15",
+        status="confirmed",
+        created_at="2026-08-14T06:56:15+00:00",
+    )
+    in_progress_older = _transaction(
+        id="p-old",
+        trade_time="2026-08-14 14:44:52",
+        in_progress=True,
+        created_at="2026-08-14T06:44:52+00:00",
+    )
+    confirmed_older = _transaction(
+        id="c-old",
+        trade_time="2026-08-13 14:55:30",
+        status="confirmed",
+        created_at="2026-08-13T06:55:30+00:00",
+    )
+    in_progress_newer = _transaction(
+        id="p-new",
+        trade_time="2026-08-14 14:57:23",
+        in_progress=True,
+        created_at="2026-08-14T06:57:23+00:00",
+    )
+
+    ordered = transaction_ledger.sort_transactions_for_display(
+        [confirmed_newer, in_progress_older, confirmed_older, in_progress_newer]
+    )
+    assert [tx.id for tx in ordered] == ["p-new", "p-old", "c-new", "c-old"]
+
+
 def test_old_parsed_transaction_remains_backward_compatible() -> None:
     parsed = ParsedTransaction(
         direction="buy",
@@ -112,6 +144,53 @@ def test_legacy_amount_nav_share_is_explicitly_derived(monkeypatch) -> None:
     assert transaction_ledger.confirm_pending_transactions() == 1
     assert updates[0]["shares_delta"] == 75.0
     assert updates[0]["shares_source"] == "derived_amount_nav"
+
+
+def test_in_progress_confirms_when_holdings_official_nav_is_already_out(
+    monkeypatch,
+) -> None:
+    from app.services import fund_nav_service as nav
+
+    nav._NAV_CACHE.clear()
+    nav._UNIT_NAV_CACHE.clear()
+    store: dict[str, dict] = {}
+    monkeypatch.setattr(
+        nav,
+        "save_spot_snapshot",
+        lambda key, payload: store.__setitem__(key, dict(payload)),
+    )
+    monkeypatch.setattr(
+        nav,
+        "get_spot_snapshot",
+        lambda key, ttl_seconds=0: dict(store[key]) if key in store else None,
+    )
+    monkeypatch.setattr(
+        nav,
+        "_fetch_nav_df",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not fetch history")),
+    )
+    nav._cache_nav_return("011036", "2026-07-01", 2.44, nav.TTL_HIT)
+    nav._cache_unit_nav("011036", 1.5, as_of="2026-07-01")
+
+    tx = _transaction(
+        fund_code="011036",
+        in_progress=True,
+        amount_yuan=150,
+        confirm_date="2026-07-01",
+    )
+    updates: list[dict] = []
+    monkeypatch.setattr(transaction_ledger, "list_pending_fund_transactions", lambda: [tx])
+    monkeypatch.setattr(
+        transaction_ledger,
+        "update_fund_transaction",
+        lambda tx_id, **kwargs: updates.append({"id": tx_id, **kwargs}),
+    )
+
+    assert transaction_ledger.confirm_pending_transactions() == 1
+    assert updates[0]["status"] == "confirmed"
+    assert updates[0]["in_progress"] is False
+    assert updates[0]["shares_delta"] == 100.0
+    assert updates[0]["nav_on_confirm"] == 1.5
 
 
 def test_in_progress_without_confirm_nav_stays_pending(monkeypatch) -> None:

@@ -168,7 +168,7 @@ def prime_official_nav_cache(
             try:
                 unit_value = round(float(unit_nav), 4)
                 if unit_value > 0:
-                    _cache_unit_nav(code, unit_value)
+                    _cache_unit_nav(code, unit_value, as_of=trade_date)
             except (TypeError, ValueError):
                 pass
         try:
@@ -231,7 +231,7 @@ def get_official_nav_return(fund_code: str, trade_date: str) -> float | None:
             return None
         unit_nav = float(latest["单位净值"])
         if not math.isnan(unit_nav) and unit_nav > 0:
-            _cache_unit_nav(fund_code, round(unit_nav, 4))
+            _cache_unit_nav(fund_code, round(unit_nav, 4), as_of=latest_date)
         _cache_nav_return(fund_code, trade_date, nav_return, TTL_HIT)
         return nav_return
 
@@ -243,6 +243,14 @@ def get_official_nav_return(fund_code: str, trade_date: str) -> float | None:
 
 def _unit_nav_persist_key(fund_code: str) -> str:
     return f"fund:unit-nav:v1:{fund_code}"
+
+
+def _dated_unit_nav_persist_key(fund_code: str, trade_date: str) -> str:
+    return f"fund:unit-nav-date:v1:{fund_code}:{trade_date}"
+
+
+def _dated_unit_nav_cache_key(fund_code: str, trade_date: str) -> str:
+    return f"unitdate:{fund_code}:{trade_date}"
 
 
 def _cache_unit_nav_memory(
@@ -263,9 +271,14 @@ def _cache_unit_nav_memory(
     )
 
 
-def _cache_unit_nav(fund_code: str, value: float) -> None:
+def _cache_unit_nav(fund_code: str, value: float, *, as_of: str | None = None) -> None:
     _cache_unit_nav_memory(_unit_nav_cache_key(fund_code), value, TTL_HIT)
-    save_spot_snapshot(_unit_nav_persist_key(fund_code), {"value": value})
+    payload: dict[str, object] = {"value": value}
+    if as_of:
+        payload["as_of"] = as_of
+        _cache_unit_nav_memory(_dated_unit_nav_cache_key(fund_code, as_of), value, TTL_HIT)
+        save_spot_snapshot(_dated_unit_nav_persist_key(fund_code, as_of), {"value": value})
+    save_spot_snapshot(_unit_nav_persist_key(fund_code), payload)
 
 
 def peek_cached_unit_nav(fund_code: str) -> float | None:
@@ -291,6 +304,46 @@ def _persisted_unit_nav(fund_code: str) -> float | None:
         return None
 
 
+def _persisted_dated_unit_nav(fund_code: str, trade_date: str) -> float | None:
+    payload = get_spot_snapshot(
+        _dated_unit_nav_persist_key(fund_code, trade_date),
+        ttl_seconds=TTL_HIT,
+    )
+    if not payload or payload.get("value") is None:
+        return None
+    try:
+        value = round(float(payload["value"]), 4)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _persisted_unit_nav_payload(fund_code: str) -> dict | None:
+    payload = get_spot_snapshot(_unit_nav_persist_key(fund_code), ttl_seconds=TTL_HIT)
+    return payload if isinstance(payload, dict) else None
+
+
+def _unit_nav_if_official_return_published(fund_code: str, trade_date: str) -> float | None:
+    """持仓「已更新」用的官方日涨跌一旦公布，同一张最新净值表上的单位净值就是确认日净值。"""
+    if get_cached_official_nav_return(fund_code, trade_date) is None:
+        return None
+    payload = _persisted_unit_nav_payload(fund_code)
+    if payload and payload.get("value") is not None:
+        as_of = str(payload.get("as_of") or "")[:10]
+        if as_of and as_of != trade_date:
+            return None
+        try:
+            value = round(float(payload["value"]), 4)
+        except (TypeError, ValueError):
+            value = None
+        if value is not None and value > 0:
+            return value
+    latest = peek_cached_unit_nav(fund_code)
+    if latest is not None and latest > 0:
+        return latest
+    return None
+
+
 def get_latest_unit_nav(fund_code: str, *, allow_fetch: bool = True) -> float | None:
     """Return the latest published unit NAV from AkShare."""
     key = _unit_nav_cache_key(fund_code)
@@ -309,13 +362,15 @@ def get_latest_unit_nav(fund_code: str, *, allow_fetch: bool = True) -> float | 
             _cache_unit_nav_memory(key, None, TTL_MISS, now=now)
             return None
 
-        unit_nav = float(df.iloc[-1]["单位净值"])
+        latest = df.iloc[-1]
+        unit_nav = float(latest["单位净值"])
         if math.isnan(unit_nav) or unit_nav <= 0:
             _cache_unit_nav_memory(key, None, TTL_MISS, now=now)
             return None
 
         rounded = round(unit_nav, 4)
-        _cache_unit_nav(fund_code, rounded)
+        as_of = str(latest.get("净值日期") or "")[:10] or None
+        _cache_unit_nav(fund_code, rounded, as_of=as_of)
         return rounded
     except Exception:
         logger.exception("Failed to fetch latest unit NAV for %s", fund_code)
@@ -324,16 +379,34 @@ def get_latest_unit_nav(fund_code: str, *, allow_fetch: bool = True) -> float | 
 
 
 def get_unit_nav_on_date(fund_code: str, trade_date: str) -> float | None:
-    """返回该交易日的官方单位净值（精确匹配净值日期），未发布/不存在返回 None。"""
+    """返回该交易日的官方单位净值（精确匹配净值日期），未发布/不存在返回 None。
+
+    持仓「已更新」走东财最新净值表的日涨跌；进行中交易入账必须用同一天的单位净值。
+    历史净值接口常晚于这张表，所以官方日涨跌已缓存时优先用同表单位净值，避免
+    「净值已更新、交易还停在进行中」。
+    """
     if not fund_code or fund_code == "000000" or not trade_date:
         return None
 
-    key = f"unitdate:{fund_code}:{trade_date}"
+    key = _dated_unit_nav_cache_key(fund_code, trade_date)
     now = time.monotonic()
 
     found, value = _get_memory_cache(_UNIT_NAV_CACHE, _UNIT_NAV_CACHE_LOCK, key, now)
-    if found:
+    if found and value is not None and value > 0:
         return value
+
+    persisted = _persisted_dated_unit_nav(fund_code, trade_date)
+    if persisted is not None:
+        _cache_unit_nav_memory(key, persisted, TTL_HIT, now=now)
+        return persisted
+
+    companion = _unit_nav_if_official_return_published(fund_code, trade_date)
+    if companion is not None:
+        _cache_unit_nav(fund_code, companion, as_of=trade_date)
+        return companion
+
+    if found and value is None:
+        return None
 
     try:
         df = _fetch_nav_df(fund_code)
@@ -354,7 +427,7 @@ def get_unit_nav_on_date(fund_code: str, trade_date: str) -> float | None:
             return None
 
         rounded = round(unit_nav, 4)
-        _cache_unit_nav_memory(key, rounded, TTL_HIT, now=now)
+        _cache_unit_nav(fund_code, rounded, as_of=trade_date)
         return rounded
     except Exception:
         logger.exception("Failed to fetch unit NAV for %s on %s", fund_code, trade_date)

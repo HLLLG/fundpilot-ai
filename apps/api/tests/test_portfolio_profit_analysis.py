@@ -4,6 +4,7 @@ from datetime import date
 
 import pytest
 
+from app.models import Holding
 from app.services import portfolio_profit_analysis as service
 
 
@@ -109,3 +110,81 @@ def test_calendar_month_uses_the_same_compound_return_contract(
 
     assert calendar["month_cumulative_return_percent"] == pytest.approx(-1.0)
     assert calendar["month_index_return_percent"] == pytest.approx(-1.0)
+
+
+def _holding(code: str, amount: float) -> Holding:
+    return Holding(fund_code=code, fund_name=code, holding_amount=amount)
+
+
+def test_intraday_fingerprint_ignores_zero_amount_holdings() -> None:
+    settled = _holding("011036", 1000)
+    pending_only = _holding("021959", 0)
+    assert service._holdings_intraday_fingerprint([settled]) == service._holdings_intraday_fingerprint(
+        [settled, pending_only]
+    )
+
+
+def test_cache_only_serves_stale_curve_when_fingerprint_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cached_points = [
+        {"time": "09:30", "portfolio_percent": 0.0, "index_percent": None},
+        {"time": "10:00", "portfolio_percent": 0.12, "index_percent": None},
+    ]
+    blended: list[bool] = []
+    monkeypatch.setattr(
+        service,
+        "build_trading_session",
+        lambda: {"session_kind": "trading_day_after_close"},
+    )
+    monkeypatch.setattr(service, "get_effective_trade_date", lambda **_kwargs: "2026-08-14")
+    monkeypatch.setattr(
+        service,
+        "get_portfolio_intraday_curve_entry",
+        lambda _date: {"points": cached_points, "holdings_fingerprint": "old"},
+    )
+    monkeypatch.setattr(service, "_holdings_intraday_fingerprint", lambda *_args, **_kwargs: "new")
+    monkeypatch.setattr(
+        service,
+        "_blend_portfolio_rows",
+        lambda *_args, **_kwargs: blended.append(True) or [],
+    )
+    monkeypatch.setattr(
+        service,
+        "_fetch_cached_index_intraday",
+        lambda: [
+            {"time": "09:30", "percent": 0.0},
+            {"time": "10:00", "percent": 0.05},
+        ],
+    )
+
+    points, trade_date = service.load_or_build_intraday_curve(
+        [_holding("011036", 1000), _holding("021959", 500)],
+        cache_only=True,
+    )
+
+    assert trade_date == "2026-08-14"
+    assert blended == []
+    assert [row["portfolio_percent"] for row in points] == [0.0, 0.12]
+    assert points[1]["index_percent"] == pytest.approx(0.05)
+
+
+def test_cache_only_without_cached_curve_stays_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        service,
+        "build_trading_session",
+        lambda: {"session_kind": "trading_day_after_close"},
+    )
+    monkeypatch.setattr(service, "get_effective_trade_date", lambda **_kwargs: "2026-08-14")
+    monkeypatch.setattr(service, "get_portfolio_intraday_curve_entry", lambda _date: None)
+    monkeypatch.setattr(
+        service,
+        "_blend_portfolio_rows",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not rebuild")),
+    )
+
+    points, _trade_date = service.load_or_build_intraday_curve(
+        [_holding("011036", 1000)],
+        cache_only=True,
+    )
+    assert points == []

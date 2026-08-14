@@ -101,12 +101,15 @@ def _holdings_intraday_fingerprint(
     profiles_by_code = profiles_by_code or {}
     rows: list[dict[str, object]] = []
     for holding in sorted(holdings, key=lambda item: item.fund_code):
+        amount = float(holding.holding_amount or 0)
+        if amount <= 0:
+            continue
         profile = profiles_by_code.get(holding.fund_code)
         query = _resolve_intraday_for_holding(holding, profile)
         rows.append(
             {
                 "fund_code": holding.fund_code,
-                "amount": round(float(holding.holding_amount), 2),
+                "amount": round(amount, 2),
                 "sector": holding.sector_name,
                 "index": holding.intraday_index_name,
                 "query": query,
@@ -257,6 +260,23 @@ def persist_intraday_curve(
     return blend_portfolio_intraday(holdings, profiles_by_code)
 
 
+def _cached_intraday_points(cached_entry: dict | None) -> list[dict]:
+    if not cached_entry:
+        return []
+    points = cached_entry.get("points") or []
+    return points if len(points) >= 2 else []
+
+
+def _with_index_intraday(
+    portfolio_rows: list[dict[str, float | str | None]],
+) -> list[dict[str, float | str | None]]:
+    try:
+        index_points = _fetch_cached_index_intraday()
+    except Exception:  # noqa: BLE001 — 上证分时失败仍应画出组合曲线
+        index_points = []
+    return _merge_index_intraday(portfolio_rows, index_points)
+
+
 def load_or_build_intraday_curve(
     holdings: list[Holding],
     profiles_by_code: dict[str, FundProfile] | None = None,
@@ -267,11 +287,19 @@ def load_or_build_intraday_curve(
     trade_date = get_effective_trade_date(session_kind=session["session_kind"])
     fingerprint = _holdings_intraday_fingerprint(holdings, profiles_by_code)
     cached_entry = get_portfolio_intraday_curve_entry(trade_date)
-    if cached_entry and len(cached_entry["points"]) >= 2:
-        if cached_entry.get("holdings_fingerprint") == fingerprint:
-            index_points = _fetch_cached_index_intraday()
-            return _merge_index_intraday(cached_entry["points"], index_points), trade_date
+    cached_points = _cached_intraday_points(cached_entry)
+    cache_matches = (
+        bool(cached_points)
+        and cached_entry is not None
+        and cached_entry.get("holdings_fingerprint") == fingerprint
+    )
+    if cache_matches:
+        return _with_index_intraday(cached_points), trade_date
     if cache_only:
+        # 看板 GET 不能为了重画分时去打东财。导入交易/结算后指纹常对不上，
+        # 但当天已经落库的曲线仍应展示，否则盈亏分析「当日」会变成空白。
+        if cached_points:
+            return _with_index_intraday(cached_points), trade_date
         return [], trade_date
     portfolio_rows = _blend_portfolio_rows(holdings, profiles_by_code)
     if portfolio_rows:
@@ -280,8 +308,9 @@ def load_or_build_intraday_curve(
             portfolio_rows,
             holdings_fingerprint=fingerprint,
         )
-        index_points = _fetch_cached_index_intraday()
-        return _merge_index_intraday(portfolio_rows, index_points), trade_date
+        return _with_index_intraday(portfolio_rows), trade_date
+    if cached_points:
+        return _with_index_intraday(cached_points), trade_date
     return [], trade_date
 
 
