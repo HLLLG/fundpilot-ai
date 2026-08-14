@@ -3233,6 +3233,8 @@ export type ParsedTransaction = {
   fee_yuan?: number | null;
   trade_time: string; // "YYYY-MM-DD HH:MM:SS"
   confirm_date: string | null;
+  /** 确认日后的下一交易日，从这天起才计盈亏。 */
+  first_return_date?: string | null;
   in_progress: boolean;
 };
 

@@ -405,7 +405,7 @@ def _build_transactions_ocr_response(
     from app.services.fund_code_resolver import lookup_fund_code_by_name
     from app.services.ocr_parser import detect_ocr_source
     from app.services.ocr_text_service import OcrUnavailable, extract_text_from_image
-    from app.services.trading_session import resolve_confirm_date
+    from app.services.trading_session import resolve_confirm_date, resolve_first_return_date
 
     _ = filename
     text = raw_text
@@ -429,8 +429,13 @@ def _build_transactions_ocr_response(
     transactions = parse_alipay_transactions(text) if text else []
     enriched: list[dict] = []
     for parsed in transactions:
+        updates: dict[str, object] = {}
         if not parsed.confirm_date:
-            parsed = parsed.model_copy(update={"confirm_date": resolve_confirm_date(parsed.trade_time)})
+            updates["confirm_date"] = resolve_confirm_date(parsed.trade_time)
+        if not parsed.first_return_date:
+            updates["first_return_date"] = resolve_first_return_date(parsed.trade_time)
+        if updates:
+            parsed = parsed.model_copy(update=updates)
         if not parsed.fund_code:
             code, _ = lookup_fund_code_by_name(parsed.fund_name)
             if code:

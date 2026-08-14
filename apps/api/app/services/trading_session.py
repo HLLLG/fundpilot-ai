@@ -168,8 +168,20 @@ def resolve_confirm_date(trade_time: str, *, today: date | None = None) -> str:
     <15:00 且当天为交易日 -> 当天；否则（≥15:00 或非交易日）-> 之后的下一个交易日。
     返回 ISO date 字符串。``today`` 预留给调用方覆盖"当前日"语义，规则本身只依赖成交时间。
     """
+    _ = today
     moment = _parse_trade_time(trade_time)
     trade_day = moment.date()
     if moment.time() < MARKET_CLOSE and _is_trading_day(trade_day):
         return trade_day.isoformat()
     return _next_trading_day(trade_day).isoformat()
+
+
+def resolve_first_return_date(trade_time: str, *, today: date | None = None) -> str:
+    """成交时间 -> 首次可计收益的交易日。
+
+    确认日当天以确认净值建仓，收益从**下一个交易日**的净值才开始出现。
+    因此：交易日 15:00 前买入 → 下一交易日起计收益；15:00 后买入 → 再下一交易日起计。
+    卖出同理（按确认日从持仓里拿掉份额）。
+    """
+    confirm = date.fromisoformat(resolve_confirm_date(trade_time, today=today))
+    return _next_trading_day(confirm).isoformat()

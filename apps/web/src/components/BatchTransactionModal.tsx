@@ -78,11 +78,13 @@ export function BatchTransactionModal({
           <TransactionRecordGuide />
           <p className="mt-6 text-center text-[15px] leading-7 text-slate-800">
             上传
-            <span className="font-bold text-[var(--brand-strong)]">「交易记录」</span>
+            <span className="font-bold text-[var(--brand-strong)]">「交易记录」或「交易分析」</span>
             截图即可加减仓、同步买卖点
           </p>
           <p className="mt-2 text-center text-[13px] leading-5 text-slate-500">
             路径：支付宝 → 我的 → 总资产 → 基金 → 交易记录
+            <br />
+            也可在基金持有页切到「交易分析」Tab 后截图
             <br />
             持仓总览截图请走「上传截图 / 新增持有」
           </p>
@@ -129,10 +131,10 @@ export function BatchTransactionModal({
 
 /** 交易记录示意图：真实版式截图。
  *
- * 原来是手绘的占位插图（几行「基金名 + ±金额」的胶囊），和支付宝真实的「交易记录」页
- * 长得完全不一样：真实页每条是「买入/卖出 + 基金 | 名称 + 金额元 + 成交时间」，而解析器
- * 正是靠买入/卖出锚点、`元` 金额和成交时间戳定位交易的。示意图缺这三样，照着它截图的
- * 用户会传上来一张解析不出任何交易的图。这里换成按真实版式渲染并跑通识别的截图。
+ * 原来是手绘的占位插图（几行「基金名 + ±金额」的胶囊），和支付宝真实的「交易记录 /
+ * 交易分析」页长得完全不一样：真实页每条是「买入/卖出 + 基金名称 + 金额元 + 成交时间」，
+ * 而解析器正是靠买入/卖出锚点、`元` 金额和成交时间戳定位交易的。示意图缺这三样，照着它
+ * 截图的用户会传上来一张解析不出任何交易的图。这里换成按真实版式渲染并跑通识别的截图。
  */
 function TransactionRecordGuide() {
   return (
@@ -142,7 +144,7 @@ function TransactionRecordGuide() {
           <div className="pointer-events-none absolute left-1/2 top-0 z-10 h-[22px] w-[34%] -translate-x-1/2 rounded-b-[14px] bg-slate-900" />
           <Image
             src={TRANSACTION_GUIDE_IMAGE}
-            alt="支付宝「交易记录」页面示意图：每条包含买入或卖出、基金名称、成交金额与成交时间"
+            alt="支付宝「交易记录 / 交易分析」页面示意图：每条包含买入或卖出、基金名称、成交金额与成交时间"
             width={472}
             height={1021}
             className="aspect-[390/844] h-auto w-full object-cover object-top"

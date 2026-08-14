@@ -727,3 +727,90 @@ def test_canonical_request_reuses_legacy_formatted_dedup_record(monkeypatch) -> 
     assert result["inserted"] == 0
     assert result["skipped"] == 1
     assert len(list_fund_transactions()) == 1
+
+
+class _FakeProfileService:
+    def __init__(self) -> None:
+        self._profiles_cache = None
+
+    def save_profile(self, profile, *, batch_profiles_by_code=None):
+        if batch_profiles_by_code is not None:
+            batch_profiles_by_code[profile.fund_code] = profile
+        return profile
+
+
+def test_new_buy_defers_profit_until_confirm_date() -> None:
+    profiles: dict[str, FundProfile] = {}
+    item = ParsedTransaction(
+        direction="buy",
+        fund_name="测试基金",
+        fund_code="001234",
+        amount_yuan=2000,
+        trade_time="2026-06-10 14:55:30",
+        confirm_date="2026-06-10",
+    )
+    transaction_ledger._ensure_buy_profile(
+        item,
+        confirm_date="2026-06-10",
+        profiles_by_code=profiles,
+        profile_service=_FakeProfileService(),
+    )
+    created = profiles["001234"]
+    assert created.profit_accrual_deferred_until == "2026-06-10"
+    assert created.first_purchase_date == "2026-06-10"
+    assert created.holding_shares == 0.0
+
+
+def test_additional_buy_does_not_redefer_existing_position() -> None:
+    existing = FundProfile(
+        fund_code="001234",
+        fund_name="测试基金",
+        holding_amount=3500,
+        holding_shares=100,
+        first_purchase_date="2026-06-08",
+        profit_accrual_deferred_until=None,
+    )
+    profiles = {"001234": existing}
+    item = ParsedTransaction(
+        direction="buy",
+        fund_name="测试基金",
+        fund_code="001234",
+        amount_yuan=200,
+        trade_time="2026-06-10 14:43:38",
+        confirm_date="2026-06-10",
+    )
+    transaction_ledger._ensure_buy_profile(
+        item,
+        confirm_date="2026-06-10",
+        profiles_by_code=profiles,
+        profile_service=_FakeProfileService(),
+    )
+    assert profiles["001234"] is existing
+    assert profiles["001234"].profit_accrual_deferred_until is None
+    assert profiles["001234"].first_purchase_date == "2026-06-08"
+
+
+def test_earlier_additional_buy_backfills_first_purchase_date() -> None:
+    existing = FundProfile(
+        fund_code="001234",
+        fund_name="测试基金",
+        holding_amount=2000,
+        first_purchase_date="2026-06-10",
+    )
+    profiles = {"001234": existing}
+    item = ParsedTransaction(
+        direction="buy",
+        fund_name="测试基金",
+        fund_code="001234",
+        amount_yuan=1500,
+        trade_time="2026-06-08 14:47:18",
+        confirm_date="2026-06-08",
+    )
+    transaction_ledger._ensure_buy_profile(
+        item,
+        confirm_date="2026-06-08",
+        profiles_by_code=profiles,
+        profile_service=_FakeProfileService(),
+    )
+    assert profiles["001234"].first_purchase_date == "2026-06-08"
+    assert profiles["001234"].profit_accrual_deferred_until is None

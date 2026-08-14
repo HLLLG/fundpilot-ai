@@ -412,17 +412,26 @@ def _ensure_buy_profile(
     exact retry must therefore run the repair even when deduplication skips the
     transaction, otherwise a transient profile failure hides the position
     permanently.
+
+    新建仓：收益递延到确认日当天（下一交易日才开始计盈亏）。已有持仓的加仓
+    只把更早的成交日写进 first_purchase_date，不得把整仓收益重新递延归零。
     """
 
-    if (
-        item.direction != "buy"
-        or not item.fund_code
-        or item.fund_code in profiles_by_code
-    ):
+    if item.direction != "buy" or not item.fund_code:
         return
 
-    # FundProfileService preserves provisional-name reconciliation and
-    # primary-sector side effects while the shared snapshot avoids point reads.
+    trade_date = item.trade_time[:10]
+    existing = profiles_by_code.get(item.fund_code)
+    if existing is not None:
+        if existing.first_purchase_date and existing.first_purchase_date <= trade_date:
+            return
+        profile_service.save_profile(
+            existing.model_copy(update={"first_purchase_date": trade_date}),
+            batch_profiles_by_code=profiles_by_code,
+        )
+        profile_service._profiles_cache = list(profiles_by_code.values())
+        return
+
     profile_service.save_profile(
         FundProfile(
             fund_code=item.fund_code,
@@ -430,6 +439,8 @@ def _ensure_buy_profile(
             holding_amount=0,
             holding_shares=0.0,
             shares_baseline_date=_previous_day(confirm_date),
+            first_purchase_date=trade_date,
+            profit_accrual_deferred_until=confirm_date,
             source="alipay-transaction",
             is_provisional=True,
         ),

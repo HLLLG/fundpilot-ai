@@ -1,15 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Search, X } from "lucide-react";
 import { InlineNotice } from "@/components/InlineNotice";
 import type { FundSearchItem, ParsedTransaction } from "@/lib/api";
-import { searchFunds } from "@/lib/api";
+import { getFundTransactions, searchFunds } from "@/lib/api";
 import { useDialogA11y } from "@/lib/useDialogA11y";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
+import {
+  recordedTransactionKey,
+  resolveConfirmDate,
+  resolveFirstReturnDate,
+} from "@/lib/tradeConfirmDates";
 
 type BatchTransactionConfirmModalProps = {
   transactions: ParsedTransaction[];
+  heldFundCodes?: string[];
   isBusy?: boolean;
   errorMessage?: string | null;
   onChange: (transactions: ParsedTransaction[]) => void;
@@ -21,6 +27,77 @@ type BatchTransactionConfirmModalProps = {
 function parseAmountInput(value: string): number {
   const parsed = Number.parseFloat(value.replace(/,/g, "").trim());
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+type ConfirmBadge = {
+  label: string;
+  className: string;
+};
+
+function confirmBadgeFor({
+  tx,
+  index,
+  transactions,
+  heldCodes,
+  recordedKeys,
+  recordedReady,
+}: {
+  tx: ParsedTransaction;
+  index: number;
+  transactions: ParsedTransaction[];
+  heldCodes: Set<string>;
+  recordedKeys: Set<string>;
+  recordedReady: boolean;
+}): ConfirmBadge | null {
+  const key = recordedTransactionKey(tx);
+  if (tx.fund_code && recordedReady && recordedKeys.has(key)) {
+    return { label: "已录入 · 将跳过", className: "bg-slate-200/80 text-slate-600" };
+  }
+  const duplicateInBatch = transactions
+    .slice(0, index)
+    .some(
+      (prev) =>
+        Boolean(prev.fund_code) && recordedTransactionKey(prev) === key,
+    );
+  if (duplicateInBatch) {
+    return { label: "本批重复 · 将跳过", className: "bg-slate-200/80 text-slate-600" };
+  }
+  if (tx.direction === "buy") {
+    if (tx.fund_code && heldCodes.has(tx.fund_code)) {
+      return {
+        label: "已持有 · 加仓",
+        className: "bg-[var(--danger-bg)] text-[var(--danger-icon)]",
+      };
+    }
+    const earlierBuy = transactions
+      .slice(0, index)
+      .some(
+        (prev) =>
+          prev.direction === "buy" &&
+          Boolean(prev.fund_code) &&
+          prev.fund_code === tx.fund_code,
+      );
+    if (earlierBuy) {
+      return {
+        label: "本批加仓",
+        className: "bg-[var(--danger-bg)] text-[var(--danger-icon)]",
+      };
+    }
+    return {
+      label: "新建仓",
+      className: "bg-[var(--info-bg)] text-[var(--info-fg)]",
+    };
+  }
+  if (tx.fund_code && heldCodes.has(tx.fund_code)) {
+    return {
+      label: "已持有 · 减仓",
+      className: "bg-[var(--success-bg)] text-[var(--success-icon)]",
+    };
+  }
+  return {
+    label: "减仓",
+    className: "bg-[var(--success-bg)] text-[var(--success-icon)]",
+  };
 }
 
 function parseOptionalFeeInput(value: string): {
@@ -144,6 +221,7 @@ function FundCodeSearchPanel({
 
 export function BatchTransactionConfirmModal({
   transactions,
+  heldFundCodes = [],
   isBusy = false,
   errorMessage = null,
   onChange,
@@ -152,6 +230,50 @@ export function BatchTransactionConfirmModal({
   onClose,
 }: BatchTransactionConfirmModalProps) {
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
+  const [recordedKeys, setRecordedKeys] = useState<Set<string>>(() => new Set());
+  const [recordedReady, setRecordedReady] = useState(false);
+  const heldCodeSet = useMemo(
+    () => new Set(heldFundCodes.filter((code) => code && code !== "000000")),
+    [heldFundCodes],
+  );
+  const recordedLookupKey = transactions
+    .map((tx) => tx.fund_code)
+    .filter((code): code is string => Boolean(code))
+    .sort()
+    .join(",");
+
+  useEffect(() => {
+    if (!recordedLookupKey) {
+      setRecordedKeys(new Set());
+      setRecordedReady(true);
+      return;
+    }
+    const codes = recordedLookupKey.split(",");
+    let cancelled = false;
+    setRecordedReady(false);
+    void Promise.all(
+      codes.map((code) =>
+        getFundTransactions(code)
+          .then((result) => result.transactions)
+          .catch(() => []),
+      ),
+    ).then((lists) => {
+      if (cancelled) {
+        return;
+      }
+      const keys = new Set<string>();
+      for (const list of lists) {
+        for (const tx of list) {
+          keys.add(recordedTransactionKey(tx));
+        }
+      }
+      setRecordedKeys(keys);
+      setRecordedReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [recordedLookupKey]);
   const [feeInputs, setFeeInputs] = useState<string[]>(() =>
     transactions.map((transaction) =>
       transaction.fee_yuan == null ? "" : String(transaction.fee_yuan),
@@ -205,6 +327,19 @@ export function BatchTransactionConfirmModal({
   };
 
   const validCount = transactions.filter((tx) => Boolean(tx.fund_code)).length;
+  const skipCount = transactions.filter((tx, index) => {
+    if (!tx.fund_code) {
+      return false;
+    }
+    const key = recordedTransactionKey(tx);
+    if (recordedReady && recordedKeys.has(key)) {
+      return true;
+    }
+    return transactions
+      .slice(0, index)
+      .some((prev) => Boolean(prev.fund_code) && recordedTransactionKey(prev) === key);
+  }).length;
+  const applyCount = Math.max(0, validCount - skipCount);
   const hasInvalidFee = feeInputs.some(
     (value) => !parseOptionalFeeInput(value).valid,
   );
@@ -230,9 +365,9 @@ export function BatchTransactionConfirmModal({
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div>
-            <h2 id="batch-confirm-modal-title" className="text-lg font-black text-slate-950">新增交易记录-支付宝</h2>
+            <h2 id="batch-confirm-modal-title" className="text-lg font-black text-slate-950">确认识别结果</h2>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              加仓（红）/减仓（绿）；代码未匹配时点「选择基金」从东财选取；可改方向、金额、时间和实际手续费。
+              请核对基金、方向、金额和成交时间后再写入。交易日 15:00 前成交，下一交易日起计收益；15:00 后则再下一交易日。同一基金不同时间会累加到同一持仓，完全相同的一笔会跳过。
             </p>
           </div>
           <button
@@ -263,6 +398,16 @@ export function BatchTransactionConfirmModal({
             const feeInput = feeInputs[index]
               ?? (tx.fee_yuan == null ? "" : String(tx.fee_yuan));
             const feeInputValid = parseOptionalFeeInput(feeInput).valid;
+            const confirmDate = tx.confirm_date ?? resolveConfirmDate(tx.trade_time);
+            const firstReturnDate = tx.first_return_date ?? resolveFirstReturnDate(tx.trade_time);
+            const badge = confirmBadgeFor({
+              tx,
+              index,
+              transactions,
+              heldCodes: heldCodeSet,
+              recordedKeys,
+              recordedReady,
+            });
             return (
               <div
                 key={`${tx.fund_name}-${tx.trade_time}-${index}`}
@@ -277,7 +422,7 @@ export function BatchTransactionConfirmModal({
                   <X size={15} />
                 </button>
 
-                <div className="mb-2 flex items-center gap-2">
+                <div className="mb-2 flex flex-wrap items-center gap-2 pr-6">
                   <button
                     type="button"
                     onClick={() =>
@@ -288,17 +433,19 @@ export function BatchTransactionConfirmModal({
                         ? "bg-[var(--danger-bg)] text-[var(--danger-icon)] hover:bg-[color-mix(in_srgb,var(--danger-bg)_80%,var(--danger-icon)_20%)]"
                         : "bg-[var(--success-bg)] text-[var(--success-icon)] hover:bg-[var(--success-bg)]"
                     }`}
-                    title="点击切换加仓/减仓"
+                    title="点击切换买入/卖出"
                   >
-                    {isBuy ? "加仓" : "减仓"}
+                    {isBuy ? "买入" : "卖出"}
                   </button>
+                  {badge ? (
+                    <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${badge.className}`}>
+                      {badge.label}
+                    </span>
+                  ) : null}
                   {tx.in_progress ? (
                     <span className="rounded-md bg-[var(--warn-bg)] px-2 py-0.5 text-[11px] font-bold text-[var(--warn-icon)]">
                       交易进行中
                     </span>
-                  ) : null}
-                  {tx.confirm_date ? (
-                    <span className="text-[11px] text-slate-500">确认日 {tx.confirm_date}</span>
                   ) : null}
                 </div>
 
@@ -401,13 +548,23 @@ export function BatchTransactionConfirmModal({
                       <input
                         value={tx.trade_time}
                         aria-label={`成交时间：${tx.fund_name || `第 ${index + 1} 条交易`}`}
-                        onChange={(event) =>
-                          updateAt(index, { trade_time: event.target.value, confirm_date: null })
-                        }
+                        onChange={(event) => {
+                          const tradeTime = event.target.value;
+                          updateAt(index, {
+                            trade_time: tradeTime,
+                            confirm_date: resolveConfirmDate(tradeTime),
+                            first_return_date: resolveFirstReturnDate(tradeTime),
+                          });
+                        }}
                         className="mt-0.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs tabular-nums text-slate-800 outline-none focus:border-blue-400"
                       />
                     </div>
                   </div>
+                  <p className="text-[11px] leading-5 text-slate-500">
+                    确认净值日 {confirmDate ?? "—"}
+                    <span className="mx-1.5 text-slate-300">·</span>
+                    开始计收益 {firstReturnDate ?? "—"}
+                  </p>
                 </div>
               </div>
             );
@@ -430,6 +587,13 @@ export function BatchTransactionConfirmModal({
               有未匹配代码的交易，确认时将自动跳过。
             </p>
           ) : null}
+          {skipCount > 0 ? (
+            <p className="mb-2 text-center text-[11px] text-slate-500">
+              {applyCount > 0
+                ? `另有 ${skipCount} 笔已录入或重复，写入时将跳过。`
+                : "这些交易均已录入，再次确认不会重复建仓。"}
+            </p>
+          ) : null}
           {hasInvalidFee ? (
             <p className="mb-2 text-center text-[11px] text-[var(--danger-icon)]">
               请修正手续费后再确认。
@@ -441,7 +605,11 @@ export function BatchTransactionConfirmModal({
             onClick={onConfirm}
             className="w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isBusy ? "正在应用..." : `完成（${validCount}）`}
+            {isBusy
+              ? "正在应用..."
+              : applyCount > 0
+                ? `确认写入（${applyCount}）`
+                : "完成（全部已录入）"}
           </button>
         </div>
       </div>

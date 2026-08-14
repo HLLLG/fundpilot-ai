@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { NavHistoryListModal } from "@/components/NavHistoryListModal";
 import { NavHistoryTable } from "@/components/NavHistoryTable";
-import { PerformanceReturnChart, type TradeMarker } from "@/components/PerformanceReturnChart";
+import { PerformanceReturnChart } from "@/components/PerformanceReturnChart";
 import type { FundNavHistory, FundTransaction, IndexDailyHistory } from "@/lib/api";
 import {
   fetchFundNavHistory,
@@ -19,6 +19,7 @@ import {
   PERFORMANCE_PERIODS,
 } from "@/lib/performanceTrend";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
+import { buildTradeMarkers } from "@/lib/tradeMarkers";
 
 const PREVIEW_LIMIT = 22;
 const NAV_HISTORY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -121,44 +122,10 @@ export function PerformanceTrendPanel({
     };
   }, [enabled, fundCode, showTransactions]);
 
-  const tradeMarkers = useMemo<TradeMarker[]>(() => {
-    const byDate = new Map<string, FundTransaction[]>();
-    for (const tx of transactions) {
-      if (!tx.confirm_date) {
-        continue;
-      }
-      const list = byDate.get(tx.confirm_date) ?? [];
-      list.push(tx);
-      byDate.set(tx.confirm_date, list);
-    }
-    return Array.from(byDate.entries()).map(([date, txs]) => {
-      const hasConfirmed = txs.some(
-        (tx) => tx.status === "confirmed" || tx.status === "superseded",
-      );
-      let kind: TradeMarker["kind"];
-      if (!hasConfirmed) {
-        kind = "pending";
-      } else {
-        const net = txs.reduce((acc, tx) => {
-          if (tx.status !== "confirmed" && tx.status !== "superseded") {
-            return acc;
-          }
-          return acc + (tx.direction === "buy" ? tx.amount_yuan : -tx.amount_yuan);
-        }, 0);
-        kind = net >= 0 ? "buy" : "sell";
-      }
-      return {
-        date,
-        kind,
-        items: txs.map((tx) => ({
-          direction: tx.direction,
-          amount_yuan: tx.amount_yuan,
-          trade_time: tx.trade_time,
-          status: tx.status,
-        })),
-      };
-    });
-  }, [transactions]);
+  const tradeMarkers = useMemo(
+    () => buildTradeMarkers(transactions),
+    [transactions],
+  );
 
   useEffect(() => {
     if (!enabled || fundCode === "000000") {
@@ -292,6 +259,18 @@ export function PerformanceTrendPanel({
             <span className="h-0.5 w-4 rounded-full bg-slate-300" />
             <span>成本价</span>
             <span className="font-semibold tabular-nums text-slate-700">{costPrice.toFixed(4)}</span>
+          </div>
+        ) : null}
+        {tradeMarkers.length > 0 ? (
+          <div className="inline-flex items-center gap-3 text-slate-500">
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2 w-2 rounded-sm bg-[#e11d48]" />
+              买入
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="h-2 w-2 rounded-sm bg-[#059669]" />
+              卖出
+            </span>
           </div>
         ) : null}
       </div>

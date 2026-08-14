@@ -199,6 +199,7 @@ class ParsedTransaction(BaseModel):
     amount_yuan: float
     trade_time: str            # "YYYY-MM-DD HH:MM:SS"
     confirm_date: str | None = None   # ISO date
+    first_return_date: str | None = None  # 确认日后的下一交易日
     in_progress: bool = False
     # SingleFundTransactionModal 输入的是用户已在原平台确认的实际份额。
     # 旧 OCR 请求没有这两个字段，继续兼容并在确认时降级为 amount/nav 推算。
@@ -238,7 +239,7 @@ class ParsedTransaction(BaseModel):
             parsed = parsed.astimezone(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
         return parsed.strftime("%Y-%m-%d %H:%M:%S")
 
-    @field_validator("confirm_date")
+    @field_validator("confirm_date", "first_return_date")
     @classmethod
     def validate_confirm_date(cls, value: str | None) -> str | None:
         if value is None:
@@ -247,7 +248,7 @@ class ParsedTransaction(BaseModel):
         try:
             return date.fromisoformat(text).isoformat()
         except ValueError as exc:
-            raise ValueError("confirm_date 必须是 YYYY-MM-DD") from exc
+            raise ValueError("日期必须是 YYYY-MM-DD") from exc
 
 
 class FundTransaction(BaseModel):

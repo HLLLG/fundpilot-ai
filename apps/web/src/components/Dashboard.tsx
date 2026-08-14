@@ -1546,7 +1546,7 @@ export function Dashboard() {
         const isHoldingsPage = result.ocr_source === "alipay_holdings";
         throw new Error(
           isHoldingsPage
-            ? "这张是持仓总览截图。加减仓请传「交易记录」页；要同步持仓请用「上传截图 / 新增持有」。"
+            ? "这张是持仓总览截图。加减仓请传「交易记录」或「交易分析」页；要同步持仓请用「上传截图 / 新增持有」。"
             : "未识别到交易记录，请确认截图为支付宝「交易记录 / 交易分析」页。",
         );
       }
@@ -2025,6 +2025,7 @@ export function Dashboard() {
       {pendingTransactions && !showBatchModal ? (
         <BatchTransactionConfirmModal
           transactions={pendingTransactions}
+          heldFundCodes={displayableHoldings(holdings).map((holding) => holding.fund_code)}
           isBusy={isApplyingTransactions}
           errorMessage={transactionApplyError}
           onChange={(transactions) => {

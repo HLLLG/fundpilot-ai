@@ -34,13 +34,14 @@ def parse_holdings_from_text(text: str) -> list[Holding]:
 
 def detect_ocr_source(text: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    # 全部持有总览：顶栏含「交易分析/清仓分析」，须优先于交易页判定。
+    # 全部持有总览顶栏也有「交易分析」Tab，用列头（名称/金额、日收益）区分总览。
+    # 交易分析页顶栏同样有「全部持有」Tab，所以在通用持仓标记之前先认交易页专有内容。
     if is_alipay_overview_holdings_page(lines):
         return "alipay_holdings"
+    if is_alipay_transaction_page(lines):
+        return "alipay_transactions"
     if any(marker in line for line in lines for marker in ALIPAY_HOLDINGS_MARKERS):
         return "alipay_holdings"
     if is_alipay_holdings_page(lines):
         return "alipay_holdings"
-    if is_alipay_transaction_page(lines):
-        return "alipay_transactions"
     return "unknown"

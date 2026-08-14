@@ -3,20 +3,19 @@
 import { memo, useId, useMemo, useRef, useState } from "react";
 import type { PerformanceSeriesPoint } from "@/lib/performanceTrend";
 import { formatSignedPercent } from "@/lib/performanceTrend";
+import type { TradeMarker } from "@/lib/tradeMarkers";
 
 const Y_AXIS_HEADROOM_RATIO = 0.12;
 const FUND_COLOR = "#3d7eff";
 const BENCH_COLOR = "#f59e0b";
+const BUY_COLOR = "#e11d48";
+const SELL_COLOR = "#059669";
 // formatter 提到模块作用域：交易标记浮层按成交笔数逐条渲染金额。输出格式不变。
 const TRADE_AMOUNT_FORMATTER = new Intl.NumberFormat("zh-CN", {
   minimumFractionDigits: 2,
 });
 
-export type TradeMarker = {
-  date: string; // confirm_date "YYYY-MM-DD"
-  kind: "buy" | "sell" | "pending";
-  items: { direction: "buy" | "sell"; amount_yuan: number; trade_time: string; status: string }[];
-};
+export type { TradeMarker };
 
 type PerformanceReturnChartProps = {
   points: PerformanceSeriesPoint[];
@@ -34,7 +33,7 @@ function PerformanceReturnChartView({
   const gradientId = useId().replace(/:/g, "");
   const containerRef = useRef<HTMLDivElement>(null);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-  const [selectedMarkerDate, setSelectedMarkerDate] = useState<string | null>(null);
+  const [selectedMarkerKey, setSelectedMarkerKey] = useState<string | null>(null);
 
   const chart = useMemo(() => {
     if (points.length < 2) {
@@ -52,7 +51,7 @@ function PerformanceReturnChartView({
     const max = rawMax + pad;
     const range = max - min || 1;
 
-    const padding = { top: 14, right: 10, bottom: 26, left: 8 };
+    const padding = { top: markers.length > 0 ? 28 : 14, right: 10, bottom: 26, left: 8 };
     const width = 360;
     const chartWidth = width - padding.left - padding.right;
     const chartHeight = height - padding.top - padding.bottom;
@@ -118,17 +117,26 @@ function PerformanceReturnChartView({
       max,
       midDateIndex,
     };
-  }, [height, points, showBenchmark]);
+  }, [height, markers.length, points, showBenchmark]);
 
   const markerPoints = useMemo(() => {
     if (!chart || markers.length === 0) {
       return [] as Array<TradeMarker & { x: number; y: number }>;
     }
     const byDate = new Map(chart.coords.map((coord) => [coord.date, coord]));
+    const kindsByDate = new Map<string, number>();
+    for (const marker of markers) {
+      kindsByDate.set(marker.date, (kindsByDate.get(marker.date) ?? 0) + 1);
+    }
     return markers
       .map((marker) => {
         const coord = byDate.get(marker.date);
-        return coord ? { ...marker, x: coord.x, y: coord.fundY } : null;
+        if (!coord) {
+          return null;
+        }
+        const overlap = (kindsByDate.get(marker.date) ?? 1) > 1;
+        const x = overlap ? coord.x + (marker.kind === "buy" ? -6 : 6) : coord.x;
+        return { ...marker, x, y: coord.fundY };
       })
       .filter((marker): marker is TradeMarker & { x: number; y: number } => marker != null);
   }, [chart, markers]);
@@ -146,7 +154,8 @@ function PerformanceReturnChartView({
 
   const isHovering = hoverIndex != null;
   const active = isHovering ? chart.coords[hoverIndex] : null;
-  const selectedMarker = markerPoints.find((marker) => marker.date === selectedMarkerDate) ?? null;
+  const selectedMarker =
+    markerPoints.find((marker) => `${marker.date}|${marker.kind}` === selectedMarkerKey) ?? null;
   const latest = chart.coords[chart.coords.length - 1];
   const chartLabel = `基金累计收益走势图，${chart.coords[0].date}至${latest.date}，最新基金收益${formatSignedPercent(latest.fundPercent)}${
     showBenchmark && latest.benchPercent != null
@@ -235,21 +244,67 @@ function PerformanceReturnChartView({
 
         {markerPoints.map((marker) => {
           const isBuy = marker.kind === "buy";
-          const isPending = marker.kind === "pending";
+          const fill = marker.pending ? "#ffffff" : isBuy ? BUY_COLOR : SELL_COLOR;
+          const stroke = isBuy ? BUY_COLOR : SELL_COLOR;
+          const label = isBuy ? "买入" : "卖出";
+          const tagWidth = 28;
+          const tagHeight = 13;
+          const tagX = Math.min(
+            chart.plotRight - tagWidth,
+            Math.max(chart.plotLeft, marker.x - tagWidth / 2),
+          );
+          const above = isBuy || marker.y > chart.plotTop + 28;
+          const tagY = above
+            ? Math.max(chart.plotTop - 2, marker.y - 22)
+            : Math.min(chart.plotBottom - tagHeight, marker.y + 8);
+          const pointerY = above ? tagY + tagHeight : tagY;
+          const pointerTipY = above ? marker.y - 4 : marker.y + 4;
           return (
-            <circle
-              key={marker.date}
-              cx={marker.x}
-              cy={marker.y}
-              r={4}
-              fill={isPending ? "#ffffff" : isBuy ? "#f43f5e" : "#10b981"}
-              stroke={isPending ? "#94a3b8" : "#ffffff"}
-              strokeWidth={1.5}
+            <g
+              key={`${marker.date}-${marker.kind}`}
               style={{ cursor: "pointer" }}
               onClick={() =>
-                setSelectedMarkerDate((prev) => (prev === marker.date ? null : marker.date))
+                setSelectedMarkerKey((prev) => {
+                  const key = `${marker.date}|${marker.kind}`;
+                  return prev === key ? null : key;
+                })
               }
-            />
+            >
+              <circle
+                cx={marker.x}
+                cy={marker.y}
+                r={3}
+                fill={stroke}
+                stroke="#ffffff"
+                strokeWidth={1.25}
+              />
+              <path
+                d={`M ${marker.x - 3.5} ${pointerY} L ${marker.x + 3.5} ${pointerY} L ${marker.x} ${pointerTipY} Z`}
+                fill={fill}
+                stroke={stroke}
+                strokeWidth={0.6}
+              />
+              <rect
+                x={tagX}
+                y={tagY}
+                width={tagWidth}
+                height={tagHeight}
+                rx={2.5}
+                fill={fill}
+                stroke={stroke}
+                strokeWidth={0.8}
+              />
+              <text
+                x={tagX + tagWidth / 2}
+                y={tagY + 9.5}
+                textAnchor="middle"
+                fontSize={8}
+                fontWeight={700}
+                fill={marker.pending ? stroke : "#ffffff"}
+              >
+                {label}
+              </text>
+            </g>
           );
         })}
 
@@ -379,15 +434,23 @@ function PerformanceReturnChartView({
         <div className="mt-2 flex flex-wrap gap-2" aria-label="交易记录日期">
           {markerPoints.map((marker) => (
             <button
-              key={`marker-control-${marker.date}`}
+              key={`marker-control-${marker.date}-${marker.kind}`}
               type="button"
               onClick={() =>
-                setSelectedMarkerDate((current) => (current === marker.date ? null : marker.date))
+                setSelectedMarkerKey((current) => {
+                  const key = `${marker.date}|${marker.kind}`;
+                  return current === key ? null : key;
+                })
               }
-              className="touch-target inline-flex items-center rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-700 hover:border-[var(--brand)] hover:text-[var(--brand)]"
-              aria-expanded={selectedMarkerDate === marker.date}
+              className={`touch-target inline-flex items-center rounded-full border bg-white px-3 text-xs font-bold hover:border-[var(--brand)] hover:text-[var(--brand)] ${
+                marker.kind === "buy"
+                  ? "border-rose-200 text-rose-700"
+                  : "border-emerald-200 text-emerald-700"
+              }`}
+              aria-expanded={selectedMarkerKey === `${marker.date}|${marker.kind}`}
             >
-              {marker.date.slice(5)} · {marker.kind === "buy" ? "加仓" : marker.kind === "sell" ? "减仓" : "待确认"}
+              {marker.date.slice(5)} · {marker.kind === "buy" ? "买入" : "卖出"}
+              {marker.pending ? "·待确认" : ""}
             </button>
           ))}
         </div>
@@ -404,7 +467,7 @@ function PerformanceReturnChartView({
             <span className="font-bold text-slate-700">{selectedMarker.date}</span>
             <button
               type="button"
-              onClick={() => setSelectedMarkerDate(null)}
+              onClick={() => setSelectedMarkerKey(null)}
               className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700"
               aria-label="关闭"
             >
@@ -421,7 +484,7 @@ function PerformanceReturnChartView({
                       isBuy ? "bg-rose-100 profit-up" : "bg-emerald-100 profit-down"
                     }`}
                   >
-                    {isBuy ? "加仓" : "减仓"}
+                    {isBuy ? "买入" : "卖出"}
                     {item.status === "pending" ? "·待确认" : ""}
                   </span>
                   <span className="font-bold tabular-nums text-slate-800">
