@@ -153,11 +153,25 @@ def _persist_settlement_holdings_unlocked(
     from app.services.portfolio_persistence import merge_holdings_with_snapshot
 
     holdings = merge_holdings_with_snapshot(holdings)
+    from app.services.transaction_ledger import (
+        absorb_confirmed_transaction_positions,
+        compute_effective_shares_map,
+    )
+
+    holdings = absorb_confirmed_transaction_positions(holdings)
+    overrides = compute_effective_shares_map(
+        [
+            holding.fund_code
+            for holding in holdings
+            if holding.fund_code and holding.fund_code != "000000"
+        ]
+    )
     holdings = sync_holding_amounts_from_shares(
         holdings,
         persist_profiles=True,
         allow_nav_fetch=False,
         estimate_quotes={},
+        shares_override=overrides,
     )
 
     total_assets = round(
@@ -234,7 +248,15 @@ def settle_official_nav_for_portfolio() -> dict:
             settlement_date=settlement_date,
         )
 
+    from app.services.transaction_ledger import (
+        absorb_confirmed_transaction_positions,
+        confirm_pending_transactions,
+        compute_effective_shares_map,
+    )
+
+    confirmed_count = confirm_pending_transactions()
     holdings, _source, snapshot_date, _refreshed_at = _load_settlement_holdings()
+    holdings = absorb_confirmed_transaction_positions(holdings)
     if not holdings:
         return _empty_response(
             reason="no_holdings",
@@ -253,14 +275,26 @@ def settle_official_nav_for_portfolio() -> dict:
     )
     from app.services.holding_amount_sync import sync_holding_amounts_from_shares
 
+    overrides = compute_effective_shares_map(
+        [
+            holding.fund_code
+            for holding in settled
+            if holding.fund_code and holding.fund_code != "000000"
+        ]
+    )
     settled = sync_holding_amounts_from_shares(
         settled,
         persist_profiles=True,
         allow_nav_fetch=False,
         estimate_quotes={},
+        shares_override=overrides,
     )
-    if updated_count == 0 and not any(
-        holding.daily_return_percent_source == "official_nav" for holding in settled
+    if (
+        updated_count == 0
+        and not any(
+            holding.daily_return_percent_source == "official_nav" for holding in settled
+        )
+        and confirmed_count == 0
     ):
         return _empty_response(
             reason="no_nav_available",

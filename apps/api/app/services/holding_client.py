@@ -62,7 +62,11 @@ def serialize_holdings_for_client(
         matched_profiles = match_profiles_to_holdings(holdings, profiles_snapshot)
     if len(matched_profiles) != len(holdings):
         raise ValueError("matched_profiles must align one-to-one with holdings")
-    return [
-        serialize_holding_for_client(holding, profile=profile)
-        for holding, profile in zip(holdings, matched_profiles, strict=True)
-    ]
+    from app.services.pending_holding_preview import overlay_pending_transaction_previews
+
+    return overlay_pending_transaction_previews(
+        [
+            serialize_holding_for_client(holding, profile=profile)
+            for holding, profile in zip(holdings, matched_profiles, strict=True)
+        ]
+    )

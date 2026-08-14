@@ -123,6 +123,12 @@ export type Holding = {
   estimated_daily_return_percent?: number | null;
   daily_return_is_estimated?: boolean | null;
   profit_accrual_deferred?: boolean | null;
+  /** 已导入但尚未确认份额的买入金额，不计入总资产与收益 */
+  pending_buy_amount?: number | null;
+  pending_sell_amount?: number | null;
+  pending_transaction_count?: number | null;
+  has_in_progress_transactions?: boolean | null;
+  unsettled_preview?: boolean | null;
 };
 
 export type DecisionStyle = "conservative" | "tactical" | "aggressive";
@@ -3252,6 +3258,8 @@ export type FundTransaction = {
   nav_on_confirm: number | null;
   fee_yuan?: number | null;
   shares_source?: "user_confirmed" | "derived_amount_nav" | "unknown" | string;
+  in_progress?: boolean;
+  confirmed_at?: string | null;
   dedup_key: string;
   created_at: string;
 };
@@ -3321,6 +3329,14 @@ export async function adjustHolding(
       detail?: string;
     } | null;
     throw new Error(errorBody?.detail || "持仓保存失败");
+  }
+  return response.json();
+}
+
+export async function getPortfolioTransactions(): Promise<{ transactions: FundTransaction[] }> {
+  const response = await apiFetch(`${API_BASE}/api/transactions`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(await response.text());
   }
   return response.json();
 }

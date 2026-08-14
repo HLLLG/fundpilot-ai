@@ -32,7 +32,7 @@ from app.services.overview_pipeline import enrich_holdings_from_profiles
 from app.services.portfolio_persistence import enrich_loaded_holdings, persist_holdings_after_sector_refresh
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
 from app.services.portfolio_snapshot import save_daily_snapshot
-from app.services.transaction_ledger import confirm_and_compute_overrides
+from app.services.transaction_ledger import promote_pending_transactions_into_holdings
 from app.services.trading_session import get_effective_trade_date
 
 logger = logging.getLogger(__name__)
@@ -309,7 +309,11 @@ def build_fast_snapshot_holdings_response() -> dict | None:
         estimate_quotes={},
     )
     holdings = [_fast_overlay_cached_official_nav(holding, trade_date) for holding in holdings]
-    serialized = [_fast_serialize_holding_for_client(holding) for holding in holdings]
+    from app.services.pending_holding_preview import overlay_pending_transaction_previews
+
+    serialized = overlay_pending_transaction_previews(
+        [_fast_serialize_holding_for_client(holding) for holding in holdings]
+    )
     daily_profit = snapshot.get("daily_profit")
     if daily_profit is None:
         daily_profit = _fast_round2(
@@ -674,7 +678,7 @@ def _sync_portfolio_from_profiles_unlocked(
             merged.append(profile_to_holding(profile))
             merged_codes.add(profile.fund_code)
     merged = enrich_holdings_from_profiles(merged, fetch_benchmark=fetch_benchmark)
-    overrides = confirm_and_compute_overrides(merged)
+    merged, overrides = promote_pending_transactions_into_holdings(merged)
     merged = sync_holding_amounts_from_shares(
         merged,
         shares_override=overrides,

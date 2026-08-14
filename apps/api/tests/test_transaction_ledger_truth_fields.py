@@ -114,8 +114,23 @@ def test_legacy_amount_nav_share_is_explicitly_derived(monkeypatch) -> None:
     assert updates[0]["shares_source"] == "derived_amount_nav"
 
 
-def test_in_progress_transaction_is_not_auto_confirmed(monkeypatch) -> None:
+def test_in_progress_without_confirm_nav_stays_pending(monkeypatch) -> None:
     tx = _transaction(in_progress=True, confirmed_shares=10)
+    updates: list[dict] = []
+    monkeypatch.setattr(transaction_ledger, "list_pending_fund_transactions", lambda: [tx])
+    monkeypatch.setattr(transaction_ledger, "get_unit_nav_on_date", lambda *_args: None)
+    monkeypatch.setattr(
+        transaction_ledger,
+        "update_fund_transaction",
+        lambda tx_id, **kwargs: updates.append({"id": tx_id, **kwargs}),
+    )
+
+    assert transaction_ledger.confirm_pending_transactions() == 0
+    assert updates == []
+
+
+def test_in_progress_with_confirm_nav_derives_shares(monkeypatch) -> None:
+    tx = _transaction(in_progress=True, amount_yuan=150)
     updates: list[dict] = []
     monkeypatch.setattr(transaction_ledger, "list_pending_fund_transactions", lambda: [tx])
     monkeypatch.setattr(transaction_ledger, "get_unit_nav_on_date", lambda *_args: 2.0)
@@ -125,8 +140,83 @@ def test_in_progress_transaction_is_not_auto_confirmed(monkeypatch) -> None:
         lambda tx_id, **kwargs: updates.append({"id": tx_id, **kwargs}),
     )
 
+    assert transaction_ledger.confirm_pending_transactions() == 1
+    assert updates[0]["status"] == "confirmed"
+    assert updates[0]["in_progress"] is False
+    assert updates[0]["shares_delta"] == 75.0
+    assert updates[0]["nav_on_confirm"] == 2.0
+    assert updates[0]["shares_source"] == "derived_amount_nav"
+    assert updates[0]["confirmed_shares"] is None
+
+
+def test_in_progress_with_user_shares_uses_shares_once_nav_is_out(monkeypatch) -> None:
+    tx = _transaction(in_progress=True, confirmed_shares=12.3456)
+    updates: list[dict] = []
+    monkeypatch.setattr(transaction_ledger, "list_pending_fund_transactions", lambda: [tx])
+    monkeypatch.setattr(transaction_ledger, "get_unit_nav_on_date", lambda *_args: 1.5)
+    monkeypatch.setattr(
+        transaction_ledger,
+        "update_fund_transaction",
+        lambda tx_id, **kwargs: updates.append({"id": tx_id, **kwargs}),
+    )
+
+    assert transaction_ledger.confirm_pending_transactions() == 1
+    assert updates[0]["shares_delta"] == 12.3456
+    assert updates[0]["confirmed_shares"] == 12.3456
+    assert updates[0]["shares_source"] == "user_confirmed"
+    assert updates[0]["nav_on_confirm"] == 1.5
+    assert updates[0]["in_progress"] is False
+
+
+def test_in_progress_future_confirm_date_stays_pending_even_with_nav(monkeypatch) -> None:
+    from datetime import date
+
+    tx = _transaction(
+        confirm_date="2026-07-02",
+        in_progress=True,
+        confirmed_shares=10,
+    )
+    updates: list[dict] = []
+    nav_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(transaction_ledger, "_current_china_date", lambda: date(2026, 7, 1))
+    monkeypatch.setattr(transaction_ledger, "list_pending_fund_transactions", lambda: [tx])
+    monkeypatch.setattr(
+        transaction_ledger,
+        "get_unit_nav_on_date",
+        lambda code, day: nav_calls.append((code, day)) or 2.0,
+    )
+    monkeypatch.setattr(
+        transaction_ledger,
+        "update_fund_transaction",
+        lambda tx_id, **kwargs: updates.append({"id": tx_id, **kwargs}),
+    )
+
     assert transaction_ledger.confirm_pending_transactions() == 0
     assert updates == []
+    assert nav_calls == []
+
+
+def test_absorb_appends_seeded_transaction_owned_profile(monkeypatch) -> None:
+    existing = Holding(fund_code="000001", fund_name="已有基金", holding_amount=100)
+    new_profile = FundProfile(
+        fund_code="021959",
+        fund_name="南方黄金股C",
+        holding_amount=0,
+        holding_shares=0.0,
+        source="alipay-transaction",
+    )
+
+    def fake_seed(_codes, by_code, **_kwargs):
+        profile = by_code["021959"]
+        by_code["021959"] = profile.model_copy(update={"holding_amount": 500})
+
+    monkeypatch.setattr(transaction_ledger, "list_fund_profiles", lambda: [new_profile])
+    monkeypatch.setattr(transaction_ledger, "_seed_amounts_for_new_positions", fake_seed)
+
+    merged = transaction_ledger.absorb_confirmed_transaction_positions([existing])
+    assert [holding.fund_code for holding in merged] == ["000001", "021959"]
+    assert merged[1].holding_amount == 500
+    assert merged[1].fund_name == "南方黄金股C"
 
 
 def test_concurrent_confirmation_loser_is_an_idempotent_noop(monkeypatch) -> None:

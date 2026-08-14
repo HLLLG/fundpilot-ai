@@ -57,21 +57,34 @@ def _current_china_date() -> date:
     return datetime.now(_CN_TZ).date()
 
 
+def _confirm_day(tx: FundTransaction) -> str | None:
+    raw = (tx.confirm_date or "")[:10]
+    try:
+        date.fromisoformat(raw)
+    except ValueError:
+        return None
+    return raw
+
+
+def _has_user_confirmed_shares(tx: FundTransaction) -> bool:
+    return tx.confirmed_shares is not None and tx.confirmed_shares > 0
+
+
+def _pending_requires_confirm_nav(tx: FundTransaction) -> bool:
+    """进行中必须等确认日净值；非进行中仅在缺少用户份额时才查净值。"""
+    return bool(tx.in_progress) or not _has_user_confirmed_shares(tx)
+
+
 def _prefetch_pending_confirm_navs(pending: list[FundTransaction]) -> None:
     """并行预热待确认交易的历史净值，避免逐只串行拉 AkShare 子进程。"""
     today = _current_china_date()
     jobs: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for tx in pending:
-        if not tx.fund_code or tx.in_progress:
+        if not tx.fund_code or not _pending_requires_confirm_nav(tx):
             continue
-        if tx.confirmed_shares is not None and tx.confirmed_shares > 0:
-            continue
-        try:
-            confirm_day = tx.confirm_date[:10]
-            if date.fromisoformat(confirm_day) > today:
-                continue
-        except ValueError:
+        confirm_day = _confirm_day(tx)
+        if confirm_day is None or date.fromisoformat(confirm_day) > today:
             continue
         key = (tx.fund_code, confirm_day)
         if key in seen:
@@ -92,42 +105,53 @@ def _prefetch_pending_confirm_navs(pending: list[FundTransaction]) -> None:
         list(pool.map(_warm, jobs))
 
 
+def _resolve_pending_confirmation(
+    tx: FundTransaction,
+) -> tuple[float, float | None, float | None, str] | None:
+    """Return ``(delta, nav, confirmed_shares, shares_source)`` or skip."""
+    confirm_day = _confirm_day(tx)
+    if confirm_day is None:
+        logger.warning("invalid transaction confirm_date for %s", tx.id)
+        return None
+    if date.fromisoformat(confirm_day) > _current_china_date():
+        # Shares may already be known, but they are not settled position
+        # truth before the platform confirmation date.
+        return None
+
+    has_user_shares = _has_user_confirmed_shares(tx)
+    if _pending_requires_confirm_nav(tx):
+        nav = get_unit_nav_on_date(tx.fund_code, confirm_day)
+        if nav is None or nav <= 0:
+            return None
+        if has_user_shares:
+            delta = round(float(tx.confirmed_shares), 6)
+            return delta, nav, delta, "user_confirmed"
+        delta = round(tx.amount_yuan / nav, 2)
+        return delta, nav, None, "derived_amount_nav"
+
+    # Non-in-progress user shares are position truth without a NAV lookup.
+    delta = round(float(tx.confirmed_shares), 6)
+    return delta, tx.nav_on_confirm, delta, "user_confirmed"
+
+
 def confirm_pending_transactions() -> int:
     """确认当前用户的 pending 交易，优先保留用户输入的实际份额。
 
-    ``confirmed_shares`` 来自用户已在原平台确认的实际份额，不依赖净值即可入账；
-    老 OCR 请求没有份额时才退回 ``amount_yuan / nav``，并显式标记
-    ``derived_amount_nav``。``in_progress`` 交易不会被净值可用性误判为已成交。
+    ``confirmed_shares`` 来自用户已在原平台确认的实际份额；非进行中交易不依赖
+    净值即可入账。老 OCR 没有份额时退回 ``amount_yuan / nav``，并标记
+    ``derived_amount_nav``。``in_progress`` 必须等确认日净值精确公布后才推进
+    为已确认，避免把未成交单误判为已入账。
     """
     confirmed = 0
     pending = list(list_pending_fund_transactions())
     _prefetch_pending_confirm_navs(pending)
     for tx in pending:
-        if not tx.fund_code or tx.in_progress:
+        if not tx.fund_code:
             continue
-        try:
-            if date.fromisoformat(tx.confirm_date[:10]) > _current_china_date():
-                # User-reported shares may already be known, but they are not
-                # settled position truth before the platform confirmation date.
-                continue
-        except ValueError:
-            logger.warning("invalid transaction confirm_date for %s", tx.id)
+        resolved = _resolve_pending_confirmation(tx)
+        if resolved is None:
             continue
-        if tx.confirmed_shares is not None and tx.confirmed_shares > 0:
-            # Actual platform/user-confirmed shares are position truth by
-            # themselves. Do not make confirmation latency or correctness depend
-            # on a third-party NAV lookup; valuation can be attached separately.
-            nav = tx.nav_on_confirm
-            delta = round(float(tx.confirmed_shares), 6)
-            normalized_confirmed_shares = delta
-            shares_source = "user_confirmed"
-        else:
-            nav = get_unit_nav_on_date(tx.fund_code, tx.confirm_date)
-            if nav is None or nav <= 0:
-                continue
-            delta = round(tx.amount_yuan / nav, 2)
-            normalized_confirmed_shares = None
-            shares_source = "derived_amount_nav"
+        delta, nav, normalized_confirmed_shares, shares_source = resolved
         if tx.direction == "sell":
             delta = -delta
         if update_fund_transaction is not _ORIGINAL_UPDATE_FUND_TRANSACTION:
@@ -246,15 +270,51 @@ def compute_effective_shares_map(
     return result
 
 
-def confirm_and_compute_overrides(holdings: list[Holding]) -> dict[str, float]:
-    """持仓恢复/刷新前的账本协调：先补确认 pending，再算有效份额覆盖表。"""
-    confirm_pending_transactions()
-    codes = [
+def _holding_fund_codes(holdings: list[Holding]) -> list[str]:
+    return [
         holding.fund_code
         for holding in holdings
         if holding.fund_code and holding.fund_code != "000000"
     ]
-    return compute_effective_shares_map(codes)
+
+
+def absorb_confirmed_transaction_positions(holdings: list[Holding]) -> list[Holding]:
+    """确认后给全新建仓写入金额，并把交易档案补进持仓列表。
+
+    ``alipay-transaction`` 且金额已大于 0 的档案才能加入看板；删除基金时会清掉
+    档案，因此不会把用户刚删掉的持仓复活。
+    """
+    from app.services.portfolio_holdings_service import profile_to_holding
+
+    profiles = list_fund_profiles()
+    by_code = {profile.fund_code: profile for profile in profiles}
+    _seed_amounts_for_new_positions(list(by_code.keys()), by_code)
+    merged = list(holdings)
+    codes = set(_holding_fund_codes(merged))
+    for profile in by_code.values():
+        if (
+            profile.source == "alipay-transaction"
+            and (profile.holding_amount or 0) > 0
+            and profile.fund_code not in codes
+        ):
+            merged.append(profile_to_holding(profile))
+            codes.add(profile.fund_code)
+    return merged
+
+
+def promote_pending_transactions_into_holdings(
+    holdings: list[Holding],
+) -> tuple[list[Holding], dict[str, float]]:
+    """确认到期 pending（含进行中）、种新建仓金额，再返回更新后的持仓与份额覆盖表。"""
+    confirm_pending_transactions()
+    merged = absorb_confirmed_transaction_positions(holdings)
+    return merged, compute_effective_shares_map(_holding_fund_codes(merged))
+
+
+def confirm_and_compute_overrides(holdings: list[Holding]) -> dict[str, float]:
+    """持仓恢复/刷新前的账本协调：先补确认 pending，再算有效份额覆盖表。"""
+    _merged, overrides = promote_pending_transactions_into_holdings(holdings)
+    return overrides
 
 
 def _previous_day(iso_date: str) -> str:
@@ -516,6 +576,10 @@ def _seed_amounts_for_new_positions(
             continue
         nav = peek_cached_unit_nav(code)
         if nav is None or nav <= 0:
+            confirm_day = (profile.profit_accrual_deferred_until or "")[:10]
+            if confirm_day:
+                nav = get_unit_nav_on_date(code, confirm_day)
+        if nav is None or nav <= 0:
             nav = get_latest_unit_nav(code)
         if nav is not None and nav > 0:
             amount = round(effective * nav, 2)
@@ -670,8 +734,12 @@ def _apply_parsed_transactions_unlocked(parsed: list[ParsedTransaction]) -> dict
         with_official_nav=False,
     )
     pending = len(list_pending_fund_transactions())
+    from app.services.pending_holding_preview import overlay_pending_transaction_previews
+
     return {
-        "holdings": [holding.model_dump(mode="json") for holding in holdings],
+        "holdings": overlay_pending_transaction_previews(
+            [holding.model_dump(mode="json") for holding in holdings]
+        ),
         "inserted": inserted,
         "skipped": skipped,
         "pending": pending,

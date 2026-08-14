@@ -132,8 +132,8 @@ def test_transaction_profile_can_join_nonempty_snapshot_without_reviving_legacy_
     )
     monkeypatch.setattr(
         portfolio_holdings_service,
-        "confirm_and_compute_overrides",
-        lambda holdings: {},
+        "promote_pending_transactions_into_holdings",
+        lambda holdings: (holdings, {}),
     )
     monkeypatch.setattr(
         portfolio_holdings_service,
@@ -157,3 +157,77 @@ def test_transaction_profile_can_join_nonempty_snapshot_without_reviving_legacy_
 
     assert [item.fund_code for item in merged] == ["010236", "015945"]
     assert captured["allow_membership_additions"] is True
+
+
+def test_drop_keeps_newly_confirmed_transaction_positions(monkeypatch) -> None:
+    retained = _holding("010236", "广发电子信息传媒股票C")
+    purchased = _holding("021959", "南方黄金ETF联接C")
+    monkeypatch.setattr(
+        portfolio_persistence,
+        "get_most_recent_portfolio_snapshot",
+        lambda: _snapshot(retained),
+    )
+
+    kept = portfolio_persistence._drop_holdings_removed_during_refresh(
+        [retained, purchased],
+        extra_allowed_codes={"021959"},
+    )
+
+    assert [item.fund_code for item in kept] == ["010236", "021959"]
+
+
+def test_settle_persists_promoted_in_progress_even_without_official_nav(monkeypatch) -> None:
+    from app.services import official_nav_settlement as settlement
+
+    existing = _holding("000001", "已有基金")
+    promoted = _holding("021959", "南方黄金股C", amount=500)
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        settlement,
+        "build_trading_session",
+        lambda: {
+            "session_kind": "trading_day_after_close",
+            "effective_trade_date": "2026-08-14",
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.transaction_ledger.confirm_pending_transactions",
+        lambda: 1,
+    )
+    monkeypatch.setattr(
+        settlement,
+        "_load_settlement_holdings",
+        lambda: ([existing], "snapshot", "2026-08-14", None),
+    )
+    monkeypatch.setattr(
+        "app.services.transaction_ledger.absorb_confirmed_transaction_positions",
+        lambda holdings: list(holdings) + [promoted],
+    )
+    monkeypatch.setattr(
+        "app.services.transaction_ledger.compute_effective_shares_map",
+        lambda _codes, **_kwargs: {},
+    )
+    monkeypatch.setattr(settlement, "prime_official_nav_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        settlement,
+        "settle_official_nav_for_holdings",
+        lambda holdings, **_kwargs: (list(holdings), 0),
+    )
+    monkeypatch.setattr(
+        "app.services.holding_amount_sync.sync_holding_amounts_from_shares",
+        lambda holdings, **_kwargs: holdings,
+    )
+    monkeypatch.setattr(
+        settlement,
+        "_persist_settlement_holdings",
+        lambda holdings, **_kwargs: (
+            captured.update({"codes": [item.fund_code for item in holdings]})
+            or (holdings, {"total_assets": 1500})
+        ),
+    )
+
+    result = settlement.settle_official_nav_for_portfolio()
+
+    assert result["skipped"] is False
+    assert captured["codes"] == ["000001", "021959"]

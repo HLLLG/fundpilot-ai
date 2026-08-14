@@ -8,6 +8,7 @@ import {
   Eye,
   EyeOff,
   Plus,
+  Receipt,
   RefreshCw,
   ScanLine,
 } from "lucide-react";
@@ -16,6 +17,7 @@ import { OCR_PRIVACY_COPY } from "@/lib/ocrPrivacy";
 import { hydrateTradingSession } from "@/lib/tradingSessionClient";
 import { readTradingSessionCache } from "@/lib/holdingDetailCache";
 import { SectorMappingModal } from "@/components/SectorMappingModal";
+import { HoldingsTransactionLedgerModal } from "@/components/HoldingsTransactionLedgerModal";
 import { InlineNotice } from "@/components/InlineNotice";
 import { MethodologyNote } from "@/components/MethodologyNote";
 import {
@@ -27,6 +29,8 @@ import {
   sumPortfolioTotalAssets,
   navigableHoldings,
   holdingIdentityKey,
+  isUnsettledPreviewHolding,
+  pendingBuyAmount,
   type HoldingIdentity,
 } from "@/lib/holdingMetrics";
 import {
@@ -124,7 +128,7 @@ function holdingsSortValue(holding: Holding, key: HoldingsSortKey): number | nul
     case "holding":
       return getEstimatedHoldingProfit(holding);
     case "amount":
-      return getSettledHoldingAmount(holding);
+      return getSettledHoldingAmount(holding) || pendingBuyAmount(holding) || null;
   }
 }
 
@@ -236,6 +240,7 @@ export function YangjibaoHoldingsBoard({
   const [sortDir, setSortDir] = useState<HoldingsSortDir>("desc");
   const [dailyDisplayMode, setDailyDisplayMode] = useState<DailyDisplayMode>("amount");
   const [amountsHidden, setAmountsHidden] = useState(() => loadAmountsHidden());
+  const [ledgerOpen, setLedgerOpen] = useState(false);
   const {
     isRefreshing,
     refreshError,
@@ -254,18 +259,30 @@ export function YangjibaoHoldingsBoard({
   }, []);
 
   const displayHoldings = useMemo(() => navigableHoldings(holdings), [holdings]);
+  const settledHoldings = useMemo(
+    () => displayHoldings.filter((holding) => !isUnsettledPreviewHolding(holding)),
+    [displayHoldings],
+  );
+  const pendingTxCount = useMemo(
+    () =>
+      displayHoldings.reduce(
+        (sum, holding) => sum + (holding.pending_transaction_count ?? 0),
+        0,
+      ),
+    [displayHoldings],
+  );
   const refreshNotice = buildSectorRefreshNotice(lastRefreshResult);
 
-  const computedTotal = sumPortfolioTotalAssets(displayHoldings);
-  const computedDaily = sumDailyProfit(displayHoldings);
+  const computedTotal = sumPortfolioTotalAssets(settledHoldings);
+  const computedDaily = sumDailyProfit(settledHoldings);
   const totalAssets = computedTotal || portfolioSummary?.total_assets || null;
-  const dailyProfit = displayHoldings.length > 0 ? computedDaily : null;
+  const dailyProfit = settledHoldings.length > 0 ? computedDaily : null;
   const dailyReturn = accountDailyReturnPercent(dailyProfit, totalAssets);
-  const officialDailyCount = displayHoldings.filter(
+  const officialDailyCount = settledHoldings.filter(
     (holding) => holding.daily_return_percent_source === "official_nav",
   ).length;
   const allOfficialDaily =
-    displayHoldings.length > 0 && officialDailyCount === displayHoldings.length;
+    settledHoldings.length > 0 && officialDailyCount === settledHoldings.length;
   const dailyColumnLabel = allOfficialDaily ? "当日" : "估算";
 
   const handleSort = (columnKey: Exclude<HoldingsSortKey, "amount">) => {
@@ -371,6 +388,15 @@ export function YangjibaoHoldingsBoard({
           <div className="mb-2 flex items-center justify-end gap-1">
             <button
               type="button"
+              onClick={() => setLedgerOpen(true)}
+              className="inline-flex h-11 w-11 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
+              title="交易记录"
+              aria-label="查看交易记录"
+            >
+              <Receipt size={16} />
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 setAmountsHidden((current) => {
                   const next = !current;
@@ -445,6 +471,18 @@ export function YangjibaoHoldingsBoard({
               </div>
             </button>
           </div>
+          {pendingTxCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => setLedgerOpen(true)}
+              className="mt-3 flex min-h-11 w-full items-center justify-between gap-2 rounded-xl border border-[var(--warn-border)] bg-[var(--warn-bg)] px-3 py-2 text-left"
+            >
+              <span className="text-xs font-bold text-[var(--warn-fg)]">
+                {pendingTxCount} 笔交易待确认，暂不计收益
+              </span>
+              <span className="shrink-0 text-[11px] font-semibold text-[var(--warn-icon)]">查看</span>
+            </button>
+          ) : null}
         </div>
 
         {/* 这里曾经有一条通栏「行情日 {quoteTradeDate}」。同一个日期在上方
@@ -516,19 +554,27 @@ export function YangjibaoHoldingsBoard({
 
         <ul className="holdings-ledger space-y-2 p-2 sm:space-y-0 sm:divide-y sm:divide-[var(--line)] sm:p-0">
           {sortedHoldings.map((holding, rowIndex) => {
-            const daily = getDailyProfit(holding);
-            const estimatedDailyReturn = getEstimatedDailyReturnPercent(holding);
-            const holdingProfit = getEstimatedHoldingProfit(holding);
-            const holdingReturn = getEstimatedHoldingReturnPercent(holding);
+            const unsettledOnly = isUnsettledPreviewHolding(holding);
+            const pendingBuy = pendingBuyAmount(holding);
+            const daily = unsettledOnly ? null : getDailyProfit(holding);
+            const estimatedDailyReturn = unsettledOnly
+              ? null
+              : getEstimatedDailyReturnPercent(holding);
+            const holdingProfit = unsettledOnly ? null : getEstimatedHoldingProfit(holding);
+            const holdingReturn = unsettledOnly ? null : getEstimatedHoldingReturnPercent(holding);
             const dailyIsEstimated = isDailyProfitEstimated(holding);
             const profitAccrualDeferred = holding.profit_accrual_deferred === true;
             const isOfficialDaily = holding.daily_return_percent_source === "official_nav";
-            const sectorReturn = resolveSectorBoardReturnPercent(holding);
+            const sectorReturn = unsettledOnly ? null : resolveSectorBoardReturnPercent(holding);
             const sectorMeta = sectorMetaByFundCode[holding.fund_code] as SectorQuoteMeta | undefined;
-            const sectorLabel = holdingDisplaySectorLabel(holding, sectorMeta);
+            const sectorLabel = unsettledOnly ? "—" : holdingDisplaySectorLabel(holding, sectorMeta);
+            const settledAmount = getSettledHoldingAmount(holding);
+            const amountText = unsettledOnly ? pendingBuy : settledAmount;
             const holdingAmountLabel = amountsHidden
               ? "持有金额已隐藏"
-              : `持有金额 ${formatMoney(getSettledHoldingAmount(holding))}`;
+              : unsettledOnly
+                ? `在途 ${formatMoney(pendingBuy)}，暂不计收益`
+                : `持有金额 ${formatMoney(settledAmount)}`;
             const rowAriaLabel = [
               holding.fund_name,
               holdingAmountLabel,
@@ -560,11 +606,19 @@ export function YangjibaoHoldingsBoard({
                       <div className="line-clamp-2 break-words text-sm font-bold leading-5 text-slate-900 sm:truncate sm:text-[13px] sm:leading-tight">
                         {holding.fund_name}
                       </div>
-                      {isOfficialDaily ? <UpdatedBadge className="!px-0.5 !py-0 !text-[9px]" /> : null}
+                      {unsettledOnly || holding.has_in_progress_transactions ? (
+                        <span className="shrink-0 rounded border border-[var(--warn-border)] bg-[var(--warn-bg)] px-1 py-0 text-[9px] font-bold leading-4 text-[var(--warn-icon)]">
+                          待确认
+                        </span>
+                      ) : null}
+                      {isOfficialDaily && !unsettledOnly ? (
+                        <UpdatedBadge className="!px-0.5 !py-0 !text-[9px]" />
+                      ) : null}
                     </div>
                     {!amountsHidden ? (
                       <div className="mt-0.5 text-[10px] text-slate-500 tabular-nums">
-                        {formatMoney(getSettledHoldingAmount(holding))}
+                        {unsettledOnly ? `在途 ${formatMoney(amountText)}` : formatMoney(amountText)}
+                        {!unsettledOnly && pendingBuy > 0 ? ` · 在途 ${formatMoney(pendingBuy)}` : ""}
                       </div>
                     ) : null}
                   </div>
@@ -572,7 +626,9 @@ export function YangjibaoHoldingsBoard({
                   <div
                     className="min-w-0 text-left leading-tight sm:text-right"
                     title={
-                      profitAccrualDeferred
+                      unsettledOnly
+                        ? "交易已导入，份额尚未确认，暂不计收益"
+                        : profitAccrualDeferred
                         ? "份额待确认，次交易日起计收益（与支付宝一致）"
                         : holding.daily_return_percent_source === "official_nav"
                         ? "官方净值已公布"
@@ -669,6 +725,7 @@ export function YangjibaoHoldingsBoard({
         onClose={dismissMapping}
         onSelect={(candidate) => void selectMapping(candidate)}
       />
+      {ledgerOpen ? <HoldingsTransactionLedgerModal onClose={() => setLedgerOpen(false)} /> : null}
     </section>
   );
 }

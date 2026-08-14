@@ -33,7 +33,7 @@ function isPlaceholderHolding(holding: Holding): boolean {
   return name === "待录入基金" || name.startsWith("待录入");
 }
 
-/** 账户汇总 / 生成日报使用的有效持仓列表。 */
+/** 账户汇总 / 生成日报使用的有效持仓列表。零金额的在途预览不进入日报。 */
 export function displayableHoldings(holdings: Holding[]): Holding[] {
   return withoutTestHoldings(holdings).filter((holding) => {
     if (isPlaceholderHolding(holding)) {
@@ -45,6 +45,21 @@ export function displayableHoldings(holdings: Holding[]): Holding[] {
         : holding.holding_amount;
     return (amount ?? 0) > 0;
   });
+}
+
+export function pendingBuyAmount(holding: Holding): number {
+  return holding.pending_buy_amount ?? 0;
+}
+
+export function isUnsettledPreviewHolding(holding: Holding): boolean {
+  if (holding.unsettled_preview) {
+    return true;
+  }
+  const settled =
+    holding.settled_holding_amount != null
+      ? holding.settled_holding_amount
+      : holding.holding_amount;
+  return (settled ?? 0) <= 0 && pendingBuyAmount(holding) > 0;
 }
 
 /** OCR / 快速 apply 响应可能缺少板块与收益字段；刷新完成前保留上一屏展示数据。 */
@@ -186,7 +201,18 @@ export function dedupeHoldingsByCode(holdings: Holding[]): Holding[] {
 }
 
 export function navigableHoldings(holdings: Holding[]): Holding[] {
-  return dedupeHoldingsByCode(displayableHoldings(holdings));
+  return dedupeHoldingsByCode(
+    withoutTestHoldings(holdings).filter((holding) => {
+      if (isPlaceholderHolding(holding)) {
+        return false;
+      }
+      const settled =
+        holding.settled_holding_amount != null
+          ? holding.settled_holding_amount
+          : holding.holding_amount;
+      return (settled ?? 0) > 0 || isUnsettledPreviewHolding(holding);
+    }),
+  );
 }
 
 export function patchHoldingRecord(holdings: Holding[], patch: Holding): Holding[] {

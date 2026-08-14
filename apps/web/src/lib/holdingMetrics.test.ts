@@ -9,6 +9,7 @@ import {
   mergeSectorIntradayClose,
   mergeHoldingsPreserveQuoteFields,
   dedupeHoldingsByCode,
+  navigableHoldings,
   patchHoldingRecord,
 } from "@/lib/holdingMetrics";
 import { getDailyProfit } from "@/lib/holdingDisplay";
@@ -30,6 +31,27 @@ describe("displayableHoldings", () => {
         holding("010236", "广发电子信息传媒股票C"),
       ]).map((item) => item.fund_code),
     ).toEqual(["010236"]);
+  });
+
+  it("keeps unsettled previews out of reports but visible on the holdings board", () => {
+    const pendingOnly: Holding = {
+      fund_code: "021959",
+      fund_name: "南方黄金股C",
+      holding_amount: 0,
+      settled_holding_amount: 0,
+      return_percent: 0,
+      pending_buy_amount: 500,
+      pending_transaction_count: 1,
+      unsettled_preview: true,
+    };
+    const settled = holding("011036", "嘉实中证稀土产业ETF联接C");
+    expect(displayableHoldings([pendingOnly, settled]).map((item) => item.fund_code)).toEqual([
+      "011036",
+    ]);
+    expect(navigableHoldings([pendingOnly, settled]).map((item) => item.fund_code)).toEqual([
+      "021959",
+      "011036",
+    ]);
   });
 });
 

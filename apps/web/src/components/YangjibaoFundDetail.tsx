@@ -29,6 +29,7 @@ import { hydrateTradingSession } from "@/lib/tradingSessionClient";
 import { FundCodeEditModal, isProvisionalFundCode } from "@/components/FundCodeEditModal";
 import { buildFlatIntradayPoints, IntradayPercentChart } from "@/components/IntradayPercentChart";
 import { PerformanceTrendPanel } from "@/components/PerformanceTrendPanel";
+import { FundHoldingTransactions } from "@/components/FundHoldingTransactions";
 import {
   resolveInitialPurchaseDate,
   todayIsoDate,
@@ -47,6 +48,8 @@ import {
   mergeSectorIntradayClose,
   navigableHoldings,
   resolveSectorBoardReturnPercent,
+  isUnsettledPreviewHolding,
+  pendingBuyAmount,
   type HoldingIdentity,
 } from "@/lib/holdingMetrics";
 import {
@@ -1031,6 +1034,15 @@ export function YangjibaoFundDetail({
                 hint={sourceHint(provenance, "holding_days")}
               />
               {weight != null ? <ProfitRow label="占账户比例" value={formatPlainPercent(weight)} /> : null}
+              {(pendingBuyAmount(activeHolding) > 0 || isUnsettledPreviewHolding(activeHolding)) ? (
+                <p className="rounded-lg bg-[var(--warn-bg)] px-3 py-2 text-[11px] font-semibold leading-5 text-[var(--warn-fg)]">
+                  有在途交易 {formatPlainMoney(pendingBuyAmount(activeHolding))} 元，份额未确认前不计入持有收益。
+                </p>
+              ) : null}
+              <FundHoldingTransactions
+                fundCode={activeHolding.fund_code}
+                enabled={detail?.fund_code_resolved === true || Boolean(activeHolding.fund_code)}
+              />
             </div>
           ) : null}
         </div>

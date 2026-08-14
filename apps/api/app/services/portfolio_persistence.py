@@ -116,9 +116,9 @@ def enrich_loaded_holdings(
         from app.services.fund_primary_sector_service import apply_primary_sector_to_holdings
 
         return apply_primary_sector_to_holdings(enrich_holdings_estimates(holdings), fetch_benchmark=False)
-    from app.services.transaction_ledger import confirm_and_compute_overrides
+    from app.services.transaction_ledger import promote_pending_transactions_into_holdings
 
-    overrides = confirm_and_compute_overrides(holdings)
+    holdings, overrides = promote_pending_transactions_into_holdings(holdings)
     synced = sync_holding_amounts_from_shares(holdings, shares_override=overrides)
     return enrich_holdings_estimates(overlay_official_nav_returns(synced))
 
@@ -127,6 +127,7 @@ def _drop_holdings_removed_during_refresh(
     enriched: list[Holding],
     *,
     allow_membership_additions: bool = False,
+    extra_allowed_codes: set[str] | None = None,
 ) -> list[Holding]:
     """写回快照前最后一次对账，防止"删除基金"与"慢速板块刷新"互相踩踏。
 
@@ -136,10 +137,14 @@ def _drop_holdings_removed_during_refresh(
     整份写回快照，就会把用户刚删除的基金重新写回去（即"缓存污染，删除的基金又
     出现了"）。这里只做成员资格过滤（是否还在最新快照里），不覆盖任何已经算好的
     金额/收益字段，避免影响本函数原本要更新的净值同步结果。
+
+    ``extra_allowed_codes`` 留给本轮刚确认入账的交易新建仓：它们本来就不在旧快照里，
+    但不能被当成过期刷新而丢掉。
     """
     if allow_membership_additions:
         return enriched
 
+    extra = {code for code in (extra_allowed_codes or set()) if code and code != "000000"}
     latest_snapshot = get_most_recent_portfolio_snapshot()
     if latest_snapshot is None or latest_snapshot.get("holdings") is None:
         return enriched
@@ -152,13 +157,16 @@ def _drop_holdings_removed_during_refresh(
     }
     latest_names = {item.get("fund_name") for item in latest_holdings if item.get("fund_name")}
     if not latest_codes and not latest_names:
-        return []
+        if not extra:
+            return []
+        return [holding for holding in enriched if holding.fund_code in extra]
 
     return [
         holding
         for holding in enriched
         if (holding.fund_code and holding.fund_code != "000000" and holding.fund_code in latest_codes)
         or (holding.fund_name and holding.fund_name in latest_names)
+        or (holding.fund_code in extra)
     ]
 
 
@@ -206,9 +214,19 @@ def _persist_holdings_after_sector_refresh_unlocked(
             )
         )
     )
-    from app.services.transaction_ledger import confirm_and_compute_overrides
+    from app.services.transaction_ledger import promote_pending_transactions_into_holdings
 
-    overrides = confirm_and_compute_overrides(merged)
+    before_codes = {
+        holding.fund_code
+        for holding in merged
+        if holding.fund_code and holding.fund_code != "000000"
+    }
+    merged, overrides = promote_pending_transactions_into_holdings(merged)
+    added_codes = {
+        holding.fund_code
+        for holding in merged
+        if holding.fund_code and holding.fund_code != "000000" and holding.fund_code not in before_codes
+    }
     synced = sync_holding_amounts_from_shares(
         merged,
         shares_override=overrides,
@@ -224,6 +242,7 @@ def _persist_holdings_after_sector_refresh_unlocked(
     enriched = _drop_holdings_removed_during_refresh(
         enriched,
         allow_membership_additions=allow_membership_additions,
+        extra_allowed_codes=added_codes,
     )
     if not enriched:
         return enriched

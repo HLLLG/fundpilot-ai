@@ -515,6 +515,17 @@ def confirm_ledger_baseline(
     return result
 
 
+@app.get("/api/transactions")
+def list_portfolio_transactions() -> dict:
+    from app.database import list_fund_transactions
+
+    transactions = list_fund_transactions()
+    transactions.sort(key=lambda tx: (tx.trade_time, tx.created_at), reverse=True)
+    return {
+        "transactions": [tx.model_dump(mode="json") for tx in transactions]
+    }
+
+
 @app.get("/api/funds/{fund_code}/transactions")
 def fund_transactions(fund_code: str) -> dict:
     from app.database import list_fund_transactions
