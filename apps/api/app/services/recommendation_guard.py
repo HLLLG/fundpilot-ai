@@ -37,8 +37,10 @@ from app.services.daily_action_proposal import (
     propose_daily_action,
 )
 from app.services.market_signal import has_today_market_signal
+from app.services.holding_lot_maturity import describe_reduction_lot_impact
 from app.services.investment_presets import is_short_term_style
 from app.services.sector_labels import normalize_sector_label
+from app.services.transaction_behavior_review import recent_transaction_conflict_note
 from app.services.sector_opportunity_scoring import (
     ENTRY_POLICY_VERSION_V3,
     EXIT_TREND_THRESHOLD,
@@ -558,6 +560,26 @@ def apply_recommendation_guards(
         cross_note = _discovery_cross_reference_note(facts, holding)
         if cross_note:
             copy.validation_notes = [*copy.validation_notes, cross_note]
+        # 批次费用时机：最终动作是减仓类且有比例时，按先进先出判断触及的批次会不会
+        # 撞上 7 天惩罚费窗口。纯事实披露——费用贵不构成回避减仓的理由，只帮用户在
+        # "今天减"与"过窗后减"之间权衡。此时 action 与比例都已是终值（escalation
+        # 的覆盖在前面完成）。
+        if _execution_direction(copy.action) == "reduce":
+            lot_note = describe_reduction_lot_impact(
+                (facts_row or {}).get("lot_maturity"),
+                copy.suggested_position_change_percent,
+            )
+            if lot_note:
+                copy.validation_notes = [*copy.validation_notes, lot_note]
+        # 最终动作与用户近几天的真实操作方向相反时（建议加仓而你刚卖过 / 建议减仓而
+        # 你刚买过），把那笔操作摆出来让用户结合自己的意图权衡。只披露、不改动作：
+        # 方向证据独立于用户的资金需求，系统无从知道那笔操作的动机。
+        conflict_note = recent_transaction_conflict_note(
+            (facts_row or {}).get("recent_transactions"),
+            copy.action,
+        )
+        if conflict_note:
+            copy.validation_notes = [*copy.validation_notes, conflict_note]
         if shadow_note is not None:
             # M6：灰度提示须始终可见（不受 `_backfill_decision_fields` 只在为空时才
             # 回填的规则影响），追加到 validation_notes 末尾，与其它校验备注共存。

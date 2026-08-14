@@ -13,6 +13,17 @@ from app.services.fund_name_utils import (
 
 FUZZY_AUTO_MATCH_MIN_SCORE = 0.86
 FUZZY_SEARCH_MIN_SCORE = 0.72
+_GENERIC_CORE_TOKENS = {
+    "混合",
+    "股票",
+    "指数",
+    "联接",
+    "ETF",
+    "债券",
+    "基金",
+    "型",
+    "发起",
+}
 
 _TOKEN_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
 
@@ -102,6 +113,15 @@ def iter_fuzzy_candidates(
     return filtered or table
 
 
+def _candidate_has_conflicting_tokens(query: str, candidate: str) -> bool:
+    """候选名多出来的实义词（如「前沿」）说明是另一只基金，禁止自动选码。"""
+    extras = lookup_core_tokens(candidate) - lookup_core_tokens(query) - _GENERIC_CORE_TOKENS
+    issuer = detect_fund_issuer(candidate)
+    if issuer:
+        extras.discard(issuer)
+    return any(len(token) >= 2 for token in extras)
+
+
 def best_fuzzy_fund_match(
     query: str,
     table: list[tuple[str, str]],
@@ -113,6 +133,8 @@ def best_fuzzy_fund_match(
     for code, name in iter_fuzzy_candidates(query, table):
         table_class = extract_share_class_letter(name)
         if target_class and table_class and target_class != table_class:
+            continue
+        if _candidate_has_conflicting_tokens(query, name):
             continue
         score = fuzzy_name_match_score(query, name)
         if score < min_score:

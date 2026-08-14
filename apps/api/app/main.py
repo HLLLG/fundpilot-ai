@@ -402,7 +402,8 @@ def _build_transactions_ocr_response(
     filename: str | None,
 ) -> dict:
     from app.services.alipay_transactions_parser import parse_alipay_transactions
-    from app.services.fund_code_resolver import lookup_fund_code_by_name
+    from app.services.fund_code_resolver import resolve_holding_fund_code
+    from app.services.fund_profile import FundProfileService
     from app.services.ocr_parser import detect_ocr_source
     from app.services.ocr_text_service import OcrUnavailable, extract_text_from_image
     from app.services.trading_session import resolve_confirm_date, resolve_first_return_date
@@ -428,6 +429,7 @@ def _build_transactions_ocr_response(
 
     transactions = parse_alipay_transactions(text) if text else []
     enriched: list[dict] = []
+    profile_service: FundProfileService | None = None
     for parsed in transactions:
         updates: dict[str, object] = {}
         if not parsed.confirm_date:
@@ -437,7 +439,18 @@ def _build_transactions_ocr_response(
         if updates:
             parsed = parsed.model_copy(update=updates)
         if not parsed.fund_code:
-            code, _ = lookup_fund_code_by_name(parsed.fund_name)
+            if profile_service is None:
+                profile_service = FundProfileService()
+            profile = profile_service.find_match(parsed.fund_name)
+            profile_code = (
+                profile.fund_code
+                if profile and profile.fund_code != "000000"
+                else None
+            )
+            code, _ = resolve_holding_fund_code(
+                parsed.fund_name,
+                existing_code=profile_code,
+            )
             if code:
                 parsed = parsed.model_copy(update={"fund_code": code})
         enriched.append(parsed.model_dump(mode="json"))

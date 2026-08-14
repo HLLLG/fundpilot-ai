@@ -109,6 +109,16 @@ import { InlineNotice } from "@/components/InlineNotice";
 import { activeAnalysisRolePrompt } from "@/lib/analysisPrompt";
 import { resolveReportProviderStatus } from "@/lib/reportPresentation";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
+import {
+  deleteDailyReportDetailCache,
+  isDailyReportDetailCacheFresh,
+  isDailyReportsListCacheFresh,
+  readDailyReportDetailCache,
+  readDailyReportsListCache,
+  readFreshLatestDailyReport,
+  writeDailyReportDetailCache,
+  writeDailyReportsListCache,
+} from "@/lib/dailyReportCache";
 // 工作台专属样式：Dashboard 本身是 next/dynamic 懒加载的，样式随它一起按需到达，
 // 不会进入匿名首屏与登录/注册/设置/管理员路由的阻塞 CSS。
 import "@/app/dashboard.css";
@@ -257,8 +267,12 @@ export function Dashboard() {
   const [analysisPrompt, setAnalysisPrompt] = useState<AnalysisPromptConfig>(() =>
     loadAnalysisPrompt(user?.id, defaultAnalysisPrompt),
   );
-  const [report, setReport] = useState<Report | null>(null);
-  const [reports, setReports] = useState<Report[]>([]);
+  const [report, setReport] = useState<Report | null>(() =>
+    readFreshLatestDailyReport(user?.id),
+  );
+  const [reports, setReports] = useState<Report[]>(
+    () => readDailyReportsListCache(user?.id) ?? [],
+  );
   // 列表接口只返回摘要，切换到某份历史日报时按 id 拉一次完整正文。
   // 递增 requestId 保证快速连点时只应用最后一次的详情。
   const reportDetailRequestId = useRef(0);
@@ -311,6 +325,19 @@ export function Dashboard() {
     const index = findHoldingIndex(holdings, selectedHoldingKey);
     return index >= 0 ? index : null;
   }, [holdings, selectedHoldingKey]);
+  const selectedHoldingPreview = useMemo<Holding | null>(() => {
+    if (!selectedHoldingKey || selectedHoldingIndex !== null) {
+      return null;
+    }
+    return {
+      fund_code: selectedHoldingKey.fund_code,
+      fund_name: selectedHoldingKey.fund_name,
+      holding_amount: 0,
+      return_percent: 0,
+      holding_profit: 0,
+      holding_return_percent: 0,
+    };
+  }, [selectedHoldingKey, selectedHoldingIndex]);
   const researchHolding = useMemo(
     () =>
       researchFund
@@ -398,12 +425,30 @@ export function Dashboard() {
     },
   });
 
-  const loadHistory = useCallback(async (): Promise<Report[] | null> => {
-    setHistoryLoading(true);
+  const loadHistory = useCallback(async (options?: { force?: boolean }): Promise<Report[] | null> => {
+    const userId = user?.id;
+    const force = options?.force === true;
+    if (!force) {
+      const cached = readDailyReportsListCache(userId);
+      if (cached && isDailyReportsListCacheFresh(userId)) {
+        setReports(cached);
+        setHistoryError(null);
+        setHistoryLoading(false);
+        return cached;
+      }
+      if (cached) {
+        setReports(cached);
+      }
+    }
+    const hasCachedList = Boolean(readDailyReportsListCache(userId)?.length);
+    if (!hasCachedList) {
+      setHistoryLoading(true);
+    }
     try {
       const next = [...(await listReports())].sort(
         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
       );
+      writeDailyReportsListCache(userId, next);
       setReports(next);
       setHistoryError(null);
       return next;
@@ -413,7 +458,7 @@ export function Dashboard() {
     } finally {
       setHistoryLoading(false);
     }
-  }, []);
+  }, [user?.id]);
 
   const handleProfileChange = useCallback((next: InvestorProfile) => {
     profileChangedByUserRef.current = true;
@@ -779,42 +824,65 @@ export function Dashboard() {
   // 早期版本以为这些字段在下游都用可选链读取，实际并没有，
   // 结果摘要占位期间 ReportPanel 会读到 undefined.length 而整页崩溃。
   //
-  // hydrateReport 内部记录 lastHydratedId，避免"详情合并 setReports → orderedReports
-  // 变化 → useEffect 重跑 → 又 hydrateReport(todayReport)"这条链形成无限循环。
-  const lastHydratedIdRef = useRef<string | null>(null);
-  const hydrateReport = useCallback((summary: Report | null) => {
+  // hydrateReport 内部记录 lastHydratedId / hydratingId，避免"详情合并 setReports →
+  // orderedReports 变化 → useEffect 重跑 → 又 hydrateReport(todayReport)"形成循环。
+  // 30 分钟内的完整正文走内存缓存；到期后即使 id 相同也会重新拉详情。
+  const lastHydratedIdRef = useRef<string | null>(
+    readFreshLatestDailyReport(user?.id)?.id ?? null,
+  );
+  const hydratingReportIdRef = useRef<string | null>(null);
+  const hydrateReport = useCallback((
+    summary: Report | null,
+    options?: { force?: boolean; asLatest?: boolean },
+  ) => {
+    const userId = user?.id;
+    const force = options?.force === true;
+    const asLatest = options?.asLatest === true;
     if (summary == null) {
       reportDetailRequestId.current += 1;
       lastHydratedIdRef.current = null;
+      hydratingReportIdRef.current = null;
       setReport(null);
       setReportDetailError(null);
       return;
     }
-    if (lastHydratedIdRef.current === summary.id) {
-      // 同一份已在展示（或正在懒加载中），不重复请求；只保证 UI 切到它。
-      setReport((current) => (current?.id === summary.id ? current : summary));
+    const cached = readDailyReportDetailCache(userId, summary.id);
+    const fresh = isDailyReportDetailCacheFresh(userId, summary.id);
+    if (!force && cached && fresh) {
+      lastHydratedIdRef.current = summary.id;
+      hydratingReportIdRef.current = null;
+      setReport(cached);
+      setReportDetailError(null);
+      return;
+    }
+    if (!force && hydratingReportIdRef.current === summary.id) {
+      setReport((current) => (current?.id === summary.id ? current : (cached ?? summary)));
       return;
     }
     lastHydratedIdRef.current = summary.id;
-    setReport(summary);
+    hydratingReportIdRef.current = summary.id;
+    setReport(cached ?? summary);
     setReportDetailError(null);
     const requestId = ++reportDetailRequestId.current;
     void (async () => {
       try {
         const detail = await fetchReportDetail(summary.id);
         if (requestId !== reportDetailRequestId.current) return;
+        writeDailyReportDetailCache(userId, detail, { asLatest });
+        hydratingReportIdRef.current = null;
         setReport(detail);
         setReports((current) =>
           current.map((item) => (item.id === detail.id ? { ...item, ...detail } : item)),
         );
       } catch (error) {
         if (requestId !== reportDetailRequestId.current) return;
+        hydratingReportIdRef.current = null;
         setReportDetailError(
           userFacingErrorMessage(error, "日报正文加载失败，请稍后重试。"),
         );
       }
     })();
-  }, []);
+  }, [user?.id]);
 
   const selectReportInContext = useCallback(
     (selected: Report, mode: "push" | "replace" = "push") => {
@@ -827,7 +895,7 @@ export function Dashboard() {
   );
 
   const returnToToday = useCallback(() => {
-    hydrateReport(todayReport);
+    hydrateReport(todayReport, { asLatest: true });
     setActiveTab("report");
     updateReportUrl(null, "push");
     focusReportRegion();
@@ -835,15 +903,17 @@ export function Dashboard() {
 
   const handleReportDeleted = useCallback(
     (deletedId: string) => {
+      deleteDailyReportDetailCache(user?.id, deletedId);
       const deletedIndex = orderedReports.findIndex((item) => item.id === deletedId);
       const remaining = orderedReports.filter((item) => item.id !== deletedId);
       setReports(remaining);
+      writeDailyReportsListCache(user?.id, remaining);
       if (report?.id !== deletedId) return;
       const adjacent = remaining[Math.min(Math.max(deletedIndex, 0), remaining.length - 1)] ?? null;
-      hydrateReport(adjacent);
+      hydrateReport(adjacent, { asLatest: true });
       updateReportUrl(adjacent?.id ?? null, "replace");
     },
-    [hydrateReport, orderedReports, report?.id, updateReportUrl],
+    [hydrateReport, orderedReports, report?.id, updateReportUrl, user?.id],
   );
 
   // 拆成两个 effect：恢复逻辑仍按原来的依赖逐次补跑，但 popstate 监听器只在
@@ -858,7 +928,9 @@ export function Dashboard() {
       }
       return;
     }
-    if (activeTab === "report") hydrateReport(todayReport);
+    if (activeTab === "report" && todayReport) {
+      hydrateReport(todayReport, { asLatest: true });
+    }
   }, [activeTab, hydrateReport, orderedReports, setActiveTab, todayReport]);
   const restoreReportFromUrlRef = useRef(restoreReportFromUrl);
 
@@ -1250,9 +1322,11 @@ export function Dashboard() {
     // 但仍要更新 lastHydratedId，避免随后 URL 恢复触发重复请求。
     lastHydratedIdRef.current = completedReport.id;
     reportDetailRequestId.current += 1;
+    hydratingReportIdRef.current = null;
+    writeDailyReportDetailCache(user?.id, completedReport, { asLatest: true });
     setReport(completedReport);
     setReportDetailError(null);
-    await loadHistory();
+    await loadHistory({ force: true });
     setActiveJobId(null);
 
     const shouldNavigate = options?.navigateToReport !== false;
@@ -1546,7 +1620,7 @@ export function Dashboard() {
         const isHoldingsPage = result.ocr_source === "alipay_holdings";
         throw new Error(
           isHoldingsPage
-            ? "这张是持仓总览截图。加减仓请传「交易记录」或「交易分析」页；要同步持仓请用「上传截图 / 新增持有」。"
+            ? "这张是持仓总览截图。导入交易请传「交易记录」或「交易分析」页；只要当前持仓请用「同步持仓」。"
             : "未识别到交易记录，请确认截图为支付宝「交易记录 / 交易分析」页。",
         );
       }
@@ -1809,7 +1883,8 @@ export function Dashboard() {
                               label: "重试",
                               onClick: () => {
                                 lastHydratedIdRef.current = null;
-                                hydrateReport(report);
+                                hydratingReportIdRef.current = null;
+                                hydrateReport(report, { force: true });
                               },
                             }
                           : undefined
@@ -1824,6 +1899,7 @@ export function Dashboard() {
                     currentHoldings={
                       report?.id === todayReport?.id ? displayableHoldings(holdings) : undefined
                     }
+                    onOpenHolding={setSelectedHoldingKey}
                     diagnostics={() => (
                       <ReportDiagnostics
                         holdings={displayableHoldings(holdings)}
@@ -1872,7 +1948,7 @@ export function Dashboard() {
             loading={historyLoading}
             error={historyError}
             onClose={() => setReportHistoryOpen(false)}
-            onRefresh={loadHistory}
+            onRefresh={() => void loadHistory({ force: true })}
             onSelect={(selected) => selectReportInContext(selected)}
             onDeleted={handleReportDeleted}
           />
@@ -1992,6 +2068,14 @@ export function Dashboard() {
           onAdjustHolding={handleAdjustHolding}
           onApplyTransaction={handleSingleFundTransaction}
         />
+      ) : selectedHoldingPreview ? (
+        <YangjibaoFundDetail
+          holding={selectedHoldingPreview}
+          holdingIndex={0}
+          holdings={[selectedHoldingPreview]}
+          onClose={() => setSelectedHoldingKey(null)}
+          onNavigate={() => undefined}
+        />
       ) : null}
 
       {showAddHoldingModal ? (
@@ -2025,7 +2109,10 @@ export function Dashboard() {
       {pendingTransactions && !showBatchModal ? (
         <BatchTransactionConfirmModal
           transactions={pendingTransactions}
-          heldFundCodes={displayableHoldings(holdings).map((holding) => holding.fund_code)}
+          heldFunds={displayableHoldings(holdings).map((holding) => ({
+            fund_code: holding.fund_code,
+            fund_name: holding.fund_name,
+          }))}
           isBusy={isApplyingTransactions}
           errorMessage={transactionApplyError}
           onChange={(transactions) => {

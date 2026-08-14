@@ -327,7 +327,7 @@ export function YangjibaoHoldingsBoard({
                 <div className="mt-1 flex flex-wrap items-center justify-center gap-2.5">
                   <button type="button" onClick={onAddHolding} className="btn-primary !min-h-11 !px-5 !py-2.5 !text-sm">
                     <Plus size={16} />
-                    上传截图 / 新增持有
+                    同步持仓
                   </button>
                   {onBatchTransaction ? (
                     <button
@@ -336,7 +336,7 @@ export function YangjibaoHoldingsBoard({
                       className="btn-secondary !min-h-11 !px-5 !py-2.5 !text-sm"
                     >
                       <ArrowLeftRight size={16} />
-                      批量加减仓
+                      导入交易
                     </button>
                   ) : null}
                 </div>
@@ -645,7 +645,7 @@ export function YangjibaoHoldingsBoard({
               className="flex min-h-11 flex-1 items-center justify-center gap-1.5 bg-white px-2 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--brand)]"
             >
               <Plus size={16} />
-              新增持有
+              同步持仓
             </button>
             {onBatchTransaction ? (
               <button
@@ -654,7 +654,7 @@ export function YangjibaoHoldingsBoard({
                 className="flex min-h-11 flex-1 items-center justify-center gap-1.5 border-l border-slate-100 bg-white px-2 py-2.5 text-sm font-bold text-[var(--brand)] transition hover:bg-[var(--brand-soft)] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--brand)]"
               >
                 <ArrowLeftRight size={16} />
-                批量加减仓
+                导入交易
               </button>
             ) : null}
           </div>

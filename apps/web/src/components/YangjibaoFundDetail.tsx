@@ -1036,7 +1036,15 @@ export function YangjibaoFundDetail({
         </div>
 
         <footer className="sticky bottom-0 z-10 shrink-0 border-t border-slate-100 bg-white">
-          <div className="grid grid-cols-3 divide-x divide-slate-100">
+          <div
+            className={`grid divide-x divide-slate-100 ${
+              onAdjustHolding && onDeleteHolding
+                ? "grid-cols-3"
+                : onAdjustHolding || onDeleteHolding
+                  ? "grid-cols-2"
+                  : "grid-cols-1"
+            }`}
+          >
             <button
               type="button"
               onClick={onClose}
@@ -1045,14 +1053,16 @@ export function YangjibaoFundDetail({
               <ChevronLeft size={18} className="text-slate-500" />
               返回列表
             </button>
-            <button
-              type="button"
-              onClick={() => setModifyOpen(true)}
-              className="flex min-h-11 flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-[#2356e0] hover:bg-blue-50"
-            >
-              <Pencil size={18} className="text-[#2356e0]" />
-              修改持仓
-            </button>
+            {onAdjustHolding ? (
+              <button
+                type="button"
+                onClick={() => setModifyOpen(true)}
+                className="flex min-h-11 flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-[#2356e0] hover:bg-blue-50"
+              >
+                <Pencil size={18} className="text-[#2356e0]" />
+                修改持仓
+              </button>
+            ) : null}
             {onDeleteHolding ? (
               <button
                 type="button"
@@ -1063,9 +1073,7 @@ export function YangjibaoFundDetail({
               >
                 删除该基金
               </button>
-            ) : (
-              <div />
-            )}
+            ) : null}
           </div>
         </footer>
 

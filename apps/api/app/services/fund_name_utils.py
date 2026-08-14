@@ -94,7 +94,8 @@ FUND_NAME_HINTS = (
 )
 PARTIAL_FUND_NAME_ENDINGS = ("混合", "联接", "ETF", "ETF联", "主", "混", "股票", "股", "指数")
 # 东财简称相对 OCR/支付宝展示的差异（查码时双方都要归一化）
-LOOKUP_NAME_STRIP_TOKENS = ("发起式", "主题")
+LOOKUP_NAME_STRIP_TOKENS = ("发起式", "主题", "灵活配置", "证券投资基金")
+_LOOKUP_TYPE_SUFFIX_RE = re.compile(r"(混合|股票|指数|债券|联接)型")
 # 东财 QDII 全称常带「人民币/美元/港币」份额币种，支付宝 OCR 常省略
 LOOKUP_CURRENCY_SUFFIXES = ("人民币", "美元", "港币")
 SHARE_CLASS_SUFFIX_RE = re.compile(
@@ -145,6 +146,8 @@ def normalize_fund_name_for_lookup(name: str) -> str:
         )
     # 支付宝展示名常带「材料」：天弘半导体材料设备指数C ↔ 东财 天弘半导体设备指数C
     result = result.replace("半导体材料设备", "半导体设备")
+    # 支付宝全称「灵活配置混合 / 股票型证券投资基金」；东财简称「混合 / 股票」
+    result = _LOOKUP_TYPE_SUFFIX_RE.sub(r"\1", result)
     return result
 
 

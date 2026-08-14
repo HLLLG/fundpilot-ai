@@ -17,7 +17,7 @@ function Harness() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)}>新增持有</button>
+      <button type="button" onClick={() => setOpen(true)}>同步持仓</button>
       <AddHoldingModal
         open={open}
         onClose={() => setOpen(false)}
@@ -30,11 +30,11 @@ function Harness() {
 
 it("discloses the configured OCR boundary and restores focus on Escape", () => {
   render(<Harness />);
-  const trigger = screen.getByRole("button", { name: "新增持有" });
+  const trigger = screen.getByRole("button", { name: "同步持仓" });
   trigger.focus();
   fireEvent.click(trigger);
 
-  expect(screen.getByRole("dialog", { name: "导入持有" })).toBeInTheDocument();
+  expect(screen.getByRole("dialog", { name: "同步持仓" })).toBeInTheDocument();
   expect(screen.getByText(OCR_PRIVACY_COPY.uploadNotice)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "关闭" })).toHaveFocus();
   expect(document.body.style.overflow).toBe("hidden");
@@ -47,7 +47,7 @@ it("discloses the configured OCR boundary and restores focus on Escape", () => {
 
 it("uses associated labels and keeps an incomplete manual draft un-submittable", () => {
   render(<Harness />);
-  fireEvent.click(screen.getByRole("button", { name: "新增持有" }));
+  fireEvent.click(screen.getByRole("button", { name: "同步持仓" }));
   fireEvent.click(screen.getByRole("button", { name: "手动输入" }));
 
   expect(screen.getByRole("textbox", { name: "基金名称" })).toBeInTheDocument();

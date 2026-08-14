@@ -147,6 +147,18 @@ describe("ReportPanel 结构化证据", () => {
   // 删除（逐格与本屏已有内容重复，见 ReportSummaryHero 内的说明），所以这条用例测的
   // UI 不存在了，随之移除。告警条数本身仍由上一条用例经 `report-risk-alerts` 覆盖。
 
+  it("点击基金名称打开持仓详情", () => {
+    const onOpenHolding = vi.fn();
+    render(<ReportPanel report={sampleReport()} onOpenHolding={onOpenHolding} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "查看 银河创新成长 详情" }));
+
+    expect(onOpenHolding).toHaveBeenCalledWith({
+      fund_code: "519674",
+      fund_name: "银河创新成长",
+    });
+  });
+
   it("成品视图渲染使用边界，而不是只在流式骨架里闪一下", () => {
     render(<ReportPanel report={sampleReport()} />);
 

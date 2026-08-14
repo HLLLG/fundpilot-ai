@@ -252,10 +252,13 @@ python scripts/run_position_sizing_backtest.py --sqlite-cache ../../data/app.db 
 | `--base-fraction` | 0.20 | 现状类梯形的首仓占预算比例（取自 discovery 首仓上限） |
 | `--sweep` | 关 | 在参数网格上重跑并附敏感性表 |
 | `--sweep-tier-thresholds` | 关 | 固定「现状 + 浮亏封档」梯形，只扫加仓档位**分界线**（生产等分 vs 换锚/平移/不分档），逐变体与生产边界配对检验 |
+| `--sweep-add-throttle` | 关 | 固定生产梯形，只叠加**加仓节流**候选：距上笔买入间隔 ≥{3,5,7} 自然日、或较上笔买入价涨 ≥{3,5}% 才可再加，逐变体与无节流配对检验 |
 | `--out-dir` | `var/position_sizing` | 输出目录 |
 
 档位百分比集合（20/15/10/5）是产品策略、sweep 不动它；扫的是 `_v3_add_tier_thresholds`
-那条"等分 gate→85"分界线本身——它此前没有任何回测依据。
+那条"等分 gate→85"分界线本身——它此前没有任何回测依据。加仓节流同理：方向持续 ready 时
+线上每天都可能给同一只基金加仓、没有任何间隔抑制，节流是否值得上线由这份 sweep 先回答，
+**当前没有任何线上节流规则**。
 
 入场信号由 `replay_sector_direction` 逐日 PIT 重放**生产打分器**，档位调生产
 `_resolve_sector_add_tier`、系数用 `V3_TREND_TRANCHE_SCALES`、退出线用 `EXIT_TREND_THRESHOLD`；

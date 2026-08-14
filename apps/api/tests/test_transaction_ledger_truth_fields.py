@@ -350,7 +350,7 @@ def test_apply_preserves_confirmed_shares_fee_and_progress_state(monkeypatch) ->
     monkeypatch.setattr(
         transaction_ledger,
         "_seed_amounts_for_new_positions",
-        lambda _codes, _profiles: None,
+        lambda _codes, _profiles, **_kwargs: None,
     )
     monkeypatch.setattr(transaction_ledger, "list_pending_fund_transactions", lambda: [])
     monkeypatch.setattr(
@@ -380,6 +380,56 @@ def test_apply_preserves_confirmed_shares_fee_and_progress_state(monkeypatch) ->
     assert inserted[0].fee_yuan == 0.5
     assert inserted[0].shares_source == "user_confirmed"
     assert inserted[0].in_progress is True
+
+
+def test_apply_uses_cache_only_portfolio_sync(monkeypatch) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(
+        transaction_ledger,
+        "list_fund_profiles",
+        lambda: [FundProfile(
+            fund_code="000001", fund_name="测试基金", holding_amount=100
+        )],
+    )
+    monkeypatch.setattr(transaction_ledger, "confirm_pending_transactions", lambda: 0)
+    monkeypatch.setattr(
+        transaction_ledger,
+        "_seed_amounts_for_new_positions",
+        lambda _codes, _profiles, **_kwargs: None,
+    )
+    monkeypatch.setattr(transaction_ledger, "list_pending_fund_transactions", lambda: [])
+    monkeypatch.setattr(
+        transaction_ledger,
+        "insert_fund_transaction",
+        lambda _tx: True,
+    )
+
+    def fake_sync(**kwargs):
+        captured.update(kwargs)
+        return [Holding(fund_code="000001", fund_name="测试基金", holding_amount=100)]
+
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
+        fake_sync,
+    )
+
+    transaction_ledger.apply_parsed_transactions(
+        [
+            ParsedTransaction(
+                direction="buy",
+                fund_name="测试基金",
+                fund_code="000001",
+                amount_yuan=100,
+                confirmed_shares=10,
+                trade_time="2026-07-01 14:30:00",
+                confirm_date="2026-07-01",
+            )
+        ]
+    )
+
+    assert captured["fetch_benchmark"] is False
+    assert captured["cache_only_quotes"] is True
+    assert captured["with_official_nav"] is False
 
 
 def test_database_round_trip_preserves_transaction_truth_fields(tmp_path, monkeypatch) -> None:
@@ -429,7 +479,7 @@ def test_apply_atomically_double_writes_pending_and_confirmed_ledger(monkeypatch
     monkeypatch.setattr(
         transaction_ledger,
         "_seed_amounts_for_new_positions",
-        lambda _codes, _profiles: None,
+        lambda _codes, _profiles, **_kwargs: None,
     )
     monkeypatch.setattr(
         "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
@@ -598,7 +648,7 @@ def test_duplicate_with_different_confirmed_truth_returns_conflict_before_writes
     monkeypatch.setattr(
         transaction_ledger,
         "_seed_amounts_for_new_positions",
-        lambda _codes, _profiles: None,
+        lambda _codes, _profiles, **_kwargs: None,
     )
     monkeypatch.setattr(
         "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
@@ -655,7 +705,7 @@ def test_exact_retry_heals_missing_new_buy_profile(monkeypatch) -> None:
     monkeypatch.setattr(
         transaction_ledger,
         "_seed_amounts_for_new_positions",
-        lambda _codes, _profiles: None,
+        lambda _codes, _profiles, **_kwargs: None,
     )
     monkeypatch.setattr(
         "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
@@ -703,7 +753,7 @@ def test_canonical_request_reuses_legacy_formatted_dedup_record(monkeypatch) -> 
     monkeypatch.setattr(
         transaction_ledger,
         "_seed_amounts_for_new_positions",
-        lambda _codes, _profiles: None,
+        lambda _codes, _profiles, **_kwargs: None,
     )
     monkeypatch.setattr(
         "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",

@@ -11,6 +11,7 @@ import { ReportSummaryHero } from "@/components/ReportSummaryHero";
 import { StatusPill } from "@/components/StatusPill";
 import type { Holding, Report } from "@/lib/api";
 import { fetchReportMarkdown } from "@/lib/api";
+import type { HoldingIdentity } from "@/lib/holdingMetrics";
 import {
   displayFundRecommendations,
   groupFundRecommendations,
@@ -24,6 +25,7 @@ type ReportPanelProps = {
   onStreamFollowup?: (message: string) => Promise<void>;
   diagnostics?: () => React.ReactNode;
   currentHoldings?: Holding[];
+  onOpenHolding?: (holding: HoldingIdentity) => void;
 };
 
 export function ReportPanel({
@@ -33,6 +35,7 @@ export function ReportPanel({
   onStreamFollowup,
   diagnostics,
   currentHoldings,
+  onOpenHolding,
 }: ReportPanelProps) {
   const [isExporting, setIsExporting] = useState(false);
 
@@ -118,6 +121,7 @@ export function ReportPanel({
         <ReportRecommendationList
           report={viewReport}
           recommendations={fundRecommendations}
+          onOpenHolding={onOpenHolding}
         />
         <ReportDetailsHub report={viewReport} diagnostics={diagnostics} />
         <ReportCaveatsNotice caveats={viewReport.caveats} />

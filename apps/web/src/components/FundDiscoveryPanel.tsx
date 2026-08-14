@@ -59,11 +59,18 @@ import {
   sortReportsByCreatedAtDesc,
   streamLooksDead,
 } from "@/lib/discoveryScanRecovery";
+import {
+  deleteDiscoveryReportDetailCache,
+  isDiscoveryReportDetailCacheFresh,
+  readDiscoveryReportDetailCache,
+  readFreshLatestDiscoveryReport,
+  writeDiscoveryReportDetailCache,
+} from "@/lib/discoveryReportCache";
 
 const DISCOVERY_SECTORS_CACHE_KEY = "discovery-panel:sectors";
 const DISCOVERY_REPORTS_CACHE_KEY = "discovery-panel:reports";
 const DISCOVERY_SECTORS_STALE_MS = 30 * 60 * 1000;
-const DISCOVERY_REPORTS_STALE_MS = 2 * 60 * 1000;
+const DISCOVERY_REPORTS_STALE_MS = 30 * 60 * 1000;
 const DEFAULT_DISCOVERY_PROMPT: DiscoveryPromptConfig = {
   role_prompt: "",
   default_role_prompt: "",
@@ -174,7 +181,9 @@ export function FundDiscoveryPanel({
   );
   const budgetChangedByUserRef = useRef(false);
   const budgetUserRef = useRef(userId);
-  const [report, setReport] = useState<FundDiscoveryReport | null>(null);
+  const [report, setReport] = useState<FundDiscoveryReport | null>(() =>
+    readFreshLatestDiscoveryReport(userId),
+  );
   // 历史列表接口只返回摘要字段，点击某份报告时按 id 拉一次完整详情。
   // 通过递增的 request id 保证快速连点时只应用最后一次的详情。
   const historyDetailRequestId = useRef(0);
@@ -283,11 +292,12 @@ export function FundDiscoveryPanel({
 
   useEffect(() => {
     if (!pendingDiscoveryReport) return;
+    writeDiscoveryReportDetailCache(userId, pendingDiscoveryReport, { asLatest: true });
     setReport(pendingDiscoveryReport);
     setFeedback(null);
     void refreshReports();
     onPendingDiscoveryReportApplied();
-  }, [pendingDiscoveryReport, refreshReports, onPendingDiscoveryReportApplied]);
+  }, [pendingDiscoveryReport, refreshReports, onPendingDiscoveryReportApplied, userId]);
 
   const reportId = report?.id ?? null;
   useEffect(() => {
@@ -542,16 +552,30 @@ export function FundDiscoveryPanel({
 
   const selectHistoryReport = useCallback((
     selected: FundDiscoveryReport,
-    options?: { revealReport?: boolean },
+    options?: { revealReport?: boolean; asLatest?: boolean },
   ) => {
     // 只有用户主动点选（历史抽屉、删除后切到相邻一份）才移动焦点并滚动过去；
     // 打开页面时的自动载入必须保持安静，否则会抢走焦点、把页面自动滚下去。
     const revealReport = options?.revealReport !== false;
-    // 先用摘要占位切换视图，让用户马上看到标题/时间/方向而不是空白。
+    const asLatest = options?.asLatest === true;
+    const cached = readDiscoveryReportDetailCache(userId, selected.id);
+    if (cached && isDiscoveryReportDetailCacheFresh(userId, selected.id)) {
+      setReport(cached);
+      setHistoryDetailError(null);
+      setConfigExpanded(false);
+      if (!revealReport) return;
+      window.setTimeout(() => {
+        const region = reportRegionRef.current;
+        region?.focus();
+        region?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+      }, 0);
+      return;
+    }
+    // 先用摘要或过期正文占位切换视图，让用户马上看到标题/时间/方向而不是空白。
     // 关键正文（decision_events / discovery_facts / candidate_pool）稍后从
     // /reports/{id} 拉回后再合并；这段时间 DiscoveryReportPanel 里那些字段读到
     // undefined 会走空态分支，不会崩。
-    setReport(selected);
+    setReport(cached ?? selected);
     setConfigExpanded(false);
     setHistoryDetailError(null);
     const requestId = ++historyDetailRequestId.current;
@@ -559,6 +583,7 @@ export function FundDiscoveryPanel({
       try {
         const detail = await fetchDiscoveryReportDetail(selected.id);
         if (requestId !== historyDetailRequestId.current) return;
+        writeDiscoveryReportDetailCache(userId, detail, { asLatest });
         setReport(detail);
       } catch (error) {
         if (requestId !== historyDetailRequestId.current) return;
@@ -574,38 +599,44 @@ export function FundDiscoveryPanel({
       // scrollIntoView 在 jsdom / 部分内嵌 WebView 里不存在。
       region?.scrollIntoView?.({ behavior: "smooth", block: "start" });
     }, 0);
-  }, []);
+  }, [userId]);
 
   const handleHistoryDeleted = useCallback(
     (deletedId: string) => {
+      deleteDiscoveryReportDetailCache(userId, deletedId);
       if (report?.id !== deletedId) return;
       const remaining = historyReports.filter((item) => item.id !== deletedId);
       const deletedIndex = historyReports.findIndex((item) => item.id === deletedId);
       const adjacent = remaining[Math.min(Math.max(deletedIndex, 0), remaining.length - 1)] ?? null;
       if (adjacent) {
         // 列表接口只返回摘要，切到相邻一份也要按 id 拉完整详情，避免正文空白。
-        selectHistoryReport(adjacent);
+        selectHistoryReport(adjacent, { asLatest: true });
       } else {
         setReport(null);
         setHistoryDetailError(null);
       }
     },
-    [historyReports, report?.id, selectHistoryReport],
+    [historyReports, report?.id, selectHistoryReport, userId],
   );
 
   // 打开页面就展示最近一份报告，与日报页一致。历史实现让 report 停在 null，用户每次
   // 都得先打开「历史推荐」抽屉点一下才看得到上次结果。
   // 只在本账号第一次拿到历史列表时做，之后用户手动选/删除/新扫描都不再干预。
+  // 30 分钟内的完整正文走内存缓存，切走再回来不必重新拉 5–9 MB 的详情。
   useEffect(() => {
     if (userId == null || autoLoadedLatestForUserRef.current === userId) return;
     if (!historyReports.length) return;
-    // 正在扫描、或已有正文（含刚扫完待应用的那份）时不要抢。
-    if (report || pendingDiscoveryReport || streamingDiscovery) {
+    // 正在扫描、或已有刚扫完待应用的正文时不要抢。
+    if (pendingDiscoveryReport || streamingDiscovery) {
       autoLoadedLatestForUserRef.current = userId;
       return;
     }
+    const latest = historyReports[0];
     autoLoadedLatestForUserRef.current = userId;
-    selectHistoryReport(historyReports[0], { revealReport: false });
+    if (report?.id === latest.id && isDiscoveryReportDetailCacheFresh(userId, latest.id)) {
+      return;
+    }
+    selectHistoryReport(latest, { revealReport: false, asLatest: true });
   }, [historyReports, pendingDiscoveryReport, report, selectHistoryReport, streamingDiscovery, userId]);
 
   // 每收到一个流事件就刷新"最近有动静"的时间戳（streamingDiscovery 每次事件都是新对象）。
@@ -644,7 +675,7 @@ export function FundDiscoveryPanel({
       tone: "info",
       message: "扫描已在后台完成（页面切到后台时流式连接被系统挂起），已载入最新结果。",
     });
-    selectHistoryReport(recovered);
+    selectHistoryReport(recovered, { asLatest: true });
   }, [
     discoveryStreamAbortRef,
     onDiscoveryJobIdChange,

@@ -404,9 +404,9 @@ test("截图识别可校对写入并打开基金详情", async ({ page }, testIn
 
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1, name: "账户持仓" })).toBeVisible();
-  await page.getByRole("button", { name: /上传截图.*新增持有/ }).click();
+  await page.getByRole("button", { name: "同步持仓" }).click();
 
-  const importDialog = page.getByRole("dialog", { name: "导入持有" });
+  const importDialog = page.getByRole("dialog", { name: "同步持仓" });
   await expect(importDialog).toBeVisible();
   await importDialog.locator('input[type="file"]').setInputFiles({
     name: "holding.png",

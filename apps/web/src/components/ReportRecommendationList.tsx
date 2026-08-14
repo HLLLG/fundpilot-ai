@@ -8,6 +8,7 @@ import { FundRecommendationCard } from "@/components/FundRecommendationCard";
 type ReportRecommendationListProps = {
   report: Report;
   recommendations?: Report["fund_recommendations"];
+  onOpenHolding?: (holding: { fund_code: string; fund_name: string }) => void;
 };
 
 type EvidenceGuardFacts = {
@@ -54,6 +55,7 @@ function DecisionReadinessNotice({ report }: { report: Report }) {
 export function ReportRecommendationList({
   report,
   recommendations,
+  onOpenHolding,
 }: ReportRecommendationListProps) {
   const items = recommendations ?? displayFundRecommendations(report);
   const { needsAction, observing } = groupFundRecommendations(items);
@@ -87,6 +89,7 @@ export function ReportRecommendationList({
                   report={report}
                   recommendationIndex={recommendationIndex}
                   defaultExpanded
+                  onOpenHolding={onOpenHolding}
                 />
               );
             })}
@@ -111,6 +114,7 @@ export function ReportRecommendationList({
                   report={report}
                   recommendationIndex={recommendationIndex}
                   defaultExpanded={false}
+                  onOpenHolding={onOpenHolding}
                 />
               );
             })}

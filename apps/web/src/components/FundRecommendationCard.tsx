@@ -23,6 +23,7 @@ import { DecisionEvidenceGrid } from "@/components/DecisionEvidenceGrid";
 import { MethodologyNote } from "@/components/MethodologyNote";
 import { QuantEvidenceSummary } from "@/components/QuantEvidenceSummary";
 import { SectorOpportunityCard } from "@/components/SectorOpportunityCard";
+import type { HoldingIdentity } from "@/lib/holdingMetrics";
 
 // formatter 提到模块作用域：日报按推荐条数逐条渲染金额。无选项的
 // `Intl.NumberFormat(locale)` 与 `n.toLocaleString(locale)` 输出一致。
@@ -35,6 +36,7 @@ type FundRecommendationCardProps = {
   report: Report;
   recommendationIndex: number;
   defaultExpanded: boolean;
+  onOpenHolding?: (holding: HoldingIdentity) => void;
 };
 
 const actionAccentClasses = {
@@ -493,6 +495,7 @@ export function FundRecommendationCard({
   report,
   recommendationIndex,
   defaultExpanded,
+  onOpenHolding,
 }: FundRecommendationCardProps) {
   const [summaryOpen, setSummaryOpen] = useState(defaultExpanded);
   const [whyOpen, setWhyOpen] = useState(false);
@@ -564,38 +567,85 @@ export function FundRecommendationCard({
   const referenceLabel = confidenceDisplayLabel(item.confidence);
   const navHint = navHintForSnapshot(snapshot);
   const actionAccentClass = actionAccentClasses[actionTone(item.action)];
+  const actionBadge = (
+    <span className={`ml-auto max-w-full rounded-full border px-2 py-0.5 text-xs font-bold ${actionBadgeClass(item.action)}`}>
+      {item.action}
+      {item.suggested_position_change_percent != null ? (
+        <span>
+          {" · "}
+          {item.suggested_position_change_percent > 0 ? "+" : "−"}
+          {formatAdjustmentPercent(item.suggested_position_change_percent)}%
+        </span>
+      ) : null}
+    </span>
+  );
+  const expandLabel = `${summaryOpen ? "收起" : "展开"} ${item.fund_name}`;
 
-  const cardBody = (
-    <div className={`min-w-0 overflow-hidden rounded-2xl border border-l-4 border-slate-200 bg-white ${actionAccentClass}`}>
-      <button
-        type="button"
-        onClick={() => setSummaryOpen((value) => !value)}
-        aria-expanded={summaryOpen}
-        aria-controls={`${stableIdentity}-summary`}
-        aria-label={`${summaryOpen ? "收起" : "展开"} ${item.fund_name}`}
-        className="flex min-h-11 w-full min-w-0 flex-col gap-2 px-4 py-3 text-left"
-      >
-        <span className="flex w-full min-w-0 flex-wrap items-center gap-2">
+  const cardHeader = onOpenHolding ? (
+    <div className="flex min-h-11 w-full min-w-0 flex-col gap-2 px-4 py-3 text-left">
+      <span className="flex w-full min-w-0 flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() =>
+            onOpenHolding({
+              fund_code: item.fund_code,
+              fund_name: item.fund_name,
+            })
+          }
+          aria-label={`查看 ${item.fund_name} 详情`}
+          className="min-w-0 rounded-lg text-left transition hover:text-[var(--brand-strong)]"
+        >
           <strong className="min-w-0 break-words text-sm text-slate-950 [overflow-wrap:anywhere]">
             {item.fund_name}
           </strong>
-          <span className="text-xs text-slate-500">{item.fund_code}</span>
-          {referenceLabel ? <span className="text-xs text-slate-500">{referenceLabel}</span> : null}
-          <span className={`ml-auto max-w-full rounded-full border px-2 py-0.5 text-xs font-bold ${actionBadgeClass(item.action)}`}>
-            {item.action}
-            {item.suggested_position_change_percent != null ? (
-              <span>
-                {" · "}
-                {item.suggested_position_change_percent > 0 ? "+" : "−"}
-                {formatAdjustmentPercent(item.suggested_position_change_percent)}%
-              </span>
-            ) : null}
+          <span className="ml-2 text-xs text-slate-500">{item.fund_code}</span>
+          <span className="mt-1 block text-[11px] font-medium text-[var(--brand)]">
+            查看基金详情 →
           </span>
-        </span>
-        <span className="w-full break-words text-xs leading-5 text-slate-600 [overflow-wrap:anywhere]">
-          {primaryReason}
-        </span>
-      </button>
+        </button>
+        {referenceLabel ? <span className="text-xs text-slate-500">{referenceLabel}</span> : null}
+        {actionBadge}
+        <button
+          type="button"
+          onClick={() => setSummaryOpen((value) => !value)}
+          aria-expanded={summaryOpen}
+          aria-controls={`${stableIdentity}-summary`}
+          aria-label={expandLabel}
+          className="flex size-9 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-50"
+        >
+          <ChevronDown className={`size-4 transition ${summaryOpen ? "rotate-180" : ""}`} />
+        </button>
+      </span>
+      <span className="w-full break-words text-xs leading-5 text-slate-600 [overflow-wrap:anywhere]">
+        {primaryReason}
+      </span>
+    </div>
+  ) : (
+    <button
+      type="button"
+      onClick={() => setSummaryOpen((value) => !value)}
+      aria-expanded={summaryOpen}
+      aria-controls={`${stableIdentity}-summary`}
+      aria-label={expandLabel}
+      className="flex min-h-11 w-full min-w-0 flex-col gap-2 px-4 py-3 text-left"
+    >
+      <span className="flex w-full min-w-0 flex-wrap items-center gap-2">
+        <strong className="min-w-0 break-words text-sm text-slate-950 [overflow-wrap:anywhere]">
+          {item.fund_name}
+        </strong>
+        <span className="text-xs text-slate-500">{item.fund_code}</span>
+        {referenceLabel ? <span className="text-xs text-slate-500">{referenceLabel}</span> : null}
+        {actionBadge}
+      </span>
+      <span className="w-full break-words text-xs leading-5 text-slate-600 [overflow-wrap:anywhere]">
+        {primaryReason}
+      </span>
+    </button>
+  );
+
+  const cardBody = (
+    <div className={`min-w-0 overflow-hidden rounded-2xl border border-l-4 border-slate-200 bg-white ${actionAccentClass}`}>
+      {cardHeader}
       {summaryOpen ? (
         <div id={`${stableIdentity}-summary`} className="min-w-0 border-t border-slate-100 px-4 pb-4">
           {item.suggested_position_change_percent != null ? (

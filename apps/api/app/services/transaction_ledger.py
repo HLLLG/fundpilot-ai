@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -22,7 +23,11 @@ from app.database import (
     update_fund_transaction,
 )
 from app.models import FundProfile, FundTransaction, Holding, ParsedTransaction
-from app.services.fund_nav_service import get_latest_unit_nav, get_unit_nav_on_date
+from app.services.fund_nav_service import (
+    get_latest_unit_nav,
+    get_unit_nav_on_date,
+    peek_cached_unit_nav,
+)
 from app.services.trading_session import resolve_confirm_date
 from app.request_context import get_request_user_id
 from app.services.decision_repository import append_portfolio_ledger_event
@@ -52,6 +57,41 @@ def _current_china_date() -> date:
     return datetime.now(_CN_TZ).date()
 
 
+def _prefetch_pending_confirm_navs(pending: list[FundTransaction]) -> None:
+    """并行预热待确认交易的历史净值，避免逐只串行拉 AkShare 子进程。"""
+    today = _current_china_date()
+    jobs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for tx in pending:
+        if not tx.fund_code or tx.in_progress:
+            continue
+        if tx.confirmed_shares is not None and tx.confirmed_shares > 0:
+            continue
+        try:
+            confirm_day = tx.confirm_date[:10]
+            if date.fromisoformat(confirm_day) > today:
+                continue
+        except ValueError:
+            continue
+        key = (tx.fund_code, confirm_day)
+        if key in seen:
+            continue
+        seen.add(key)
+        jobs.append(key)
+    if not jobs:
+        return
+
+    def _warm(job: tuple[str, str]) -> None:
+        get_unit_nav_on_date(job[0], job[1])
+
+    if len(jobs) == 1:
+        _warm(jobs[0])
+        return
+    workers = min(4, len(jobs))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(_warm, jobs))
+
+
 def confirm_pending_transactions() -> int:
     """确认当前用户的 pending 交易，优先保留用户输入的实际份额。
 
@@ -60,7 +100,9 @@ def confirm_pending_transactions() -> int:
     ``derived_amount_nav``。``in_progress`` 交易不会被净值可用性误判为已成交。
     """
     confirmed = 0
-    for tx in list_pending_fund_transactions():
+    pending = list(list_pending_fund_transactions())
+    _prefetch_pending_confirm_navs(pending)
+    for tx in pending:
         if not tx.fund_code or tx.in_progress:
             continue
         try:
@@ -454,9 +496,14 @@ def _ensure_buy_profile(
 def _seed_amounts_for_new_positions(
     fund_codes: list[str],
     profiles_by_code: dict[str, FundProfile],
+    *,
+    buy_amounts: dict[str, float] | None = None,
 ) -> None:
     """给全新建仓（holding_amount=0）的基金按有效份额 × 最新净值写入初始金额，
-    使其能进入 merge_holdings_with_profiles 展示；精确金额随后由 sync override 重算。"""
+    使其能进入 merge_holdings_with_profiles 展示；精确金额随后由 sync override 重算。
+
+    确认阶段已预热净值缓存。缓存未命中时退回买入金额，避免再打一遍 AkShare。
+    """
     effective_map = compute_effective_shares_map(
         fund_codes,
         profiles_by_code=profiles_by_code,
@@ -467,11 +514,17 @@ def _seed_amounts_for_new_positions(
         profile = profiles_by_code.get(code)
         if profile is None or (profile.holding_amount or 0) > 0:
             continue
-        nav = get_latest_unit_nav(code)
+        nav = peek_cached_unit_nav(code)
         if nav is None or nav <= 0:
+            nav = get_latest_unit_nav(code)
+        if nav is not None and nav > 0:
+            amount = round(effective * nav, 2)
+        elif buy_amounts and buy_amounts.get(code, 0) > 0:
+            amount = round(buy_amounts[code], 2)
+        else:
             continue
         saved = save_fund_profile(
-            profile.model_copy(update={"holding_amount": round(effective * nav, 2)})
+            profile.model_copy(update={"holding_amount": amount})
         )
         profiles_by_code[saved.fund_code] = saved
 
@@ -578,6 +631,7 @@ def _apply_parsed_transactions_unlocked(parsed: list[ParsedTransaction]) -> dict
                 )
                 processed.append((item, confirm_date, was_inserted))
 
+    buy_amounts: dict[str, float] = {}
     for item, confirm_date, was_inserted in processed:
         # This compatibility repair is intentionally executed for exact
         # duplicates too: the prior attempt may have committed the ledger and
@@ -588,6 +642,10 @@ def _apply_parsed_transactions_unlocked(parsed: list[ParsedTransaction]) -> dict
             profiles_by_code=profiles_by_code,
             profile_service=profile_service,
         )
+        if item.direction == "buy" and item.fund_code:
+            buy_amounts[item.fund_code] = (
+                buy_amounts.get(item.fund_code, 0.0) + float(item.amount_yuan)
+            )
 
         if not was_inserted:
             skipped += 1
@@ -598,11 +656,19 @@ def _apply_parsed_transactions_unlocked(parsed: list[ParsedTransaction]) -> dict
     _seed_amounts_for_new_positions(
         [item.fund_code for item in parsed if item.fund_code],
         profiles_by_code,
+        buy_amounts=buy_amounts,
     )
 
     from app.services.portfolio_holdings_service import sync_portfolio_from_profiles
 
-    holdings = sync_portfolio_from_profiles(refresh_sectors=True)
+    # Align with 同步持仓: write the ledger, then return from cache. Sector /
+    # benchmark / official-NAV network work belongs to the later hydrate.
+    holdings = sync_portfolio_from_profiles(
+        refresh_sectors=True,
+        fetch_benchmark=False,
+        cache_only_quotes=True,
+        with_official_nav=False,
+    )
     pending = len(list_pending_fund_transactions())
     return {
         "holdings": [holding.model_dump(mode="json") for holding in holdings],

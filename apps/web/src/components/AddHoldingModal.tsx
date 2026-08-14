@@ -20,12 +20,12 @@ import { useDialogA11y } from "@/lib/useDialogA11y";
 const ALIPAY_GUIDE_IMAGE = "/guides/alipay-holdings-overview.png";
 
 const ALIPAY_CHANNEL_COPY: { title: string; hint: ReactNode } = {
-  title: "导入持有",
+  title: "同步持仓",
   hint: (
     <>
       上传支付宝
       <span className="font-bold text-[var(--brand)]">「我的持有」</span>
-      总览截图即可同步持仓
+      总览截图，对齐当前持仓金额
     </>
   ),
 };

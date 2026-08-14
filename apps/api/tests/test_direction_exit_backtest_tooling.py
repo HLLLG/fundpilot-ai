@@ -232,6 +232,57 @@ def test_decay_gate_blocks_the_add_but_not_the_hold() -> None:
 
 
 # --------------------------------------------------------------------------
+# 加仓节流变体（sweep 的候选条件本身必须先正确）
+# --------------------------------------------------------------------------
+
+
+def _throttle_context(*, trade_date: str, price: float) -> "sizing.AddContext":
+    position = sizing.Position()
+    position.buy(cash=20.0, price=100.0, trade_date="2026-01-05", costs=_COSTS)
+    return sizing.AddContext(
+        position=position,
+        price=price,
+        remaining_budget=80.0,
+        signal_ready=True,
+        tier_percent=10.0,
+        tranche_scale=1.0,
+        tranche_index=0,
+        trade_date=trade_date,
+    )
+
+
+def test_gap_throttle_blocks_adds_inside_the_window() -> None:
+    add = sizing._throttled_current_of_holding(min_gap_days=3)
+    assert add(_throttle_context(trade_date="2026-01-07", price=110.0)) == 0.0
+    assert add(_throttle_context(trade_date="2026-01-08", price=110.0)) > 0.0
+
+
+def test_step_up_throttle_requires_price_progress() -> None:
+    add = sizing._throttled_current_of_holding(min_step_up_percent=5.0)
+    assert add(_throttle_context(trade_date="2026-01-20", price=104.0)) == 0.0
+    assert add(_throttle_context(trade_date="2026-01-20", price=105.0)) > 0.0
+
+
+def test_no_throttle_matches_the_production_loss_floor_carrier() -> None:
+    """两个参数都不启用时，行为必须与生产口径（现状 + 浮亏封档）一致。"""
+    plain = sizing._current_of_holding(loss_behaviour="floor")
+    throttled = sizing._throttled_current_of_holding()
+    # 浮盈情形。
+    ctx = _throttle_context(trade_date="2026-01-20", price=110.0)
+    assert throttled(ctx) == pytest.approx(plain(ctx))
+    # 浮亏情形（封到最低档）。
+    ctx_loss = _throttle_context(trade_date="2026-01-20", price=90.0)
+    assert throttled(ctx_loss) == pytest.approx(plain(ctx_loss))
+
+
+def test_throttle_variant_grid_covers_both_families() -> None:
+    variants = sizing.build_throttle_variants()
+    assert variants[0].key == "throttle_none"
+    assert {v.min_gap_days for v in variants if v.min_gap_days} == {3, 5, 7}
+    assert {v.min_step_up_percent for v in variants if v.min_step_up_percent} == {3.0, 5.0}
+
+
+# --------------------------------------------------------------------------
 # 数据充分性检查
 # --------------------------------------------------------------------------
 

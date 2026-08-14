@@ -128,7 +128,7 @@ def test_transaction_profile_can_join_nonempty_snapshot_without_reviving_legacy_
     monkeypatch.setattr(
         portfolio_holdings_service,
         "enrich_holdings_from_profiles",
-        lambda holdings: holdings,
+        lambda holdings, **_kwargs: holdings,
     )
     monkeypatch.setattr(
         portfolio_holdings_service,

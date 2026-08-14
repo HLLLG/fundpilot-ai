@@ -237,6 +237,8 @@ class AddContext:
     tranche_scale: float
     #: 阶梯式梯形用：已投出几笔。
     tranche_index: int
+    #: 当前交易日（ISO 日期），加仓节流按它与上一笔买入的自然日间隔判定。
+    trade_date: str = ""
 
 
 def _ladder_add(steps: tuple[float, ...], step_up: float) -> Callable[[AddContext], float]:
@@ -288,6 +290,73 @@ def _current_of_budget(ctx: AddContext) -> float:
         return 0.0
     cash = ctx.remaining_budget * ctx.tier_percent / 100.0 * ctx.tranche_scale
     return min(cash, ctx.remaining_budget)
+
+
+def _throttled_current_of_holding(
+    *,
+    min_gap_days: int | None = None,
+    min_step_up_percent: float | None = None,
+) -> Callable[[AddContext], float]:
+    """在生产口径（现状 + 浮亏封档）之上叠加加仓节流，回答"要不要限制连日加仓"。
+
+    背景：方向持续 ready 时线上每天都可能给同一只基金加仓档位，没有任何"你昨天刚加过"
+    的抑制。两族候选节流：
+
+    * ``min_gap_days``   —— 距上一笔买入不足 N 个**自然日**不加（间隔节流）；
+    * ``min_step_up_percent`` —— 现价相对上一笔买入价涨幅不足 X% 不加（利弗莫尔式
+      "证明我对了才追加"；ladder 梯形的 ``step_up`` 语义作用在生产档位上）。
+
+    两者都只是回测候选，不是线上规则。
+    """
+
+    def add(ctx: AddContext) -> float:
+        if not ctx.signal_ready:
+            return 0.0
+        last = ctx.position.tranches[-1] if ctx.position.tranches else None
+        if last is not None:
+            if min_gap_days is not None and ctx.trade_date:
+                gap = (
+                    date.fromisoformat(ctx.trade_date)
+                    - date.fromisoformat(last.trade_date)
+                ).days
+                if gap < min_gap_days:
+                    return 0.0
+            if (
+                min_step_up_percent is not None
+                and ctx.price < last.price * (1.0 + min_step_up_percent / 100.0)
+            ):
+                return 0.0
+        tier = ctx.tier_percent
+        ret = ctx.position.return_percent(ctx.price)
+        if ret is None or ret <= 0:
+            tier = min(tier, _LOWEST_ADD_TIER_PERCENT)
+        cash = ctx.position.market_value(ctx.price) * tier / 100.0 * ctx.tranche_scale
+        return min(cash, ctx.remaining_budget)
+
+    return add
+
+
+@dataclass(frozen=True)
+class ThrottleVariant:
+    key: str
+    label: str
+    min_gap_days: int | None = None
+    min_step_up_percent: float | None = None
+
+
+def build_throttle_variants() -> tuple[ThrottleVariant, ...]:
+    return (
+        ThrottleVariant("throttle_none", "无节流（= 现状 + 浮亏封档）"),
+        ThrottleVariant("throttle_gap_3", "间隔 ≥3 自然日才可再加", min_gap_days=3),
+        ThrottleVariant("throttle_gap_5", "间隔 ≥5 自然日才可再加", min_gap_days=5),
+        ThrottleVariant("throttle_gap_7", "间隔 ≥7 自然日才可再加", min_gap_days=7),
+        ThrottleVariant(
+            "throttle_step_up_3", "较上笔买入价涨 ≥3% 才可再加", min_step_up_percent=3.0
+        ),
+        ThrottleVariant(
+            "throttle_step_up_5", "较上笔买入价涨 ≥5% 才可再加", min_step_up_percent=5.0
+        ),
+    )
 
 
 def _no_add(_ctx: AddContext) -> float:
@@ -574,6 +643,7 @@ def simulate_episode(
                 tier_percent=tier_percent,
                 tranche_scale=signal.tranche_scale() if signal else 0.0,
                 tranche_index=max(position.buy_count - 1, 0),
+                trade_date=day,
             )
             pending_add = policy.add(ctx)
 
@@ -1057,6 +1127,93 @@ def simulate_tier_threshold_sweep(
     }
 
 
+def simulate_add_throttle_sweep(
+    prepared: Prepared,
+    *,
+    max_days: int,
+    stop_percent: float,
+    use_trend_exit: bool,
+    base_fraction: float,
+    costs: CostModel,
+) -> dict[str, Any]:
+    """加仓节流敏感性：生产口径（现状 + 浮亏封档）之上只叠一个节流条件。
+
+    与主表同一批 episode、同一套退出规则，每个变体与"无节流"逐 episode 配对。
+    `shadow_record_only`：占优取值也只取得人工评审资格，不自动上线任何节流规则。
+    """
+    variants = build_throttle_variants()
+    results: dict[str, list[EpisodeResult]] = {variant.key: [] for variant in variants}
+    for label, by_date in sorted(prepared.signals.items()):
+        ordered_dates = sorted(by_date)
+        previous_ready = False
+        for day in ordered_dates:
+            signal = by_date[day]
+            if signal.ready and not previous_ready:
+                cursor = prepared.index_by_label[label].get(day)
+                if cursor is not None:
+                    for variant in variants:
+                        policy = SizingPolicy(
+                            key=variant.key,
+                            label=variant.label,
+                            initial_fraction=base_fraction,
+                            add=_throttled_current_of_holding(
+                                min_gap_days=variant.min_gap_days,
+                                min_step_up_percent=variant.min_step_up_percent,
+                            ),
+                        )
+                        outcome = simulate_episode(
+                            policy=policy,
+                            prices=prepared.prices_by_label[label],
+                            signal_index=cursor,
+                            signals_by_date=by_date,
+                            sector_label=label,
+                            costs=costs,
+                            max_days=max_days,
+                            stop_percent=stop_percent,
+                            use_trend_exit=use_trend_exit,
+                        )
+                        if outcome is not None and not outcome.censored:
+                            results[variant.key].append(outcome)
+            previous_ready = signal.ready
+
+    baseline_key = variants[0].key
+    return {
+        "schema_version": "add_throttle_sweep.v1",
+        "decision_policy": "shadow_record_only",
+        "auto_tuning_eligible": False,
+        "params": {
+            "max_episode_days": max_days,
+            "trailing_stop_percent": stop_percent,
+            "trend_exit_enabled": use_trend_exit,
+            "base_fraction": base_fraction,
+        },
+        "variants": [
+            {
+                "key": variant.key,
+                "label": variant.label,
+                "min_gap_days": variant.min_gap_days,
+                "min_step_up_percent": variant.min_step_up_percent,
+                "summary": summarize(results[variant.key]),
+                **(
+                    {
+                        "paired_vs_no_throttle": paired_stats(
+                            results[variant.key], results[baseline_key]
+                        )
+                    }
+                    if variant.key != baseline_key
+                    else {}
+                ),
+            }
+            for variant in variants
+        ],
+        "caveats": [
+            "间隔按自然日、价差按板块指数收盘价——真实基金按净值与确认日，只会更迟钝。",
+            "载体是「现状 + 浮亏封档」梯形；换载体可能改变排序，结论不能跨载体外推。",
+            "样本期与主表相同（见 market_context），单一区间结论不能外推。",
+        ],
+    }
+
+
 _COLUMNS = ("梯形", "样本", "均值%", "中位%", "胜率%", "投出%", "笔数", "费用%", "回撤%", "峰值%", "留存%", "最差%")
 
 
@@ -1186,6 +1343,11 @@ def main() -> int:
         action="store_true",
         help="固定加仓梯形，只扫描档位分界线（生产等分 vs 换锚/平移/不分档）",
     )
+    parser.add_argument(
+        "--sweep-add-throttle",
+        action="store_true",
+        help="固定生产梯形，只叠加加仓节流（距上笔买入的间隔/价差）候选",
+    )
     args = parser.parse_args()
 
     costs = CostModel(
@@ -1243,9 +1405,56 @@ def main() -> int:
             encoding="utf-8",
         )
         report += "\n" + _render_tier_sweep(tier_sweep)
+    if args.sweep_add_throttle:
+        throttle_sweep = simulate_add_throttle_sweep(
+            prepared,
+            max_days=args.max_days,
+            stop_percent=args.stop_percent,
+            use_trend_exit=not args.no_trend_exit,
+            base_fraction=args.base_fraction,
+            costs=costs,
+        )
+        (out_path / "add_throttle_sweep.json").write_text(
+            json.dumps(throttle_sweep, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        report += "\n" + _render_throttle_sweep(throttle_sweep)
     (out_path / "report.txt").write_text(report, encoding="utf-8")
     print(f"报告已写入: {out_path / 'report.txt'}")
     return 0
+
+
+def _render_throttle_sweep(payload: dict[str, Any]) -> str:
+    lines = [
+        "=" * 100,
+        "加仓节流敏感性（生产梯形之上只叠一个节流条件）",
+        "  背景：方向持续 ready 时线上每天都可能给同一只基金加仓，没有任何间隔抑制。",
+        "  ⚠ shadow_record_only：占优取值也只取得人工评审资格，不自动上线节流规则。",
+        "",
+    ]
+    for entry in payload.get("variants") or []:
+        stats = entry["summary"]
+        if not stats.get("available"):
+            lines.append(f"  {entry['label']}: 样本不足")
+            continue
+        row = (
+            f"  {entry['label']}: 均值 {stats['mean_return_on_budget_percent']:+.3f}%，"
+            f"投出 {stats['mean_deployed_percent']:.1f}%，"
+            f"笔数 {stats['mean_buy_count']:.2f}，"
+            f"费用 {stats['mean_fees_percent_of_budget']:.2f}%"
+        )
+        paired = entry.get("paired_vs_no_throttle")
+        if paired and paired.get("available"):
+            row += (
+                f" ｜ vs 无节流：均值差 {paired['mean_diff_percent']:+.3f}%，"
+                f"t={paired['t_stat']}"
+                f"（{'显著' if paired['significant'] else '不显著'}）"
+            )
+        lines.append(row)
+    lines.append("")
+    for caveat in payload.get("caveats") or []:
+        lines.append(f"  ⚠ {caveat}")
+    return "\n".join(lines) + "\n"
 
 
 def _render_tier_sweep(payload: dict[str, Any]) -> str:

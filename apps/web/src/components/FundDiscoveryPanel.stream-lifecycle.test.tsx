@@ -23,6 +23,8 @@ import {
   startDiscoveryJob,
 } from "@/lib/api";
 import { streamDiscovery } from "@/lib/discoveryStreamApi";
+import { deleteClientCachesWhere } from "@/lib/clientCache";
+import { resetDiscoveryReportCacheForTests } from "@/lib/discoveryReportCache";
 
 vi.mock("@/lib/api", () => ({
   fetchDiscoveryPrompt: vi.fn().mockResolvedValue({
@@ -70,6 +72,8 @@ afterEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
   window.sessionStorage.clear();
+  resetDiscoveryReportCacheForTests();
+  deleteClientCachesWhere((key) => key.startsWith("discovery-panel:"));
 });
 
 function holding(): Holding {
@@ -497,6 +501,25 @@ describe("FundDiscoveryPanel latest-report autoload", () => {
     await waitFor(() => expect(listDiscoveryReports).toHaveBeenCalled());
     await new Promise((resolve) => window.setTimeout(resolve, 10));
 
+    expect(fetchDiscoveryReportDetail).not.toHaveBeenCalled();
+  });
+
+  it("reuses a fresh cached latest report when the page is reopened", async () => {
+    vi.mocked(listDiscoveryReports).mockResolvedValue([
+      { ...discoveryReport(), id: "newest", created_at: "2026-08-08T00:00:00Z" },
+    ]);
+
+    const first = renderPanel({ userId: 507 });
+    await waitFor(() =>
+      expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("detail:newest"),
+    );
+    expect(fetchDiscoveryReportDetail).toHaveBeenCalledTimes(1);
+    first.unmount();
+    vi.mocked(fetchDiscoveryReportDetail).mockClear();
+
+    renderPanel({ userId: 507 });
+    expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("detail:newest");
+    await new Promise((resolve) => window.setTimeout(resolve, 20));
     expect(fetchDiscoveryReportDetail).not.toHaveBeenCalled();
   });
 

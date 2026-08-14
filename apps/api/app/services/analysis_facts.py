@@ -56,7 +56,11 @@ from app.services.sector_signal_context import (
 )
 from app.services.signal_guard_policy import resolve_signal_guard_policy
 from app.services.signal_synthesis import build_evidence_overview, build_holding_evidence
-from app.services.trading_session import build_trading_session, get_effective_trade_date
+from app.services.trading_session import (
+    CN_TZ,
+    build_trading_session,
+    get_effective_trade_date,
+)
 from app.services.risk import resolve_weight_denominator
 from app.services.sector_intraday_summary import summarize_sector_intraday_for_label
 from app.services.pipeline_concurrency import run_with_request_user
@@ -617,6 +621,30 @@ def build_analysis_facts(
             }
         )
 
+    # 持仓批次成熟度：用户已录入真实买卖交易时，按先进先出重建存续批次并判定 7 天
+    # 惩罚费窗口。一次全量读交易表按代码分组（本地小表），没有交易的基金不产出行。
+    from app.services.holding_lot_maturity import build_lot_maturity_by_code
+    from app.services.transaction_behavior_review import (
+        summarize_recent_transactions_by_code,
+    )
+
+    facts_as_of_date = (
+        decision_at.astimezone(CN_TZ).date().isoformat()
+        if decision_at is not None
+        else datetime.now(CN_TZ).date().isoformat()
+    )
+    lot_maturity_by_code = build_lot_maturity_by_code(
+        holdings,
+        resolved_profiles,
+        as_of_date=facts_as_of_date,
+    )
+    # 近期真实交易摘要：供持仓行披露"你几天前刚买/卖过"，guard 据此在动作与用户
+    # 真实操作方向相反时加一句权衡提示（只披露、不改动作）。
+    recent_transactions_by_code = summarize_recent_transactions_by_code(
+        holdings,
+        as_of_date=facts_as_of_date,
+    )
+
     per_fund: list[dict] = []
     drawdown_limit = abs(profile.max_drawdown_percent)
     for holding, holding_profile, quote_label in zip(
@@ -708,6 +736,12 @@ def build_analysis_facts(
                     normalize_sector_label(holding.sector_name)
                 ),
             }
+        lot_maturity = lot_maturity_by_code.get(holding.fund_code)
+        if lot_maturity is not None:
+            row["lot_maturity"] = lot_maturity
+        recent_transactions = recent_transactions_by_code.get(holding.fund_code)
+        if recent_transactions is not None:
+            row["recent_transactions"] = recent_transactions
         if tradeability_profiles is not None:
             raw_tradeability = tradeability_profiles.get(holding.fund_code)
             tradeability = compact_tradeability_for_llm(
@@ -817,6 +851,13 @@ def build_analysis_facts(
             "sector_fund_flow 的定性提示）：按各规则 significant 与 edge_percent 表述，"
             "significant=true 且 edge_percent 越高，可信度越高；未显著或触发次数不足时"
             "只能作提示，不得主导追涨或减仓建议。"
+            "持仓的 lot_maturity 是按用户录入的真实交易以先进先出重建的存续批次与 7 天"
+            "惩罚费窗口判定：减仓叙述可引用 short_hold_share_percent 与"
+            " next_penalty_free_date 提示费用时机，但费用不构成回避减仓的理由；"
+            "coverage=partial_records 表示交易记录不完整，须说明只覆盖已录入部分。"
+            "持仓的 recent_transactions 与顶层 transaction_behavior_review 是用户近期"
+            "真实买卖与历史建议的对照，只作背景事实：可用于解释「用户几天前刚买/卖过」，"
+            "不得据此批评用户、揣测动机，也不得反向修改今日动作建议。"
             "fund_lookthrough 是基金定期报告披露口径的持仓穿透：portfolio 下的"
             "top_security_exposure_lower_bounds / top_industry_exposure_lower_bounds 用于发现"
             "「多只基金重仓同一批证券」的重复暴露，这是按基金市值计算的 weight_percent 看不到的。"
@@ -928,6 +969,15 @@ def build_analysis_facts(
         holdings,
         decision_at=decision_at,
     )
+    # 用户真实交易与历史建议的方向对照（组合级，只作背景事实、不改任何动作）。
+    from app.services.transaction_behavior_review import (
+        build_transaction_behavior_review,
+    )
+
+    facts["transaction_behavior_review"] = build_transaction_behavior_review(
+        holdings,
+        as_of_date=facts_as_of_date,
+    )
     # 方向成熟度这一层是否生效必须单独可见：`entry_state` 在主线快照缺席时压根不出现，
     # 下游要能区分"方向尚未成熟"与"今天没有主线快照可复用"。
     facts["sector_direction_maturity"] = (
@@ -953,8 +1003,14 @@ def build_analysis_facts(
                 "核验追加起购额和单日限额，模型不得自行给固定金额。"
             ),
             "reduce": (
-                "赎回开放不等于某个持仓批次已过锁定期。当前无逐笔 acquisition lot，"
-                "可保留减仓比例用于风险规划，但不得输出固定金额；实际赎回前须核对持有期与费用。"
+                "赎回开放不等于某个持仓批次已过锁定期。持仓行带 lot_maturity 时，"
+                "系统已按用户录入的真实交易以先进先出重建批次并判定 7 天惩罚费窗口"
+                "（short_hold_share_percent 是仍在窗口内的份额占比，"
+                "next_penalty_free_date 是最早过窗日）；减仓建议可引用这些事实提示费用"
+                "时机，但费用不构成回避减仓的理由。coverage=partial_records 表示交易"
+                "记录不完整，批次结论只覆盖已录入部分。没有 lot_maturity 的持仓仍无"
+                "逐笔批次，可保留减仓比例用于风险规划，但不得输出固定金额；"
+                "实际赎回前须核对持有期与费用。"
             ),
         }
     return facts

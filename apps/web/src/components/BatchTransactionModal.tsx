@@ -70,7 +70,7 @@ export function BatchTransactionModal({
             <ChevronLeft size={22} strokeWidth={2.25} />
           </button>
           <h2 id="batch-transaction-modal-title" className="text-base font-bold text-slate-900">
-            支付宝-批量加减仓
+            导入交易
           </h2>
         </header>
 
@@ -79,14 +79,14 @@ export function BatchTransactionModal({
           <p className="mt-6 text-center text-[15px] leading-7 text-slate-800">
             上传
             <span className="font-bold text-[var(--brand-strong)]">「交易记录」或「交易分析」</span>
-            截图即可加减仓、同步买卖点
+            截图，按成交写入买入/卖出，并在走势图打点
           </p>
           <p className="mt-2 text-center text-[13px] leading-5 text-slate-500">
             路径：支付宝 → 我的 → 总资产 → 基金 → 交易记录
             <br />
             也可在基金持有页切到「交易分析」Tab 后截图
             <br />
-            持仓总览截图请走「上传截图 / 新增持有」
+            只要当前持仓、没有成交时间，请走「同步持仓」
           </p>
           <p className="mt-4 rounded-xl border border-[var(--info-border)] bg-[var(--info-bg)]/80 px-3 py-2 text-xs leading-5 text-slate-600">
             {OCR_PRIVACY_COPY.uploadNotice}

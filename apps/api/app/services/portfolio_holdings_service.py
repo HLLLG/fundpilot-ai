@@ -622,18 +622,30 @@ def merge_authoritative_holding_upserts(
     return without_inactive_holdings(without_test_holdings(merged))
 
 
-def sync_portfolio_from_profiles(*, refresh_sectors: bool = True) -> list[Holding]:
+def sync_portfolio_from_profiles(
+    *,
+    refresh_sectors: bool = True,
+    fetch_benchmark: bool = True,
+    cache_only_quotes: bool = False,
+    with_official_nav: bool = True,
+) -> list[Holding]:
     from app.services.portfolio_mutation_guard import portfolio_mutation_guard
 
     with portfolio_mutation_guard():
         return _sync_portfolio_from_profiles_unlocked(
             refresh_sectors=refresh_sectors,
+            fetch_benchmark=fetch_benchmark,
+            cache_only_quotes=cache_only_quotes,
+            with_official_nav=with_official_nav,
         )
 
 
 def _sync_portfolio_from_profiles_unlocked(
     *,
     refresh_sectors: bool = True,
+    fetch_benchmark: bool = True,
+    cache_only_quotes: bool = False,
+    with_official_nav: bool = True,
 ) -> list[Holding]:
     """详情建档后同步今日看板：合并档案 → 刷新板块 → 持久化。"""
     snapshot = get_most_recent_portfolio_snapshot()
@@ -661,13 +673,23 @@ def _sync_portfolio_from_profiles_unlocked(
         ):
             merged.append(profile_to_holding(profile))
             merged_codes.add(profile.fund_code)
-    merged = enrich_holdings_from_profiles(merged)
+    merged = enrich_holdings_from_profiles(merged, fetch_benchmark=fetch_benchmark)
     overrides = confirm_and_compute_overrides(merged)
-    merged = sync_holding_amounts_from_shares(merged, shares_override=overrides)
+    merged = sync_holding_amounts_from_shares(
+        merged,
+        shares_override=overrides,
+        estimate_quotes={} if not with_official_nav else None,
+        allow_nav_fetch=with_official_nav,
+    )
 
     if refresh_sectors and merged:
-        sector_result = refresh_holdings_sector_quotes(merged, force_refresh=False)
-        merged = [Holding.model_validate(item) for item in sector_result["holdings"]]
+        sector_result = refresh_holdings_sector_quotes(
+            merged,
+            force_refresh=False,
+            cache_only=cache_only_quotes,
+        )
+        if sector_result.get("holdings"):
+            merged = [Holding.model_validate(item) for item in sector_result["holdings"]]
 
     # Profile/ledger sync is an authoritative position operation and may add a
     # newly purchased fund. Routine quote refreshes keep the safer default and
@@ -675,6 +697,7 @@ def _sync_portfolio_from_profiles_unlocked(
     return persist_holdings_after_sector_refresh(
         merged,
         allow_membership_additions=True,
+        with_official_nav=with_official_nav,
     )
 
 

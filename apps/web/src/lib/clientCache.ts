@@ -104,6 +104,14 @@ export function deleteClientCache(key: string, storage: ClientCacheStorage = "me
   memoryStore.delete(key);
 }
 
+export function deleteClientCachesWhere(predicate: (key: string) => boolean): void {
+  for (const key of [...memoryStore.keys()]) {
+    if (predicate(key)) {
+      memoryStore.delete(key);
+    }
+  }
+}
+
 export function peekClientCacheAgeMs(
   key: string,
   storage: ClientCacheStorage = "memory",

@@ -5,6 +5,7 @@ import { Plus, Search, X } from "lucide-react";
 import { InlineNotice } from "@/components/InlineNotice";
 import type { FundSearchItem, ParsedTransaction } from "@/lib/api";
 import { getFundTransactions, searchFunds } from "@/lib/api";
+import { pickUniqueFundMatch } from "@/lib/fundNameMatch";
 import { useDialogA11y } from "@/lib/useDialogA11y";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
 import {
@@ -13,9 +14,14 @@ import {
   resolveFirstReturnDate,
 } from "@/lib/tradeConfirmDates";
 
+type HeldFund = {
+  fund_code: string;
+  fund_name: string;
+};
+
 type BatchTransactionConfirmModalProps = {
   transactions: ParsedTransaction[];
-  heldFundCodes?: string[];
+  heldFunds?: HeldFund[];
   isBusy?: boolean;
   errorMessage?: string | null;
   onChange: (transactions: ParsedTransaction[]) => void;
@@ -221,7 +227,7 @@ function FundCodeSearchPanel({
 
 export function BatchTransactionConfirmModal({
   transactions,
-  heldFundCodes = [],
+  heldFunds = [],
   isBusy = false,
   errorMessage = null,
   onChange,
@@ -233,8 +239,8 @@ export function BatchTransactionConfirmModal({
   const [recordedKeys, setRecordedKeys] = useState<Set<string>>(() => new Set());
   const [recordedReady, setRecordedReady] = useState(false);
   const heldCodeSet = useMemo(
-    () => new Set(heldFundCodes.filter((code) => code && code !== "000000")),
-    [heldFundCodes],
+    () => new Set(heldFunds.map((fund) => fund.fund_code).filter((code) => code && code !== "000000")),
+    [heldFunds],
   );
   const recordedLookupKey = transactions
     .map((tx) => tx.fund_code)
@@ -274,6 +280,56 @@ export function BatchTransactionConfirmModal({
       cancelled = true;
     };
   }, [recordedLookupKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const snapshot = transactions;
+    const withHeldCodes = snapshot.map((tx) => {
+      if (tx.fund_code) {
+        return tx;
+      }
+      const held = pickUniqueFundMatch(tx.fund_name, heldFunds);
+      return held ? { ...tx, fund_code: held.fund_code } : tx;
+    });
+    const stillUnmatched = withHeldCodes
+      .map((tx, index) => ({ tx, index }))
+      .filter(({ tx }) => !tx.fund_code);
+    const publish = (next: ParsedTransaction[]) => {
+      if (cancelled) {
+        return;
+      }
+      if (next.some((tx, index) => tx.fund_code !== snapshot[index]?.fund_code)) {
+        onChange(next);
+      }
+    };
+    if (stillUnmatched.length === 0) {
+      publish(withHeldCodes);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void Promise.all(
+      stillUnmatched.map(async ({ tx, index }) => {
+        const items = await searchFunds(tx.fund_name).catch(() => []);
+        return { index, item: pickUniqueFundMatch(tx.fund_name, items) };
+      }),
+    ).then((hits) => {
+      publish(
+        withHeldCodes.map((tx, index) => {
+          if (tx.fund_code) {
+            return tx;
+          }
+          const hit = hits.find((row) => row.index === index)?.item;
+          return hit ? { ...tx, fund_code: hit.fund_code } : tx;
+        }),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+    // 确认页打开时只自动补码一次；依赖 transactions 会在写回后重复搜索。
+  }, []);
+
   const [feeInputs, setFeeInputs] = useState<string[]>(() =>
     transactions.map((transaction) =>
       transaction.fee_yuan == null ? "" : String(transaction.fee_yuan),
@@ -609,7 +665,9 @@ export function BatchTransactionConfirmModal({
               ? "正在应用..."
               : applyCount > 0
                 ? `确认写入（${applyCount}）`
-                : "完成（全部已录入）"}
+                : validCount > 0
+                  ? "完成（全部已录入）"
+                  : "确认写入（0）"}
           </button>
         </div>
       </div>
