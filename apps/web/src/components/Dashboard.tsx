@@ -365,7 +365,6 @@ export function Dashboard() {
   const [isHydratingHoldings, setIsHydratingHoldings] = useState(true);
   const [portfolioLoadState, setPortfolioLoadState] = useState<PortfolioLoadState>("loading");
   const [portfolioLoadError, setPortfolioLoadError] = useState<string | null>(null);
-  const [holdingsRefreshedAt, setHoldingsRefreshedAt] = useState<string | null>(null);
   const backgroundJobActiveRef = useRef(false);
   const [isOcrUploading, setIsOcrUploading] = useState(false);
   const [ocrUploadProgress, setOcrUploadProgress] = useState<{
@@ -541,11 +540,9 @@ export function Dashboard() {
         ) {
           return;
         }
-        const refreshedAt = settlement.refreshed_at ?? null;
         setHoldings((current) =>
           mergeHoldingsPreserveQuoteFields(current.length ? current : sourceHoldings, settlement.holdings),
         );
-        setHoldingsRefreshedAt(refreshedAt);
         if (settlement.portfolio_summary) {
           setPortfolioSummary(settlement.portfolio_summary);
         }
@@ -580,10 +577,8 @@ export function Dashboard() {
       if (payload.portfolio_summary) {
         setPortfolioSummary(payload.portfolio_summary);
       }
-      const refreshedAt = payload.refreshed_at ?? null;
       hasServerPortfolioRef.current = true;
       setHoldings(payload.holdings);
-      setHoldingsRefreshedAt(refreshedAt);
       setPortfolioLoadState("ready");
       setPortfolioLoadError(null);
       if (payload.holdings.length > 0) {
@@ -719,7 +714,6 @@ export function Dashboard() {
 
         const payload = bootstrap.portfolio;
         setHoldings(payload.holdings);
-        setHoldingsRefreshedAt(payload.refreshed_at ?? null);
         setPortfolioSummary(payload.portfolio_summary ?? null);
         setPortfolioLoadState("ready");
         setPortfolioLoadError(null);
@@ -941,13 +935,6 @@ export function Dashboard() {
     void enqueuePortfolioMutation(() => sectorRefresh.refresh(false, "fast"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [holdings.length]);
-
-  useEffect(() => {
-    if (!sectorRefresh.lastFetchedAt) {
-      return;
-    }
-    setHoldingsRefreshedAt(sectorRefresh.lastFetchedAt);
-  }, [sectorRefresh.lastFetchedAt]);
 
   useEffect(() => {
     if (!profileReady || !profilePersistReady.current) return;
@@ -1620,9 +1607,6 @@ export function Dashboard() {
     setHoldings(result.holdings);
     if (result.portfolio_summary) {
       setPortfolioSummary(result.portfolio_summary);
-    }
-    if (result.refreshed_at) {
-      setHoldingsRefreshedAt(result.refreshed_at);
     }
     setPortfolioLoadState("ready");
     setPortfolioLoadError(null);

@@ -400,7 +400,7 @@ export function AlipayOcrConfirmModal({
                           setEditingIndex(index);
                         }}
                         aria-label={`修改持仓：${rowLabel}`}
-                        className="col-span-3 grid min-h-11 grid-cols-[minmax(0,1fr)_5.75rem_5.25rem] items-center gap-x-3 text-left"
+                        className="col-span-3 grid min-h-[44px] grid-cols-[minmax(0,1fr)_5.75rem_5.25rem] items-center gap-x-3 text-left"
                       >
                         <span className="line-clamp-2 text-sm font-bold leading-5 text-slate-900">
                           {holding.fund_name || "未识别基金"}
