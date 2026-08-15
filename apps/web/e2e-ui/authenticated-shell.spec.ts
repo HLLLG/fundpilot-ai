@@ -74,7 +74,7 @@ async function installStableApiStubs(
       return;
     }
 
-    if (request.method() === "POST" && pathname === "/api/telemetry/web-vitals") {
+    if (request.method() === "POST" && pathname.startsWith("/api/telemetry/")) {
       await fulfillJson(route, 202, { accepted: true });
       return;
     }
@@ -116,6 +116,20 @@ async function installStableApiStubs(
     }
     if (pathname === "/api/portfolio/holdings") {
       await fulfillJson(route, 200, {
+        holdings: currentHoldings,
+        source: currentHoldings.length > 0 ? "database" : "empty",
+        refreshed_at: null,
+        portfolio_summary: null,
+      });
+      return;
+    }
+    if (pathname === "/api/portfolio/settle-official-nav") {
+      await fulfillJson(route, 200, {
+        ok: true,
+        skipped: true,
+        reason: "e2e_fixture",
+        settlement_date: null,
+        updated_count: 0,
         holdings: currentHoldings,
         source: currentHoldings.length > 0 ? "database" : "empty",
         refreshed_at: null,
@@ -441,6 +455,7 @@ test("截图识别可校对写入并打开基金详情", async ({ page }, testIn
     expect.arrayContaining([
       "POST /api/ocr",
       "POST /api/portfolio/apply-holdings",
+      "POST /api/portfolio/settle-official-nav",
       "POST /api/holdings/detail",
       "GET /api/funds/110022/holdings-distribution",
     ]),

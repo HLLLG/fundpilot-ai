@@ -80,7 +80,7 @@ async function installHistoryStubs(
       await route.fulfill({ status: 204, headers: { "access-control-allow-origin": "*" } });
       return;
     }
-    if (request.method() === "POST" && pathname === "/api/telemetry/web-vitals") {
+    if (request.method() === "POST" && pathname.startsWith("/api/telemetry/")) {
       await json(route, 202, { accepted: true });
       return;
     }
