@@ -1,8 +1,12 @@
 """支付宝全称与东财简称的自动选码：能对上才填，对不上宁可留空。"""
 from __future__ import annotations
 
-from app.services.fund_code_resolver import lookup_fund_code_by_name
-from app.services.fund_name_fuzzy import best_fuzzy_fund_match
+from app.services.fund_code_resolver import (
+    lookup_fund_code_by_name,
+    lookup_similar_fund_by_name,
+    resolve_transaction_fund_code,
+)
+from app.services.fund_name_fuzzy import best_fuzzy_fund_match, best_similar_fund_match
 from app.services.fund_name_utils import normalize_fund_name_for_lookup
 
 
@@ -74,3 +78,53 @@ def test_fuzzy_auto_match_rejects_extra_product_token() -> None:
         )
         is None
     )
+
+
+def test_similar_match_picks_closest_share_class_sibling() -> None:
+    hit = best_similar_fund_match(
+        "招商医疗保健股票A",
+        [
+            ("011373", "招商前沿医疗保健股票A"),
+            ("011374", "招商前沿医疗保健股票C"),
+        ],
+    )
+    assert hit is not None
+    assert hit[0] == "011373"
+
+
+def test_ocr_similar_lookup_fills_frontier_health_when_exact_missing(monkeypatch) -> None:
+    _install_table(
+        monkeypatch,
+        [
+            ("011373", "招商前沿医疗保健股票A"),
+            ("011374", "招商前沿医疗保健股票C"),
+        ],
+    )
+    hit = lookup_similar_fund_by_name("招商医疗保健股票A")
+    assert hit == ("011373", "招商前沿医疗保健股票A")
+
+
+def test_transaction_ocr_fills_similar_fund_when_exact_missing(monkeypatch) -> None:
+    _install_table(
+        monkeypatch,
+        [
+            ("011373", "招商前沿医疗保健股票A"),
+            ("011374", "招商前沿医疗保健股票C"),
+        ],
+    )
+    code, source = resolve_transaction_fund_code("招商医疗保健股票A")
+    assert code == "011373"
+    assert source == "similar"
+
+
+def test_transaction_ocr_exact_match_is_not_marked_similar(monkeypatch) -> None:
+    _install_table(
+        monkeypatch,
+        [
+            ("000960", "招商医疗保健股票A"),
+            ("011373", "招商前沿医疗保健股票A"),
+        ],
+    )
+    code, source = resolve_transaction_fund_code("招商医疗保健股票A")
+    assert code == "000960"
+    assert source is None

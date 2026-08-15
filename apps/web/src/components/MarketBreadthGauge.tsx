@@ -53,14 +53,6 @@ function formatCount(value: number | null | undefined): string {
   return String(value);
 }
 
-function formatAsOf(value: string | null | undefined, fallback?: string): string {
-  if (!value) {
-    return fallback ?? "—";
-  }
-  const normalized = value.replace("T", " ");
-  return normalized.length >= 16 ? normalized.slice(0, 16) : normalized;
-}
-
 function resolveTone(data: MarketBreadthSignal): "blue" | "green" | "amber" | "red" | "dark" {
   const label = data.breadth_tone ?? "";
   if (label.includes("冰点")) return "red";
@@ -275,20 +267,20 @@ function MarketBreadthGaugeView({ compact = false }: MarketBreadthGaugeProps) {
             <h3 className="text-lg font-black text-slate-950">沪深市场情绪</h3>
             <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-slate-600">
               <span className="font-semibold text-slate-700">{sourceLabel}</span>
-              <span aria-hidden>·</span>
               {data.universe_scope ? (
                 <>
-                  <span>{data.universe_scope}</span>
                   <span aria-hidden>·</span>
+                  <span>{data.universe_scope}</span>
                 </>
               ) : null}
-              <span>更新于 {formatAsOf(data.as_of_datetime, data.trade_date)}</span>
               {revalidating ? (
                 <span className="inline-flex items-center gap-1 text-[var(--brand)]" role="status">
+                  <span aria-hidden>·</span>
                   <Loader2 className="h-3 w-3 animate-spin" aria-hidden />更新中
                 </span>
               ) : error && decisionEligible ? (
                 <span className="font-semibold text-amber-700" role="status">
+                  <span aria-hidden>·</span>
                   更新延迟
                 </span>
               ) : null}

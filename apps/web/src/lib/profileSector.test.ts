@@ -70,4 +70,50 @@ describe("profileSector", () => {
       source_name: "互联网",
     });
   });
+
+  it("prefers tracking-index short names over theme board labels", () => {
+    expect(
+      holdingDisplaySectorLabel({
+        fund_code: "160218",
+        fund_name: "国泰国证房地产行业指数A",
+        sector_name: "房地产",
+        intraday_index_name: "房地产指数",
+      }),
+    ).toBe("房地产指数");
+    expect(
+      holdingDisplaySectorLabel({
+        fund_code: "002610",
+        fund_name: "博时黄金ETF联接A",
+        sector_name: "黄金",
+        intraday_index_name: "黄金999",
+      }),
+    ).toBe("黄金9999");
+    expect(
+      holdingDisplaySectorLabel({
+        fund_code: "002610",
+        fund_name: "博时黄金ETF联接A",
+        sector_name: "黄金",
+        intraday_index_name: null,
+      }),
+    ).toBe("黄金9999");
+    expect(
+      resolveIntradayQuery({
+        fund_code: "002610",
+        fund_name: "博时黄金ETF联接A",
+        sector_name: "黄金",
+        intraday_index_name: null,
+      }),
+    ).toEqual({
+      source_type: "index",
+      source_name: "黄金9999",
+    });
+    expect(
+      holdingDisplaySectorLabel({
+        fund_code: "021959",
+        fund_name: "南方黄金股C",
+        sector_name: "黄金股",
+        intraday_index_name: "沪港深黄金",
+      }),
+    ).toBe("沪港深黄金");
+  });
 });

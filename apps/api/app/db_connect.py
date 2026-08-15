@@ -725,16 +725,6 @@ def _open_sqlite() -> DbConnection:
     return DbConnection(conn, "sqlite")
 
 
-@contextmanager
-def open_db() -> Iterator[DbConnection]:
-    connection = connect_with_fallback()
-    try:
-        yield connection
-        connection.commit()
-    finally:
-        connection.close()
-
-
 def connect() -> DbConnection:
     """与历史 `_connect()` 兼容：调用方负责 commit/close。"""
     return connect_with_fallback()

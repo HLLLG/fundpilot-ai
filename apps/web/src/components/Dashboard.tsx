@@ -30,7 +30,6 @@ import {
   fetchPortfolioHoldings,
   fetchPortfolioSummary,
   fetchReportDetail,
-  fetchSectorQuotesStatus,
   invalidatePortfolioHoldingsRequest,
   listReports,
   adjustHolding,
@@ -38,6 +37,7 @@ import {
   applyTransactions,
   deletePortfolioHolding,
   parseOcrUpload,
+  searchFunds,
   transactionsOcr,
   saveAnalysisPromptRemote,
   saveInvestorProfileRemote,
@@ -76,6 +76,7 @@ import { JobStatusFloat } from "@/components/JobStatusFloat";
 import {
   displayableHoldings,
   findHoldingIndex,
+  mergeHoldingsAppend,
   mergeHoldingsPreserveQuoteFields,
   withApplyDisplayFields,
   dedupeHoldingsByCode,
@@ -83,13 +84,15 @@ import {
   type HoldingIdentity,
 } from "@/lib/holdingMetrics";
 import {
-  loadCachedPortfolioHoldings,
-  saveCachedPortfolioHoldings,
-} from "@/lib/portfolioHoldingsCache";
-import { scheduleHoldingsDetailPrefetch } from "@/lib/holdingDetailPrefetch";
+  fillClosestFundCodes,
+  fillClosestTransactionFundCodes,
+  mergeFundCodeResolutions,
+  mergeParsedTransactions,
+  type TransactionSyncPlan,
+} from "@/lib/ocrBatchUpload";
+import { clearCachedPortfolioHoldings } from "@/lib/portfolioHoldingsCache";
 import { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
 import { useSwingAlerts } from "@/lib/useSwingAlerts";
-import { startVisibilityAwarePolling } from "@/lib/visibilityPolling";
 import { SwingAlertsPanel } from "@/components/SwingAlertsPanel";
 import { buildWorkflowBlockers, hasBlockingErrors } from "@/lib/workflowBlockers";
 import { TradingSessionBar } from "@/components/TradingSessionBar";
@@ -105,6 +108,7 @@ import { FocusSectorToast } from "@/components/FocusSectorToast";
 import { UserMenu } from "@/components/UserMenu";
 import { BrandMark } from "@/components/BrandMark";
 import { DashboardNav } from "@/components/DashboardNav";
+import { MePage } from "@/components/MePage";
 import { InlineNotice } from "@/components/InlineNotice";
 import { activeAnalysisRolePrompt } from "@/lib/analysisPrompt";
 import { resolveReportProviderStatus } from "@/lib/reportPresentation";
@@ -315,6 +319,7 @@ export function Dashboard() {
     null,
   );
   const discoveryScanRetryRef = useRef<(() => void) | null>(null);
+  const analysisReturnTabRef = useRef<TabId>("me");
   const [selectedHoldingKey, setSelectedHoldingKey] = useState<HoldingIdentity | null>(null);
   const [fundSearchOpen, setFundSearchOpen] = useState(false);
   const [researchFund, setResearchFund] = useState<FundSearchItem | null>(null);
@@ -349,7 +354,7 @@ export function Dashboard() {
   const refreshAfterApplyRef = useRef<"sector" | null>(null);
   const initialSectorRefreshDoneRef = useRef(false);
   const holdingsMutationVersionRef = useRef(0);
-  const portfolioCacheWriteReadyRef = useRef(false);
+  const hasServerPortfolioRef = useRef(false);
   const portfolioMutationQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const officialNavSettlementAttemptedRef = useRef(false);
   const officialNavSettlementInFlightRef = useRef(false);
@@ -361,29 +366,26 @@ export function Dashboard() {
   const [portfolioLoadState, setPortfolioLoadState] = useState<PortfolioLoadState>("loading");
   const [portfolioLoadError, setPortfolioLoadError] = useState<string | null>(null);
   const [holdingsRefreshedAt, setHoldingsRefreshedAt] = useState<string | null>(null);
-  const [holdingsPollIntervalMs, setHoldingsPollIntervalMs] = useState(180_000);
   const backgroundJobActiveRef = useRef(false);
-  const holdingsForPrefetchRef = useRef(holdings);
-  const holdingsPrefetchKey = useMemo(
-    () =>
-      displayableHoldings(holdings)
-        .map((h) => h.fund_code || h.fund_name || "")
-        .join("|"),
-    [holdings],
-  );
   const [isOcrUploading, setIsOcrUploading] = useState(false);
+  const [ocrUploadProgress, setOcrUploadProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
   const [pendingOcrHoldings, setPendingOcrHoldings] = useState<Holding[] | null>(null);
   const [pendingOcrResolutions, setPendingOcrResolutions] = useState<FundCodeResolution[]>([]);
-  const [pendingOcrNote, setPendingOcrNote] = useState<string | null>(null);
   const [pendingOcrSource, setPendingOcrSource] = useState<string | null>(null);
   const [showAddHoldingModal, setShowAddHoldingModal] = useState(false);
   const [isManualAdding, setIsManualAdding] = useState(false);
   const [addHoldingError, setAddHoldingError] = useState<string | null>(null);
   const [isApplyingOcrHoldings, setIsApplyingOcrHoldings] = useState(false);
   const [ocrApplyError, setOcrApplyError] = useState<string | null>(null);
-  const [ocrCompletionCount, setOcrCompletionCount] = useState<number | null>(null);
   const [showBatchModal, setShowBatchModal] = useState(false);
   const [isBatchUploading, setIsBatchUploading] = useState(false);
+  const [batchUploadProgress, setBatchUploadProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
   const [batchUploadError, setBatchUploadError] = useState<string | null>(null);
   const [pendingTransactions, setPendingTransactions] = useState<ParsedTransaction[] | null>(null);
   const [isApplyingTransactions, setIsApplyingTransactions] = useState(false);
@@ -491,10 +493,6 @@ export function Dashboard() {
     }
   };
 
-  const markPortfolioCacheWriteReady = useCallback(() => {
-    portfolioCacheWriteReadyRef.current = true;
-  }, []);
-
   const enqueuePortfolioMutation = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
     const queued = portfolioMutationQueueRef.current
       .catch(() => undefined)
@@ -503,11 +501,26 @@ export function Dashboard() {
     return queued;
   }, []);
 
-  const settleOfficialNavInBackground = (sourceHoldings: Holding[]) => {
+  const settleOfficialNavInBackground = (
+    sourceHoldings: Holding[],
+    options?: { force?: boolean },
+  ) => {
+    const force = Boolean(options?.force);
+    if (sourceHoldings.every((holding) => holding.fund_code === "000000")) {
+      return;
+    }
+    const needsOfficialNav = sourceHoldings.some(
+      (holding) =>
+        Boolean((holding.fund_code || "").trim()) &&
+        holding.fund_code !== "000000" &&
+        holding.daily_return_percent_source !== "official_nav",
+    );
+    if (!needsOfficialNav) {
+      return;
+    }
     if (
-      officialNavSettlementAttemptedRef.current ||
-      officialNavSettlementInFlightRef.current ||
-      sourceHoldings.every((holding) => holding.fund_code === "000000")
+      !force &&
+      (officialNavSettlementAttemptedRef.current || officialNavSettlementInFlightRef.current)
     ) {
       return;
     }
@@ -529,7 +542,6 @@ export function Dashboard() {
           return;
         }
         const refreshedAt = settlement.refreshed_at ?? null;
-        const mergedHoldings = mergeHoldingsPreserveQuoteFields(sourceHoldings, settlement.holdings);
         setHoldings((current) =>
           mergeHoldingsPreserveQuoteFields(current.length ? current : sourceHoldings, settlement.holdings),
         );
@@ -537,12 +549,6 @@ export function Dashboard() {
         if (settlement.portfolio_summary) {
           setPortfolioSummary(settlement.portfolio_summary);
         }
-        markPortfolioCacheWriteReady();
-        saveCachedPortfolioHoldings(user?.id, {
-          holdings: mergedHoldings,
-          portfolio_summary: settlement.portfolio_summary ?? null,
-          refreshed_at: refreshedAt,
-        });
       })
       .catch(() => {
         // Official NAV settlement is opportunistic; keep the hydrated holdings visible.
@@ -560,10 +566,10 @@ export function Dashboard() {
       return;
     }
     const requestVersion = holdingsMutationVersionRef.current;
-    const hadCachedPortfolio = loadCachedPortfolioHoldings(user?.id) !== null;
-    setPortfolioLoadState(hadCachedPortfolio ? "refreshing" : "loading");
+    const hadPortfolio = hasServerPortfolioRef.current;
+    setPortfolioLoadState(hadPortfolio ? "refreshing" : "loading");
     setPortfolioLoadError(null);
-    if (!hadCachedPortfolio) {
+    if (!hadPortfolio) {
       setIsHydratingHoldings(true);
     }
     try {
@@ -575,16 +581,11 @@ export function Dashboard() {
         setPortfolioSummary(payload.portfolio_summary);
       }
       const refreshedAt = payload.refreshed_at ?? null;
-      markPortfolioCacheWriteReady();
+      hasServerPortfolioRef.current = true;
       setHoldings(payload.holdings);
       setHoldingsRefreshedAt(refreshedAt);
       setPortfolioLoadState("ready");
       setPortfolioLoadError(null);
-      saveCachedPortfolioHoldings(user?.id, {
-        holdings: payload.holdings,
-        portfolio_summary: payload.portfolio_summary ?? null,
-        refreshed_at: refreshedAt,
-      });
       if (payload.holdings.length > 0) {
         settleOfficialNavInBackground(payload.holdings);
       }
@@ -593,44 +594,30 @@ export function Dashboard() {
       if (requestVersion !== holdingsMutationVersionRef.current) {
         return;
       }
-      // 首次没有本地缓存时，如果第一次拉取恰好撞上后端刚重启/网络抖动等瞬时失败，
+      // 首次没有服务端数据时，如果第一次拉取恰好撞上后端刚重启/网络抖动等瞬时失败，
       // 不能马上把"暂未录入基金"的空状态亮出来——那会被用户误读成持仓丢了。
       // 先保持加载态，短暂延迟后自动重试几次，只有真的多次都失败才降级展示。
-      if (!hadCachedPortfolio && retriesLeft > 0) {
+      if (!hadPortfolio && retriesLeft > 0) {
         window.setTimeout(() => {
           void hydratePortfolio(retriesLeft - 1);
         }, HYDRATE_INITIAL_RETRY_DELAY_MS);
         return;
       }
-      const loadMessage = hadCachedPortfolio
-        ? "最新持仓暂时加载失败，当前显示的是上次缓存。"
+      const loadMessage = hadPortfolio
+        ? "最新持仓暂时加载失败，当前显示的是本次已加载的数据。"
         : "持仓加载失败，请确认后端 API 正常运行后重试。";
-      if (!hadCachedPortfolio) {
+      if (!hadPortfolio) {
         await loadPortfolioSummary();
       }
-      setPortfolioLoadState(hadCachedPortfolio ? "stale" : "error");
+      setPortfolioLoadState(hadPortfolio ? "stale" : "error");
       setPortfolioLoadError(loadMessage);
       setIsHydratingHoldings(false);
     }
   };
 
-  useLayoutEffect(() => {
-    portfolioCacheWriteReadyRef.current = false;
-    const cached = loadCachedPortfolioHoldings(user?.id);
-    if (!cached) {
-      return;
-    }
-    markPortfolioCacheWriteReady();
-    setHoldings(cached.holdings);
-    setPortfolioLoadState("refreshing");
-    if (cached.portfolio_summary) {
-      setPortfolioSummary(cached.portfolio_summary);
-    }
-    if (cached.refreshed_at) {
-      setHoldingsRefreshedAt(cached.refreshed_at);
-    }
-    setIsHydratingHoldings(false);
-  }, [user?.id, markPortfolioCacheWriteReady]);
+  useEffect(() => {
+    clearCachedPortfolioHoldings(user?.id);
+  }, [user?.id]);
 
   // tab 切换的开销全在"挂载另一个重面板"上（13 个 dynamic() 之一 + 它的首屏计算）。
   // 导航高亮、页头文案与后台任务浮层继续读 activeTab，保持点击即时反馈；只有 <main>
@@ -646,6 +633,9 @@ export function Dashboard() {
       }
       if (next === "discovery") {
         setDiscoveryTabUnread(false);
+      }
+      if (next === "dashboard" && prev !== "dashboard") {
+        analysisReturnTabRef.current = prev === "history" ? "report" : prev;
       }
       saveDashboardTab(next);
       return next;
@@ -673,7 +663,7 @@ export function Dashboard() {
   useEffect(() => {
     const handleDashboardTabEvent = (event: Event) => {
       const detail = (event as CustomEvent<string>).detail;
-      if (detail === "holdings" || detail === "report" || detail === "history" || detail === "dashboard" || detail === "market" || detail === "discovery") {
+      if (detail === "holdings" || detail === "report" || detail === "history" || detail === "dashboard" || detail === "market" || detail === "discovery" || detail === "me") {
         setActiveTab(detail);
       }
     };
@@ -709,15 +699,6 @@ export function Dashboard() {
         }
       })();
       void hydratePortfolio();
-      void fetchSectorQuotesStatus()
-        .then((status) =>
-          setHoldingsPollIntervalMs(
-            (status.auto_refresh_allowed
-              ? status.auto_interval_seconds
-              : status.idle_interval_seconds) * 1000,
-          ),
-        )
-        .catch(() => undefined);
     };
 
     void fetchDashboardBootstrap()
@@ -743,18 +724,7 @@ export function Dashboard() {
         setPortfolioLoadState("ready");
         setPortfolioLoadError(null);
         setIsHydratingHoldings(false);
-        markPortfolioCacheWriteReady();
-        saveCachedPortfolioHoldings(user?.id, {
-          holdings: payload.holdings,
-          portfolio_summary: payload.portfolio_summary ?? null,
-          refreshed_at: payload.refreshed_at ?? null,
-        });
-        const status = bootstrap.sector_quotes_status;
-        setHoldingsPollIntervalMs(
-          (status.auto_refresh_allowed
-            ? status.auto_interval_seconds
-            : status.idle_interval_seconds) * 1000,
-        );
+        hasServerPortfolioRef.current = true;
         if (payload.holdings.length > 0) {
           settleOfficialNavInBackground(payload.holdings);
         }
@@ -952,77 +922,6 @@ export function Dashboard() {
   }, [streamingReport, streamingDiscovery, discoveryJobId, activeJobId]);
 
   useEffect(() => {
-    if (holdings.length === 0) {
-      return;
-    }
-    let cancelled = false;
-    let tickInFlight = false;
-    const tick = async () => {
-      if (cancelled || tickInFlight || document.visibilityState !== "visible") {
-        return;
-      }
-      // AI 流式/异步任务会占用 API worker；任务进行中跳过后台 holdings 刷新，避免 504
-      if (
-        streamingReport ||
-        streamingDiscovery ||
-        discoveryJobId ||
-        activeJobId
-      ) {
-        return;
-      }
-      tickInFlight = true;
-      try {
-        const status = await fetchSectorQuotesStatus();
-        setHoldingsPollIntervalMs(
-          (status.auto_refresh_allowed
-            ? status.auto_interval_seconds
-            : status.idle_interval_seconds) * 1000,
-        );
-        if (
-          cancelled ||
-          document.visibilityState !== "visible" ||
-          !status.auto_refresh_allowed
-        ) {
-          return;
-        }
-        // 周期轮询本身只是重新读取上次持久化的持仓快照，并不会触发板块实时行情
-        // 的真实刷新（那只在波段信号评估或编辑持仓后才会发生）。这里顺带触发一次
-        // 真实刷新，让"当日涨幅""关联板块"等字段能像正常行情软件一样自动更新。
-        // 必须走 enqueuePortfolioMutation 队列串行执行：refresh-sector-quotes 内部会把
-        // 传入的持仓整份写回快照，如果和同一时间用户正在做的加仓/删除/OCR 确认并发执行，
-        // 耗时更久的旧刷新可能在新的增删之后才落盘，把刚加的基金又冲掉（"批量截图录入
-        // 后基金又消失"）。串行化后，同一时刻只会有一个持仓写操作在跑，彻底消除这种竞态。
-        await enqueuePortfolioMutation(() => sectorRefresh.refresh(false, "fast"));
-        if (cancelled || document.visibilityState !== "visible") {
-          return;
-        }
-        await hydratePortfolio();
-      } catch {
-        // 后台轮询失败不阻断展示
-      } finally {
-        tickInFlight = false;
-      }
-    };
-    const stopPolling = startVisibilityAwarePolling({
-      intervalMs: holdingsPollIntervalMs,
-      onTick: () => void tick(),
-    });
-    return () => {
-      cancelled = true;
-      stopPolling();
-    };
-    // hydratePortfolio 刻意不列入依赖，避免重复拉取
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    holdings.length,
-    holdingsPollIntervalMs,
-    streamingReport,
-    streamingDiscovery,
-    discoveryJobId,
-    activeJobId,
-  ]);
-
-  useEffect(() => {
     if (refreshAfterApplyRef.current !== "sector" || holdings.length === 0) {
       return;
     }
@@ -1044,47 +943,11 @@ export function Dashboard() {
   }, [holdings.length]);
 
   useEffect(() => {
-    if (!portfolioCacheWriteReadyRef.current) {
-      return;
-    }
-    saveCachedPortfolioHoldings(user?.id, {
-      holdings,
-      portfolio_summary: portfolioSummary,
-      refreshed_at: holdingsRefreshedAt,
-    });
-  }, [holdings, portfolioSummary, holdingsRefreshedAt, user?.id]);
-
-  useEffect(() => {
     if (!sectorRefresh.lastFetchedAt) {
       return;
     }
     setHoldingsRefreshedAt(sectorRefresh.lastFetchedAt);
   }, [sectorRefresh.lastFetchedAt]);
-
-  useEffect(() => {
-    holdingsForPrefetchRef.current = holdings;
-  }, [holdings]);
-
-  useEffect(() => {
-    if (activeTab !== "holdings" || holdingsForPrefetchRef.current.length === 0) {
-      return;
-    }
-    return scheduleHoldingsDetailPrefetch({
-      userId: user?.id ?? null,
-      holdings: holdingsForPrefetchRef.current,
-      portfolioSummary,
-      sectorMetaByFundCode: sectorRefresh.sectorMetaByFundCode,
-      onDetailHydrated: (detail) => {
-        setHoldings((current) => patchHoldingRecord(current, detail.holding));
-      },
-    });
-  }, [
-    activeTab,
-    holdingsPrefetchKey,
-    portfolioSummary,
-    user?.id,
-    sectorRefresh.sectorMetaByFundCode,
-  ]);
 
   useEffect(() => {
     if (!profileReady || !profilePersistReady.current) return;
@@ -1416,32 +1279,78 @@ export function Dashboard() {
     setPendingDiscoveryReport(null);
   }, []);
 
-  const handleOcrUpload = async (selectedFile: File) => {
+  const handleOcrUpload = async (selectedFiles: File[]) => {
+    if (!selectedFiles.length) {
+      return;
+    }
     setIsOcrUploading(true);
     setAddHoldingError(null);
+    setOcrUploadProgress({ current: 0, total: selectedFiles.length });
+    const previousHoldings = pendingOcrHoldings ?? [];
+    let nextHoldings = previousHoldings;
+    let nextResolutions = pendingOcrResolutions;
+    let nextSource = pendingOcrSource;
+    let recognized = 0;
+    const failures: string[] = [];
     try {
-      const formData = new FormData();
-      formData.append("file", selectedFile);
-      const result = await parseOcrUpload(formData, { preview: true });
-      if (result.error) {
-        throw new Error(result.error);
+      for (let index = 0; index < selectedFiles.length; index += 1) {
+        const selectedFile = selectedFiles[index];
+        setOcrUploadProgress({ current: index + 1, total: selectedFiles.length });
+        try {
+          const formData = new FormData();
+          formData.append("file", selectedFile);
+          const result = await parseOcrUpload(formData, { preview: true });
+          if (result.error) {
+            throw new Error(result.error);
+          }
+          if (!result.holdings.length) {
+            throw new Error("未识别到基金持仓，请确认截图为支付宝「我的持有」。");
+          }
+          nextHoldings = mergeHoldingsAppend(nextHoldings, result.holdings);
+          nextResolutions = mergeFundCodeResolutions(
+            nextResolutions,
+            result.fund_code_resolutions ?? [],
+          );
+          if (result.ocr_source) {
+            nextSource = result.ocr_source;
+          }
+          recognized += 1;
+        } catch (error) {
+          failures.push(
+            `${selectedFile.name || `第 ${index + 1} 张`}：${userFacingErrorMessage(error, "截图识别失败。")}`,
+          );
+        }
       }
-      if (!result.holdings.length) {
-        throw new Error(
-          "未识别到基金持仓，请确认截图为支付宝「我的持有」。",
-        );
+      if (recognized === 0) {
+        throw new Error(failures.join("\n") || "截图识别失败。");
       }
-      setPendingOcrHoldings(result.holdings);
-      setPendingOcrResolutions(result.fund_code_resolutions ?? []);
-      setPendingOcrNote(result.amount_semantics?.note ?? null);
-      setPendingOcrSource(result.ocr_source ?? null);
+      const filled = await fillClosestFundCodes(
+        nextHoldings,
+        nextResolutions,
+        searchFunds,
+      );
+      nextHoldings = filled.holdings;
+      nextResolutions = filled.resolutions;
+      setPendingOcrHoldings(nextHoldings);
+      setPendingOcrResolutions(nextResolutions);
+      setPendingOcrSource(nextSource);
       setShowAddHoldingModal(false);
       setActiveTab("holdings");
+      setOcrApplyError(
+        failures.length
+          ? `有 ${failures.length} 张截图未识别成功。\n${failures.join("\n")}`
+          : null,
+      );
     } catch (error) {
       // 只走弹窗内的行内错误：原来同一句话还会再推一条全局提示。
-      setAddHoldingError(userFacingErrorMessage(error, "截图识别失败。"));
+      const message = userFacingErrorMessage(error, "截图识别失败。");
+      setAddHoldingError(message);
+      if (previousHoldings.length) {
+        setOcrApplyError(message);
+      }
     } finally {
       setIsOcrUploading(false);
+      setOcrUploadProgress(null);
     }
   };
 
@@ -1461,7 +1370,6 @@ export function Dashboard() {
       if (mutationVersion !== holdingsMutationVersionRef.current) {
         return;
       }
-      markPortfolioCacheWriteReady();
       setHoldings(applied.holdings);
       setHoldingWarnings(applied.holding_warnings ?? []);
       if (applied.portfolio_summary) {
@@ -1469,6 +1377,7 @@ export function Dashboard() {
       }
       refreshAfterApplyRef.current = "sector";
       setShowAddHoldingModal(false);
+      settleOfficialNavInBackground(applied.holdings, { force: true });
       // 不再提示"已添加…"：弹窗关闭 + 新持仓出现在列表里就是反馈。
     } catch (error) {
       if (mutationVersion !== holdingsMutationVersionRef.current) {
@@ -1515,22 +1424,14 @@ export function Dashboard() {
           }
         : portfolioSummary;
 
-      markPortfolioCacheWriteReady();
       setHoldings(appliedHoldings);
       setHoldingWarnings(applied.holding_warnings ?? []);
       setPortfolioSummary(nextSummary);
-      saveCachedPortfolioHoldings(user?.id, {
-        holdings: appliedHoldings,
-        portfolio_summary: nextSummary,
-        refreshed_at: holdingsRefreshedAt,
-      });
       setPendingOcrHoldings(null);
       setPendingOcrResolutions([]);
-      setPendingOcrNote(null);
       setPendingOcrSource(null);
       setActiveTab("holdings");
-      setOcrCompletionCount(toApply.length);
-      // 不再提示：上方 workflow-completion 横幅已经写了"已写入 N 只基金"。
+      settleOfficialNavInBackground(appliedHoldings, { force: true });
     } catch (error) {
       if (mutationVersion !== holdingsMutationVersionRef.current) {
         return;
@@ -1566,74 +1467,81 @@ export function Dashboard() {
       if (mutationVersion !== holdingsMutationVersionRef.current) {
         return;
       }
-      markPortfolioCacheWriteReady();
       setHoldings(result.holdings);
       if (result.portfolio_summary) {
         setPortfolioSummary(result.portfolio_summary);
       }
-      saveCachedPortfolioHoldings(user?.id, {
-        holdings: result.holdings,
-        portfolio_summary: result.portfolio_summary ?? null,
-        refreshed_at: holdingsRefreshedAt,
-      });
       setSelectedHoldingKey(null);
     },
     [
       holdings,
-      holdingsRefreshedAt,
       sectorRefresh,
-      user?.id,
       enqueuePortfolioMutation,
-      markPortfolioCacheWriteReady,
     ],
   );
 
-  const mergeTransactions = (
-    existing: ParsedTransaction[],
-    incoming: ParsedTransaction[],
-  ): ParsedTransaction[] => {
-    const seen = new Set(
-      existing.map((tx) => `${tx.direction}|${tx.fund_name}|${tx.amount_yuan}|${tx.trade_time}`),
-    );
-    const merged = [...existing];
-    for (const tx of incoming) {
-      const key = `${tx.direction}|${tx.fund_name}|${tx.amount_yuan}|${tx.trade_time}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        merged.push(tx);
-      }
+  const handleBatchUpload = async (selectedFiles: File[]) => {
+    if (!selectedFiles.length) {
+      return;
     }
-    return merged;
-  };
-
-  const handleBatchUpload = async (selectedFile: File) => {
     setIsBatchUploading(true);
     setBatchUploadError(null);
+    setBatchUploadProgress({ current: 0, total: selectedFiles.length });
+    const previous = pendingTransactions ?? [];
+    let next = previous;
+    let recognized = 0;
+    const failures: string[] = [];
     try {
-      const result = await transactionsOcr(selectedFile);
-      // 识别不可用/失败时后端返回 error 字段而不是 500；不透出的话用户只会看到
-      // 「未识别到交易记录」这种误导性提示。
-      if (result.error) {
-        throw new Error(result.error);
+      for (let index = 0; index < selectedFiles.length; index += 1) {
+        const selectedFile = selectedFiles[index];
+        setBatchUploadProgress({ current: index + 1, total: selectedFiles.length });
+        try {
+          const result = await transactionsOcr(selectedFile);
+          // 识别不可用/失败时后端返回 error 字段而不是 500；不透出的话用户只会看到
+          // 「未识别到交易记录」这种误导性提示。
+          if (result.error) {
+            throw new Error(result.error);
+          }
+          if (!result.transactions.length) {
+            const isHoldingsPage = result.ocr_source === "alipay_holdings";
+            throw new Error(
+              isHoldingsPage
+                ? "这张是持仓总览截图。导入交易请传「交易记录」页；只要当前持仓请用「同步持仓」。"
+                : "未识别到交易记录，请确认截图为支付宝「交易记录」页。",
+            );
+          }
+          next = mergeParsedTransactions(next, result.transactions);
+          recognized += 1;
+        } catch (error) {
+          failures.push(
+            `${selectedFile.name || `第 ${index + 1} 张`}：${userFacingErrorMessage(error, "交易记录识别失败。")}`,
+          );
+        }
       }
-      if (!result.transactions.length) {
-        const isHoldingsPage = result.ocr_source === "alipay_holdings";
-        throw new Error(
-          isHoldingsPage
-            ? "这张是持仓总览截图。导入交易请传「交易记录」或「交易分析」页；只要当前持仓请用「同步持仓」。"
-            : "未识别到交易记录，请确认截图为支付宝「交易记录 / 交易分析」页。",
-        );
+      if (recognized === 0) {
+        throw new Error(failures.join("\n") || "交易记录识别失败。");
       }
+      next = await fillClosestTransactionFundCodes(next, searchFunds);
       setShowBatchModal(false);
-      setPendingTransactions((prev) => mergeTransactions(prev ?? [], result.transactions));
+      setPendingTransactions(next);
+      setTransactionApplyError(
+        failures.length
+          ? `有 ${failures.length} 张截图未识别成功。\n${failures.join("\n")}`
+          : null,
+      );
     } catch (error) {
-      setBatchUploadError(userFacingErrorMessage(error, "交易记录识别失败。"));
+      const message = userFacingErrorMessage(error, "交易记录识别失败。");
+      setBatchUploadError(message);
+      if (previous.length) {
+        setTransactionApplyError(message);
+      }
     } finally {
       setIsBatchUploading(false);
+      setBatchUploadProgress(null);
     }
   };
 
-  const handleApplyTransactions = async () => {
+  const handleApplyTransactions = async (syncPlan: TransactionSyncPlan) => {
     if (!pendingTransactions?.length) {
       return;
     }
@@ -1648,11 +1556,12 @@ export function Dashboard() {
     setIsApplyingTransactions(true);
     setTransactionApplyError(null);
     try {
-      const result = await enqueuePortfolioMutation(() => applyTransactions(toApply));
+      const result = await enqueuePortfolioMutation(() =>
+        applyTransactions(toApply, { applyPosition: syncPlan === "apply_position" }),
+      );
       if (mutationVersion !== holdingsMutationVersionRef.current) {
         return;
       }
-      markPortfolioCacheWriteReady();
       setHoldings(result.holdings);
       void loadPortfolioSummary();
       setPendingTransactions(null);
@@ -1685,18 +1594,12 @@ export function Dashboard() {
       return null;
     }
 
-    markPortfolioCacheWriteReady();
     setHoldings(result.holdings);
     if (nextSummary) {
       setPortfolioSummary(nextSummary);
     }
     setPortfolioLoadState("ready");
     setPortfolioLoadError(null);
-    saveCachedPortfolioHoldings(user?.id, {
-      holdings: result.holdings,
-      portfolio_summary: nextSummary,
-      refreshed_at: holdingsRefreshedAt,
-    });
     return { holdings: result.holdings, portfolioSummary: nextSummary };
   };
 
@@ -1714,8 +1617,6 @@ export function Dashboard() {
     }
 
     const nextSummary = result.portfolio_summary ?? portfolioSummary;
-    const nextRefreshedAt = result.refreshed_at ?? holdingsRefreshedAt;
-    markPortfolioCacheWriteReady();
     setHoldings(result.holdings);
     if (result.portfolio_summary) {
       setPortfolioSummary(result.portfolio_summary);
@@ -1725,33 +1626,28 @@ export function Dashboard() {
     }
     setPortfolioLoadState("ready");
     setPortfolioLoadError(null);
-    saveCachedPortfolioHoldings(user?.id, {
-      holdings: result.holdings,
-      portfolio_summary: nextSummary,
-      refreshed_at: nextRefreshedAt,
-    });
     return { holdings: result.holdings, portfolioSummary: nextSummary };
   };
 
-  // 只留「英文眉标 + 中文标题」。原来每个 tab 还挂一句描述（"看清资产与收益，再决定
-  // 下一步。"之类），但导航高亮已经说明了当前在哪一屏，这句话不提供新信息，却把真正的
-  // 主角（总资产 / 当日收益 / 结论）挤到首屏之外。标题本身保留为 h1 语义地标，字号收小。
-  const activePageMeta = {
-    holdings: ["账户持仓", "PORTFOLIO"],
-    dashboard: ["盈亏分析", "PERFORMANCE"],
-    market: ["市场观察", "MARKET"],
-    discovery: ["发现基金", "DISCOVERY"],
-    report: ["投研日报", "DAILY BRIEF"],
-    history: ["历史日报", "ARCHIVE"],
+  // 页头标题行已去掉：顶栏/底栏导航已经标明当前页。h1 只留给读屏。
+  const activePageTitle = {
+    holdings: "账户持仓",
+    dashboard: "盈亏分析",
+    market: "市场观察",
+    discovery: "发现基金",
+    report: "投研日报",
+    history: "历史日报",
+    me: "我的",
   }[activeTab];
 
   return (
     <div className="premium-bg min-h-screen">
       <a href="#main-content" className="skip-link">跳到主要内容</a>
-      <div className="dashboard-shell mx-auto flex min-h-screen w-full max-w-[1240px] flex-col px-4 py-3 sm:px-6 sm:py-4">
-        <header
-          className="app-masthead sticky top-0 z-40 -mx-4 mb-3 flex items-center justify-between gap-4 border-b border-[var(--line)] px-4 py-2.5 sm:-mx-6 sm:px-6"
-        >
+      <div className="dashboard-shell mx-auto flex min-h-screen w-full max-w-[1240px] flex-col px-4 sm:px-6">
+        <div className="sticky top-0 z-40 -mx-4 bg-[var(--background)] pb-[var(--app-masthead-gap)] sm:-mx-6">
+          <header
+            className="app-masthead flex items-center justify-between gap-4 border-b border-[var(--line)] px-4 py-2.5 sm:px-6"
+          >
           <BrandMark size="md" />
           <div className="min-w-0 flex-1">
             <DashboardNav
@@ -1771,21 +1667,12 @@ export function Dashboard() {
             >
               <Search size={20} />
             </button>
-            <UserMenu />
+            <UserMenu onOpenMe={() => setActiveTab("me")} />
           </div>
         </header>
+        </div>
 
-        <section className="app-page-heading" aria-labelledby="app-page-title">
-          <h1 id="app-page-title" className="font-display">{activePageMeta[0]}</h1>
-          <p>{activePageMeta[1]}</p>
-        </section>
-
-        {ocrCompletionCount !== null ? (
-          <section className="workflow-completion" role="status" aria-live="polite">
-            <div><span aria-hidden="true">✓</span><p><strong>持仓恢复完成</strong>已写入 {ocrCompletionCount} 只基金。</p></div>
-            <button type="button" onClick={() => setOcrCompletionCount(null)} className="btn-ghost min-h-11">知道了</button>
-          </section>
-        ) : null}
+        <h1 id="app-page-title" className="sr-only">{activePageTitle}</h1>
 
         <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 pb-6">
           {deferredActiveTab === "holdings" ? (
@@ -1803,7 +1690,6 @@ export function Dashboard() {
                 holdings={holdings}
                 portfolioSummary={portfolioSummary}
                 sectorRefresh={sectorRefresh}
-                refreshedAt={holdingsRefreshedAt}
                 isLoading={isHydratingHoldings && holdings.length === 0}
                 loadState={portfolioLoadState}
                 loadError={portfolioLoadError}
@@ -1817,6 +1703,7 @@ export function Dashboard() {
                   setShowBatchModal(true);
                 }}
                 onSelectHolding={setSelectedHoldingKey}
+                onOpenAnalysis={() => setActiveTab("dashboard")}
               />
             </div>
           ) : null}
@@ -1912,8 +1799,19 @@ export function Dashboard() {
             </div>
           ) : null}
 
+          {deferredActiveTab === "me" ? (
+            <MePage onOpenAnalysis={() => setActiveTab("dashboard")} />
+          ) : null}
+
           {deferredActiveTab === "dashboard" ? (
-            <PortfolioDashboard userId={user?.id ?? null} fallbackSummary={portfolioSummary} />
+            <PortfolioDashboard
+              userId={user?.id ?? null}
+              fallbackSummary={portfolioSummary}
+              onBack={() => {
+                const target = analysisReturnTabRef.current;
+                setActiveTab(target === "dashboard" ? "me" : target);
+              }}
+            />
           ) : null}
 
           {deferredActiveTab === "market" ? <MarketTab /> : null}
@@ -2032,7 +1930,6 @@ export function Dashboard() {
             invalidatePortfolioHoldingsRequest();
             const rollbackHoldings = holdings;
             const next = holdings.map((item, itemIndex) => (itemIndex === index ? updated : item));
-            markPortfolioCacheWriteReady();
             setHoldings(next);
             try {
               const applied = await enqueuePortfolioMutation(() => applyPortfolioHoldings([updated]));
@@ -2085,11 +1982,13 @@ export function Dashboard() {
             setShowAddHoldingModal(false);
             setAddHoldingError(null);
           }}
-          onUpload={(file) => void handleOcrUpload(file)}
+          onUpload={(files) => void handleOcrUpload(files)}
           onManualSubmit={(items) => handleManualAddHoldings(items)}
           isUploading={isOcrUploading}
+          uploadProgress={ocrUploadProgress}
           isSubmitting={isManualAdding}
           errorMessage={addHoldingError}
+          continueFromReview={Boolean(pendingOcrHoldings)}
         />
       ) : null}
 
@@ -2100,13 +1999,15 @@ export function Dashboard() {
             setShowBatchModal(false);
             setBatchUploadError(null);
           }}
-          onUpload={(file) => void handleBatchUpload(file)}
+          onUpload={(files) => void handleBatchUpload(files)}
           isUploading={isBatchUploading}
+          uploadProgress={batchUploadProgress}
           errorMessage={batchUploadError}
+          continueFromReview={Boolean(pendingTransactions)}
         />
       ) : null}
 
-      {pendingTransactions && !showBatchModal ? (
+      {pendingTransactions ? (
         <BatchTransactionConfirmModal
           transactions={pendingTransactions}
           heldFunds={displayableHoldings(holdings).map((holding) => ({
@@ -2114,17 +2015,20 @@ export function Dashboard() {
             fund_name: holding.fund_name,
           }))}
           isBusy={isApplyingTransactions}
+          isUploading={isBatchUploading}
+          uploadProgress={batchUploadProgress}
           errorMessage={transactionApplyError}
           onChange={(transactions) => {
             setTransactionApplyError(null);
             setPendingTransactions(transactions);
           }}
-          onConfirm={() => void handleApplyTransactions()}
+          onConfirm={(plan) => void handleApplyTransactions(plan)}
           onContinueUpload={() => {
             setBatchUploadError(null);
             setTransactionApplyError(null);
             setShowBatchModal(true);
           }}
+          onUploadMore={(files) => void handleBatchUpload(files)}
           onClose={() => {
             setTransactionApplyError(null);
             setPendingTransactions(null);
@@ -2136,20 +2040,26 @@ export function Dashboard() {
         <AlipayOcrConfirmModal
           holdings={pendingOcrHoldings}
           fundCodeResolutions={pendingOcrResolutions}
-          amountSemanticsNote={pendingOcrNote}
           ocrSource={pendingOcrSource}
           isBusy={isApplyingOcrHoldings}
+          isUploading={isOcrUploading}
+          uploadProgress={ocrUploadProgress}
           errorMessage={ocrApplyError}
           onChange={(nextHoldings) => {
             setOcrApplyError(null);
             setPendingOcrHoldings(nextHoldings);
           }}
           onConfirm={() => void handleConfirmOcrHoldings()}
+          onContinueUpload={() => {
+            setAddHoldingError(null);
+            setOcrApplyError(null);
+            setShowAddHoldingModal(true);
+          }}
+          onUploadMore={(files) => void handleOcrUpload(files)}
           onClose={() => {
             setOcrApplyError(null);
             setPendingOcrHoldings(null);
             setPendingOcrResolutions([]);
-            setPendingOcrNote(null);
             setPendingOcrSource(null);
           }}
         />

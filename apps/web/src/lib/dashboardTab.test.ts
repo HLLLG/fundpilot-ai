@@ -30,6 +30,11 @@ describe("dashboard tab persistence", () => {
     expect(loadDashboardTab()).toBe("market");
   });
 
+  it("restores the me tab", () => {
+    saveDashboardTab("me");
+    expect(loadDashboardTab()).toBe("me");
+  });
+
   it("restores holdings tab", () => {
     saveDashboardTab("holdings");
     expect(loadDashboardTab()).toBe("holdings");

@@ -247,7 +247,7 @@ SSH 隧道继续提供最小公网暴露面。
 - 必须保证 Lighthouse 的专用 `FUND_AI_FACTOR_IC_PUBLISH_TOKEN` 与 GitHub `production` Environment 中的 `FACTOR_IC_PUBLISH_TOKEN` 匹配。禁止把公网 IP 配成 HTTP 发布地址，禁止直接连接或写入生产 MySQL。
 - Universe capture、Factor IC 发布、结果结算在生产配置 MySQL 时都拒绝静默写入 SQLite fallback；出现 503 应先修数据库连接，不能通过关闭保护继续跑。
 - 本地验证只可发布到任务隔离的 SQLite 和 loopback endpoint；它只能证明生成、鉴权、POST 与落库代码链路，不代表生产迁移完成。
-- 当前已知诊断（不记录任何 secret/token 值）：旧的成功 run 指向原 CloudBase endpoint，当前 Lighthouse 中没有对应 snapshot。
+- 当前已知诊断（不记录任何 secret/token 值）：旧 Actions run 曾指向已退役的托管 endpoint；现行发布目标是 Lighthouse 本机 API。
 
 ## 10. 初始化管理员账户
 

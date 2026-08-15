@@ -127,6 +127,30 @@ def get_previous_trade_date(effective_trade_date: str | None = None) -> str | No
     return None
 
 
+def needed_official_nav_date(session: dict | None = None) -> str:
+    """官方净值可能已经披露的最近交易日。
+
+    盘中/午休/收盘前仍是上一交易日净值；收盘后才轮询当日净值。
+    休市日与开盘前用 effective_trade_date（上一交易日）。
+    """
+    current = session or build_trading_session()
+    kind = str(current.get("session_kind") or "")
+    calendar_date = str(current.get("calendar_date") or "")
+    effective = str(current.get("effective_trade_date") or calendar_date)
+    if kind == "trading_day_after_close":
+        return calendar_date or effective
+    if kind in {"trading_day_intraday", "trading_day_pre_close"}:
+        previous = get_previous_trade_date(effective)
+        return previous or effective
+    return effective
+
+
+def should_refresh_intraday_charts(session: dict | None = None) -> bool:
+    """分时曲线只在连续竞价时段变化；午休、收盘后、周末拉取都是徒劳。"""
+    current = session or build_trading_session()
+    return bool(current.get("is_continuous_trading"))
+
+
 def _is_trading_day(day: date) -> bool:
     if day.weekday() >= 5:
         return False

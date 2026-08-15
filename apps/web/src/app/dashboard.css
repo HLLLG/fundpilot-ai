@@ -642,8 +642,11 @@
   }
 }
 
-/* 「持有」首屏：总资产英雄区柔光框 */
+/* 「持有」首屏：总资产钉在顶栏与固定留白下沿，滚动时不把空隙吃掉。 */
 .holdings-hero {
+  position: sticky;
+  top: calc(var(--app-masthead-h, 4.25rem) + var(--app-masthead-gap, 0.75rem));
+  z-index: 30;
   background:
     radial-gradient(480px 150px at 0% -40px, var(--brand-soft) 0%, transparent 70%),
     linear-gradient(180deg, var(--panel-strong) 0%, var(--panel) 100%);
@@ -677,22 +680,10 @@
   background: rgba(27, 75, 95, 0.04);
 }
 
-/* 底栏高度是个布局常量：后台任务浮层必须停在它上方，两处只能共用一个值，
-   各自硬编码迟早会漂移（这正是浮层曾经压住「市场 / 更多」按钮的原因）。
-   底栏内容高度本来是内蕴的，这里固定下来才能被别人引用。 */
-:root {
-  --bottom-nav-h: 3.25rem;
-}
-
-/* ── Dashboard 移动端底栏（lg 以下显示；勿用 Tailwind hidden，会被 display:flex 覆盖） ── */
+/* ── Dashboard 移动端底栏视觉
+   定位 / 桌面隐藏写在 globals.css：这份文件随 Dashboard chunk 热更新时会被卸掉，
+   不能再把 display:flex 写在这里，否则会盖掉首屏的 lg 隐藏规则。 */
 .dashboard-bottom-nav {
-  position: fixed;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 50;
-  display: flex;
-  align-items: stretch;
   gap: 2px;
   min-height: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px));
   padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
@@ -700,12 +691,6 @@
   background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(12px);
   box-shadow: 0 -8px 24px rgba(7, 31, 43, 0.06);
-}
-
-@media (min-width: 1024px) {
-  .dashboard-bottom-nav {
-    display: none;
-  }
 }
 
 .dashboard-bottom-nav-btn {
@@ -829,14 +814,10 @@
   color: #fff;
 }
 
-.app-masthead { min-height:4.25rem; background:rgba(236,238,234,.95); backdrop-filter:blur(12px); }
-/* 页头是语义地标，不是视觉主角 —— 主角是它下面的总资产 / 当日收益 / 结论。
-   原来这里是 2 列网格（大标题 + 一段描述），clamp 到 3.25rem 的 h1 加上 1.5/1.75rem
-   内边距和 2rem 外边距，在 390px 屏上单独吃掉约 200px 首屏高度。改成基线对齐的单行：
-   眉标与标题同排，总高度约 3rem。 */
-.app-page-heading { display:flex; flex-wrap:wrap; align-items:baseline; gap:.2rem .6rem; margin:.5rem 0 1rem; padding-bottom:.7rem; border-bottom:1px solid var(--line-strong); }
-.app-page-heading > p { color:var(--accent-strong); font-size:.5625rem; font-weight:800; letter-spacing:.18em; }
-.app-page-heading h1 { color:var(--brand-deep); font-size:1.375rem; font-weight:650; letter-spacing:-.02em; }
+.app-masthead {
+  min-height: var(--app-masthead-h, 4.25rem);
+  background: var(--background);
+}
 .workflow-rail { display:grid; grid-template-columns:repeat(3,1fr); padding:0 1.25rem; border-bottom:1px solid var(--line); background:var(--surface-muted); }
 .workflow-rail li { position:relative; display:flex; gap:.5rem; align-items:center; min-height:3.25rem; color:var(--muted); font-size:.6875rem; }
 .workflow-rail li::after { content:""; position:absolute; right:1rem; bottom:-1px; left:0; height:2px; background:transparent; }
@@ -844,11 +825,6 @@
 .workflow-rail li[aria-current="step"]::after { background:var(--accent); }
 .workflow-rail .is-done { color:var(--brand); }
 .workflow-rail span { font-variant-numeric:tabular-nums; font-weight:800; }
-.workflow-completion { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:1.25rem; padding:1rem 1.1rem; border:1px solid rgba(27,75,95,.22); border-left:3px solid var(--accent); background:var(--panel); }
-.workflow-completion > div { display:flex; align-items:center; gap:.8rem; }
-.workflow-completion > div > span { display:grid; width:2rem; height:2rem; place-items:center; border-radius:50%; color:#fff; background:var(--brand); }
-.workflow-completion p { color:var(--muted); font-size:.75rem; line-height:1.6; }
-.workflow-completion strong { display:block; color:var(--brand-deep); font-size:.875rem; }
 .ocr-review-row:last-child { border-bottom:0; }
 
 .holdings-workspace {
@@ -866,11 +842,58 @@
 .holdings-summary .kpi-value { font-family: var(--font-display); color: var(--brand-deep); font-weight: 650; }
 .holdings-ledger { background: var(--panel); }
 .holding-ledger-row { transition-duration: var(--motion-fast); }
-.analysis-hero { border-block: 1px solid var(--line-strong); background: var(--panel); }
-.analysis-hero .pl-hero { text-align: left; padding: 2rem clamp(1.25rem,4vw,3rem); }
-.analysis-hero .pl-hero-value { font-family: var(--font-display); font-size: clamp(3rem,8vw,5.2rem); font-weight: 650; }
-.analysis-hero .pl-hero > p { margin-inline: 0; }
-.analysis-range { border-bottom: 1px solid var(--line-strong); }
+
+.analysis-workspace {
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-card);
+  background: var(--panel);
+}
+
+.analysis-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0.15rem 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.analysis-hero {
+  background: var(--panel);
+}
+
+.analysis-hero .pl-hero {
+  text-align: left;
+  padding: 1.25rem 1rem 0.85rem;
+}
+
+.analysis-hero .pl-hero-value {
+  font-family: var(--font-display);
+  font-size: clamp(1.85rem, 8vw, 2.6rem);
+  font-weight: 650;
+  line-height: 1.05;
+}
+
+.analysis-hero .pl-hero > p {
+  margin-inline: 0;
+}
+
+.analysis-range {
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.analysis-body {
+  padding: 0.75rem 1rem 1rem;
+  background: var(--background);
+}
+
+.analysis-body > .pl-panel:first-child {
+  margin-top: 0;
+}
+
 .pl-panel.section-card { border-radius: var(--radius-control); box-shadow: none; }
 .market-nav { border-bottom: 1px solid var(--line-strong); }
 .market-workspace .section-card { border-radius: var(--radius-control); }
@@ -941,14 +964,10 @@
 
 @keyframes drawer-enter { from { opacity:0; transform:translateX(1.5rem); } to { opacity:1; transform:translateX(0); } }
 
-@media (max-width:1023px) {
-  /* backdrop-filter 会让内部 fixed 底栏改以 header 为包含块，最终与头像重叠。 */
-  .app-masthead { backdrop-filter:none; }
-}
-
 @media (max-width: 767px) {
-  .analysis-hero .pl-hero { padding:1.5rem 1rem; }
-  .analysis-hero .pl-hero-value { font-size:clamp(2.6rem,15vw,4rem); }
+  .analysis-hero .pl-hero { padding: 1rem 0.85rem 0.75rem; }
+  .analysis-hero .pl-hero-value { font-size: clamp(1.85rem, 10vw, 2.35rem); }
+  .analysis-body { padding: 0.65rem 0.75rem 0.85rem; }
   .discovery-decision-rail { padding:0 .75rem; }
   .discovery-decision-rail li { align-items:flex-start; flex-direction:column; justify-content:center; gap:.1rem; }
   .report-navigator { grid-template-columns:1fr; gap:.75rem; padding:.85rem; }
@@ -969,12 +988,6 @@
 }
 
 @media (max-width: 767px) {
-  /* 手机上标题区更要克制：这块每多 1rem，总资产就往下沉 1rem。 */
-  .app-page-heading { margin:.35rem 0 .8rem; padding-bottom:.6rem; }
-  .app-page-heading h1 { font-size:1.25rem; }
-  /* 拆分前与 .settings-danger-row 共用一条规则，声明逐字不变。 */
-  .workflow-completion { align-items:flex-start; flex-direction:column; }
-  .workflow-completion .btn-ghost { width:100%; }
   .workflow-rail { padding:0 .75rem; }
   .workflow-rail li { align-items:flex-start; flex-direction:column; justify-content:center; gap:.1rem; }
 }

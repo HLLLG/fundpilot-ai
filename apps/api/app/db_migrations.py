@@ -12,7 +12,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 # 迁移在应用/后台线程首次建立连接时触发（例如板块快照刷新会 daemon 线程预取资金流历史，
 # 与主线程几乎同时首次打开 sqlite 连接）。同进程内多个线程各自用独立 connection 对同一
@@ -153,8 +153,8 @@ def _ensure_migration_user(connection: sqlite3.Connection) -> None:
         """
         INSERT INTO users (
             id, userRole, username, userAccount, passwordHash,
-            bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt
-        ) VALUES (1, 'user', '迁移用户', 'migration@local', ?, '', '', NULL, ?, ?, 0, NULL)
+            bio, avatarUrl, createdAt, updatedAt, isDeleted, deletedAt
+        ) VALUES (1, 'user', '迁移用户', 'migration@local', ?, '', '', ?, ?, 0, NULL)
         """,
         (hash_password("migration-not-for-login"), now, now),
     )
@@ -1776,6 +1776,14 @@ def _migrate_prompt_shadow_operations(connection: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_users_drop_cloudbase_uid(connection: sqlite3.Connection) -> None:
+    if not _table_exists(connection, "users"):
+        return
+    if not _column_exists(connection, "users", "cloudbaseUid"):
+        return
+    connection.execute("ALTER TABLE users DROP COLUMN cloudbaseUid")
+
+
 def _migrate_admin_user_management(connection: sqlite3.Connection) -> None:
     """Add authoritative account state, reset tokens, and immutable admin audit."""
 
@@ -1790,7 +1798,6 @@ def _migrate_admin_user_management(connection: sqlite3.Connection) -> None:
                 passwordHash TEXT NOT NULL,
                 bio TEXT NOT NULL DEFAULT '',
                 avatarUrl TEXT NOT NULL DEFAULT '',
-                cloudbaseUid TEXT,
                 createdAt TEXT NOT NULL,
                 updatedAt TEXT NOT NULL,
                 isDeleted INTEGER NOT NULL DEFAULT 0,
@@ -1813,6 +1820,7 @@ def _migrate_admin_user_management(connection: sqlite3.Connection) -> None:
             connection.execute(
                 f"ALTER TABLE users ADD COLUMN {column} {definition}"
             )
+    _migrate_users_drop_cloudbase_uid(connection)
     connection.execute(
         """
         UPDATE users
@@ -2179,7 +2187,6 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
             passwordHash TEXT NOT NULL,
             bio TEXT NOT NULL DEFAULT '',
             avatarUrl TEXT NOT NULL DEFAULT '',
-            cloudbaseUid TEXT,
             createdAt TEXT NOT NULL,
             updatedAt TEXT NOT NULL,
             isDeleted INTEGER NOT NULL DEFAULT 0,

@@ -41,7 +41,6 @@ export function SingleFundTransactionModal({
   onSubmit,
 }: SingleFundTransactionModalProps) {
   const [sharesInput, setSharesInput] = useState("");
-  const [feeInput, setFeeInput] = useState("");
   const [timing, setTiming] = useState<TradeTiming>("after_close");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +65,6 @@ export function SingleFundTransactionModal({
       return;
     }
     setSharesInput("");
-    setFeeInput("");
     setTiming("after_close");
     setError(null);
   }, [open, direction]);
@@ -76,12 +74,6 @@ export function SingleFundTransactionModal({
   }
 
   const parsedShares = Number.parseFloat(sharesInput.replace(/,/g, "").trim());
-  const normalizedFee = feeInput.replace(/,/g, "").trim();
-  const parsedFee = normalizedFee === ""
-    ? null
-    : /^(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalizedFee)
-      ? Number(normalizedFee)
-      : Number.NaN;
   const amountYuan =
     Number.isFinite(parsedShares) && latestNav && latestNav > 0
       ? Math.round(parsedShares * latestNav * 100) / 100
@@ -100,10 +92,6 @@ export function SingleFundTransactionModal({
       setError("无法估算成交金额，请稍后重试");
       return;
     }
-    if (parsedFee != null && (!Number.isFinite(parsedFee) || parsedFee < 0)) {
-      setError("实际手续费必须大于等于 0；未知请留空");
-      return;
-    }
 
     const tx: ParsedTransaction = {
       direction,
@@ -111,7 +99,7 @@ export function SingleFundTransactionModal({
       fund_code: holding.fund_code,
       amount_yuan: amountYuan,
       confirmed_shares: parsedShares,
-      fee_yuan: parsedFee,
+      fee_yuan: null,
       trade_time: buildTradeTime(timing),
       confirm_date: null,
       in_progress: false,
@@ -224,20 +212,6 @@ export function SingleFundTransactionModal({
             {amountYuan != null ? (
               <p className="mt-2 text-xs text-slate-500">约合金额 ¥{formatPlainMoney(amountYuan)}</p>
             ) : null}
-          </div>
-
-          <div className="rounded-2xl bg-white px-4 py-3">
-            <div className="text-sm font-semibold text-slate-800">原平台实际手续费（可选）</div>
-            <input
-              value={feeInput}
-              onChange={(event) => setFeeInput(event.target.value)}
-              disabled={saving}
-              inputMode="decimal"
-              aria-label="原平台实际手续费"
-              placeholder="未知请留空，不会按 0"
-              className="input-field mt-2 w-full tabular-nums disabled:cursor-wait disabled:opacity-60"
-            />
-            <p className="mt-1 text-[11px] text-slate-500">只填写原平台账单中的实际金额，勿填估算值。</p>
           </div>
 
           <div className="rounded-2xl bg-white px-4 py-3">

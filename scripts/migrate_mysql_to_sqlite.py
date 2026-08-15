@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""将 CloudBase MySQL（或任意 MySQL）数据同步到本地 SQLite，供开发/测试使用。"""
+"""将线上 MySQL（或任意 MySQL）数据同步到本地 SQLite，供开发/测试使用。"""
 
 from __future__ import annotations
 

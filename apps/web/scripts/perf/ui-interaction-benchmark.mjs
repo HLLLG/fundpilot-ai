@@ -66,7 +66,11 @@ function holdings(count) {
  */
 const TABS = [
   { label: "持仓", selector: ".holdings-ledger" },
-  { label: "分析", selector: '[data-testid="portfolio-allocation-section"], .pl-page, .analysis-hero, .pl-range-bar' },
+  {
+    label: "我的",
+    extraClick: "盈亏分析",
+    selector: '[data-testid="portfolio-allocation-section"], .pl-page, .analysis-hero, .pl-range-bar',
+  },
   { label: "市场", selector: ".market-nav, .market-workspace, #main-content section" },
   { label: "日报", selector: ".report-navigator" },
 ];
@@ -259,6 +263,9 @@ async function main() {
         });
         const started = Date.now();
         await nav.filter({ hasText: tab.label }).first().click();
+        if (tab.extraClick) {
+          await page.getByRole("button", { name: tab.extraClick, exact: true }).click();
+        }
         let panelHit = true;
         try {
           await page.waitForSelector(tab.selector, { timeout: PANEL_TIMEOUT_MS });

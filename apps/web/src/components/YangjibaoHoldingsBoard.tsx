@@ -5,6 +5,7 @@ import {
   ArrowDown,
   ArrowLeftRight,
   ArrowUp,
+  ChevronRight,
   Eye,
   EyeOff,
   Plus,
@@ -13,7 +14,6 @@ import {
   ScanLine,
 } from "lucide-react";
 import { type Holding, type PortfolioSummary } from "@/lib/api";
-import { OCR_PRIVACY_COPY } from "@/lib/ocrPrivacy";
 import { hydrateTradingSession } from "@/lib/tradingSessionClient";
 import { readTradingSessionCache } from "@/lib/holdingDetailCache";
 import { SectorMappingModal } from "@/components/SectorMappingModal";
@@ -45,21 +45,19 @@ import {
 import type { SectorQuoteMeta } from "@/lib/api";
 import { holdingDisplaySectorLabel } from "@/lib/profileSector";
 import { buildSectorRefreshNotice, isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
-import { formatThemeBoardUpdatedFromIso } from "@/lib/marketThemeBoard";
 import { loadAmountsHidden, saveAmountsHidden } from "@/lib/storage";
-import { formatTradeDateShort } from "@/lib/tradeDateLabel";
+import { formatHoldingsColumnDateShort, formatTradeDateShort } from "@/lib/tradeDateLabel";
 import type { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
 
 type SectorRefreshControl = ReturnType<typeof useSectorQuoteRefresh>;
 type HoldingsSortKey = "amount" | "daily" | "sector" | "holding";
 type HoldingsSortDir = "desc" | "asc";
-type DailyDisplayMode = "amount" | "percent";
 export type PortfolioLoadState = "loading" | "refreshing" | "ready" | "stale" | "error";
 
 const HOLDINGS_SORT_LABELS: Record<HoldingsSortKey, string> = {
   amount: "持有金额",
   daily: "当日收益",
-  sector: "板块涨跌",
+  sector: "关联板块",
   holding: "持有收益",
 };
 
@@ -67,7 +65,6 @@ type YangjibaoHoldingsBoardProps = {
   holdings: Holding[];
   portfolioSummary?: PortfolioSummary | null;
   sectorRefresh: SectorRefreshControl;
-  refreshedAt?: string | null;
   isLoading?: boolean;
   loadState?: PortfolioLoadState;
   loadError?: string | null;
@@ -76,6 +73,7 @@ type YangjibaoHoldingsBoardProps = {
   onAddHolding?: () => void;
   onBatchTransaction?: () => void;
   onSelectHolding?: (holding: HoldingIdentity) => void;
+  onOpenAnalysis?: () => void;
 };
 
 const updatedBadgeClassName =
@@ -98,6 +96,13 @@ function formatMoney(value: number | null | undefined) {
   return MONEY_FORMATTER.format(value);
 }
 
+function formatYuan(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+  return `¥${MONEY_FORMATTER.format(value)}`;
+}
+
 function formatBalance(value: number | null | undefined, hidden: boolean) {
   if (hidden) {
     return "****";
@@ -105,19 +110,8 @@ function formatBalance(value: number | null | undefined, hidden: boolean) {
   return formatMoney(value);
 }
 
-function accountDailyReturnPercent(
-  dailyProfit: number | null,
-  totalAssets: number | null,
-): number | null {
-  if (dailyProfit == null || totalAssets == null || totalAssets <= 0) {
-    return null;
-  }
-  const previousTotal = totalAssets - dailyProfit;
-  if (previousTotal <= 0) {
-    return null;
-  }
-  return Math.round((dailyProfit / previousTotal) * 10000) / 100;
-}
+const SUMMARY_ICON_BTN =
+  "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]";
 
 function holdingsSortValue(holding: Holding, key: HoldingsSortKey): number | null {
   switch (key) {
@@ -171,58 +165,43 @@ function SortableColumnHeader({
   const active = activeSortKey === columnKey;
 
   return (
-    <div className="flex min-h-11 items-center justify-end gap-0.5">
-      <div className="text-right">
-        <div>{label}</div>
-        {date ? <div className="mt-0.5 text-[10px] font-semibold text-slate-500 tabular-nums">{date}</div> : null}
-      </div>
-      <button
-        type="button"
-        onClick={onSort}
-        className={`inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] ${
-          active ? "text-slate-700" : "text-slate-500 hover:text-slate-700"
-        }`}
-        title={
-          active
-            ? sortDir === "desc"
-              ? "收益从高到低，点击切换"
-              : "收益从低到高，点击切换"
-            : `按${label}排序`
-        }
-        aria-label={
-          active
-            ? `按${label}${sortDir === "desc" ? "降序" : "升序"}排列，点击切换方向`
-            : `按${label}降序排列`
-        }
-        aria-pressed={active}
-      >
-        {active && sortDir === "asc" ? <ArrowUp size={14} strokeWidth={2.5} /> : <ArrowDown size={14} strokeWidth={2.5} />}
-      </button>
-    </div>
+    <button
+      type="button"
+      onClick={onSort}
+      className={`inline-flex min-h-11 w-full flex-col items-center justify-center gap-0 rounded-lg px-0.5 py-1 text-center leading-tight transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] ${
+        active ? "text-slate-700" : "text-slate-500 hover:text-slate-700"
+      }`}
+      title={
+        active
+          ? sortDir === "desc"
+            ? "收益从高到低，点击切换"
+            : "收益从低到高，点击切换"
+          : `按${label}排序`
+      }
+      aria-label={
+        active
+          ? `按${label}${sortDir === "desc" ? "降序" : "升序"}排列，点击切换方向`
+          : `按${label}降序排列`
+      }
+      aria-pressed={active}
+    >
+      <span>{label}</span>
+      <span className="inline-flex items-center gap-0.5 font-semibold tabular-nums">
+        {date ? <span>{date}</span> : null}
+        {active && sortDir === "asc" ? (
+          <ArrowUp size={12} strokeWidth={2.5} className="shrink-0" />
+        ) : (
+          <ArrowDown size={12} strokeWidth={2.5} className="shrink-0" />
+        )}
+      </span>
+    </button>
   );
-}
-
-function formatHoldingsRefreshedLabel(
-  iso: string | null | undefined,
-  isRefreshing: boolean,
-): string {
-  if (iso) {
-    const formatted = formatThemeBoardUpdatedFromIso(iso);
-    if (formatted !== "加载中…") {
-      return formatted;
-    }
-  }
-  if (isRefreshing) {
-    return "刷新中…";
-  }
-  return "未刷新行情";
 }
 
 export function YangjibaoHoldingsBoard({
   holdings,
   portfolioSummary,
   sectorRefresh,
-  refreshedAt = null,
   isLoading = false,
   loadState,
   loadError,
@@ -231,14 +210,18 @@ export function YangjibaoHoldingsBoard({
   onAddHolding,
   onBatchTransaction,
   onSelectHolding,
+  onOpenAnalysis,
 }: YangjibaoHoldingsBoardProps) {
   const [quoteTradeDate, setQuoteTradeDate] = useState<string | null>(() => {
     const cached = readTradingSessionCache();
     return cached ? formatTradeDateShort(cached.effective_trade_date) : null;
   });
+  const [columnDate, setColumnDate] = useState<string | null>(() => {
+    const cached = readTradingSessionCache();
+    return cached ? formatHoldingsColumnDateShort(cached) : null;
+  });
   const [sortKey, setSortKey] = useState<HoldingsSortKey>("amount");
   const [sortDir, setSortDir] = useState<HoldingsSortDir>("desc");
-  const [dailyDisplayMode, setDailyDisplayMode] = useState<DailyDisplayMode>("amount");
   const [amountsHidden, setAmountsHidden] = useState(() => loadAmountsHidden());
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const {
@@ -255,6 +238,7 @@ export function YangjibaoHoldingsBoard({
   useEffect(() => {
     return hydrateTradingSession((session) => {
       setQuoteTradeDate(formatTradeDateShort(session.effective_trade_date));
+      setColumnDate(formatHoldingsColumnDateShort(session));
     });
   }, []);
 
@@ -277,7 +261,6 @@ export function YangjibaoHoldingsBoard({
   const computedDaily = sumDailyProfit(settledHoldings);
   const totalAssets = computedTotal || portfolioSummary?.total_assets || null;
   const dailyProfit = settledHoldings.length > 0 ? computedDaily : null;
-  const dailyReturn = accountDailyReturnPercent(dailyProfit, totalAssets);
   const officialDailyCount = settledHoldings.filter(
     (holding) => holding.daily_return_percent_source === "official_nav",
   ).length;
@@ -308,7 +291,7 @@ export function YangjibaoHoldingsBoard({
   if (!displayHoldings.length) {
     return (
       <section className={`mx-auto w-full ${sectionClassName}`}>
-        <div className="holdings-workspace overflow-hidden">
+        <div className="holdings-workspace">
           {effectiveLoadState === "loading" || effectiveLoadState === "refreshing" ? (
             <div className="px-5 py-12 text-center">
               <p className="text-sm font-bold text-slate-500">账户汇总</p>
@@ -358,8 +341,6 @@ export function YangjibaoHoldingsBoard({
                   ) : null}
                 </div>
               ) : null}
-              {/* 隐私声明必须可达，但不必在空状态里占三行 —— 收进口径披露。 */}
-              <MethodologyNote label="截图如何处理">{OCR_PRIVACY_COPY.uploadNotice}</MethodologyNote>
             </div>
           )}
         </div>
@@ -369,65 +350,51 @@ export function YangjibaoHoldingsBoard({
 
   return (
     <section className={`mx-auto w-full ${sectionClassName}`}>
-      <div className="holdings-workspace overflow-hidden">
+      <div className="holdings-workspace">
         {effectiveLoadState === "refreshing" ? (
           <InlineNotice
             tone="info"
-            message="正在同步最新持仓，当前先显示上次缓存。"
+            message="正在同步最新持仓。"
             className="m-3"
           />
         ) : effectiveLoadState === "stale" ? (
           <InlineNotice
             tone="warning"
-            message={loadError ?? "最新持仓暂时加载失败，当前显示的是上次缓存。"}
+            message={loadError ?? "最新持仓暂时加载失败，当前显示的是本次已加载的数据。"}
             action={onRetryLoad ? { label: "重试", onClick: onRetryLoad } : undefined}
             className="m-3"
           />
         ) : null}
         <div className="holdings-hero holdings-summary border-b border-[var(--line-strong)] px-4 pb-5 pt-4 sm:px-6 sm:pt-5">
-          <div className="mb-2 flex items-center justify-end gap-1">
-            <button
-              type="button"
-              onClick={() => setLedgerOpen(true)}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
-              title="交易记录"
-              aria-label="查看交易记录"
-            >
-              <Receipt size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setAmountsHidden((current) => {
-                  const next = !current;
-                  saveAmountsHidden(next);
-                  return next;
-                });
-              }}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
-              title={amountsHidden ? "显示金额" : "隐藏金额"}
-              aria-label={amountsHidden ? "显示金额" : "隐藏金额"}
-            >
-              {amountsHidden ? <EyeOff size={15} /> : <Eye size={15} />}
-            </button>
-            <button
-              type="button"
-              onClick={() => void refresh(true, "accurate")}
-              disabled={isRefreshing}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] disabled:opacity-50"
-              title="刷新板块涨跌"
-              aria-label={isRefreshing ? "正在刷新板块涨跌" : "刷新板块涨跌"}
-            >
-              <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
-            </button>
-          </div>
-
           <div className="grid gap-4 min-[380px]:grid-cols-[minmax(0,1fr)_auto] min-[380px]:items-end">
             <div className="min-w-0">
-              <div className="text-[11px] font-semibold text-slate-500">总资产</div>
-              <p className="mt-0.5 text-[10px] font-medium text-slate-500">
-                {formatHoldingsRefreshedLabel(refreshedAt, isRefreshing)}
-              </p>
+              <div className="flex min-h-11 items-center">
+                <div className="text-[13px] font-semibold text-slate-500">总资产</div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAmountsHidden((current) => {
+                      const next = !current;
+                      saveAmountsHidden(next);
+                      return next;
+                    });
+                  }}
+                  className={SUMMARY_ICON_BTN}
+                  title={amountsHidden ? "显示金额" : "隐藏金额"}
+                  aria-label={amountsHidden ? "显示金额" : "隐藏金额"}
+                >
+                  {amountsHidden ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLedgerOpen(true)}
+                  className={SUMMARY_ICON_BTN}
+                  title="交易记录"
+                  aria-label="查看交易记录"
+                >
+                  <Receipt size={16} />
+                </button>
+              </div>
               <div className="kpi-value mt-1 break-all text-[clamp(1.85rem,10vw,2.15rem)] leading-none text-slate-950">
                 {formatBalance(totalAssets, amountsHidden)}
               </div>
@@ -444,32 +411,48 @@ export function YangjibaoHoldingsBoard({
                 </MethodologyNote>
               ) : null}
             </div>
-            <button
-              type="button"
-              onClick={() =>
-                setDailyDisplayMode((current) => (current === "amount" ? "percent" : "amount"))
-              }
-              className="min-h-11 min-w-0 justify-self-start text-left transition hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] min-[380px]:justify-self-end min-[380px]:text-right"
-              title="点击切换：当日收益额 / 当日收益率"
-              aria-label={`当前显示${dailyDisplayMode === "amount" ? "当日收益额" : "当日收益率"}，点击切换`}
-            >
-              <div className="text-[11px] font-semibold text-slate-500">
-                {dailyDisplayMode === "amount" ? "当日收益" : "当日收益率"}
-                {quoteTradeDate ? ` ${quoteTradeDate}` : ""}
-                {allOfficialDaily ? <UpdatedBadge className="ml-1.5 inline-flex px-1.5" /> : null}
-              </div>
-              <div
-                className={`font-display mt-0.5 text-xl font-extrabold tabular-nums ${cnProfitClass(
-                  dailyDisplayMode === "amount" ? dailyProfit : dailyReturn,
-                )}`}
+            <div className="flex items-start justify-self-start min-[380px]:justify-self-end">
+              <button
+                type="button"
+                onClick={() => void refresh(true, "accurate")}
+                disabled={isRefreshing}
+                className={`${SUMMARY_ICON_BTN} disabled:opacity-50`}
+                title="刷新板块涨跌"
+                aria-label={isRefreshing ? "正在刷新板块涨跌" : "刷新板块涨跌"}
               >
-                {dailyDisplayMode === "amount"
-                  ? formatSignedMoney(dailyProfit)
-                  : dailyReturn != null
-                    ? formatSignedPercent(dailyReturn)
-                    : "—"}
-              </div>
-            </button>
+                <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenAnalysis?.()}
+                className="min-w-0 text-left transition hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] min-[380px]:text-right"
+                title="查看盈亏分析"
+                aria-label={
+                  quoteTradeDate
+                    ? `查看盈亏分析，当日收益 ${quoteTradeDate}`
+                    : "查看盈亏分析"
+                }
+              >
+                <div className="flex h-11 items-center gap-0.5 text-[13px] font-semibold text-slate-500 min-[380px]:justify-end">
+                  <span>
+                    当日收益
+                    {quoteTradeDate ? ` ${quoteTradeDate}` : ""}
+                  </span>
+                  {allOfficialDaily ? <UpdatedBadge className="ml-1 inline-flex px-1.5" /> : null}
+                  <ChevronRight
+                    size={14}
+                    strokeWidth={2.4}
+                    className="shrink-0 text-slate-400"
+                    aria-hidden
+                  />
+                </div>
+                <div
+                  className={`font-display text-xl font-extrabold tabular-nums ${cnProfitClass(dailyProfit)}`}
+                >
+                  {formatSignedMoney(dailyProfit)}
+                </div>
+              </button>
+            </div>
           </div>
           {pendingTxCount > 0 ? (
             <button
@@ -522,29 +505,29 @@ export function YangjibaoHoldingsBoard({
         </div>
 
         <div
-          className="hidden grid-cols-[minmax(0,1fr)_4.25rem_minmax(3.5rem,5rem)_4.25rem] items-center gap-1 border-b border-slate-100 bg-slate-50/80 px-4 text-[10px] font-bold text-slate-500 sm:grid"
+          className="hidden grid-cols-[minmax(0,1fr)_7rem_7rem_7rem] items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-4 text-[10px] font-bold text-slate-500 sm:grid"
           data-testid="desktop-holdings-header"
         >
           <span>基金</span>
           <SortableColumnHeader
-            label={dailyColumnLabel}
-            date={null}
+            label="当日收益"
+            date={columnDate}
             columnKey="daily"
             activeSortKey={sortKey}
             sortDir={sortDir}
             onSort={() => handleSort("daily")}
           />
           <SortableColumnHeader
-            label="板块"
-            date={null}
+            label="关联板块"
+            date={columnDate}
             columnKey="sector"
             activeSortKey={sortKey}
             sortDir={sortDir}
             onSort={() => handleSort("sector")}
           />
           <SortableColumnHeader
-            label="持有"
-            date={null}
+            label="持有收益"
+            date={columnDate}
             columnKey="holding"
             activeSortKey={sortKey}
             sortDir={sortDir}
@@ -599,7 +582,7 @@ export function YangjibaoHoldingsBoard({
                     })
                   }
                   aria-label={rowAriaLabel}
-                  className="holding-ledger-row grid min-h-11 w-full grid-cols-3 gap-x-2 gap-y-3 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] px-3 py-3 text-left transition hover:border-[var(--line-strong)] hover:bg-[var(--brand-soft)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] active:bg-[var(--surface-muted)] sm:grid-cols-[minmax(0,1fr)_4.25rem_minmax(3.5rem,5rem)_4.25rem] sm:gap-1 sm:rounded-none sm:border-0 sm:bg-transparent sm:px-4 sm:py-2"
+                  className="holding-ledger-row grid min-h-11 w-full grid-cols-3 gap-x-2 gap-y-3 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] px-3 py-3 text-left transition hover:border-[var(--line-strong)] hover:bg-[var(--brand-soft)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] active:bg-[var(--surface-muted)] sm:grid-cols-[minmax(0,1fr)_7rem_7rem_7rem] sm:gap-2 sm:rounded-none sm:border-0 sm:bg-transparent sm:px-4 sm:py-2"
                 >
                   <div className="col-span-3 min-w-0 sm:col-span-1">
                     <div className="flex items-center gap-1">
@@ -617,14 +600,14 @@ export function YangjibaoHoldingsBoard({
                     </div>
                     {!amountsHidden ? (
                       <div className="mt-0.5 text-[10px] text-slate-500 tabular-nums">
-                        {unsettledOnly ? `在途 ${formatMoney(amountText)}` : formatMoney(amountText)}
-                        {!unsettledOnly && pendingBuy > 0 ? ` · 在途 ${formatMoney(pendingBuy)}` : ""}
+                        {unsettledOnly ? `在途 ${formatYuan(amountText)}` : formatYuan(amountText)}
+                        {!unsettledOnly && pendingBuy > 0 ? ` · 在途 ${formatYuan(pendingBuy)}` : ""}
                       </div>
                     ) : null}
                   </div>
 
                   <div
-                    className="min-w-0 text-left leading-tight sm:text-right"
+                    className="min-w-0 text-left leading-tight sm:text-center"
                     title={
                       unsettledOnly
                         ? "交易已导入，份额尚未确认，暂不计收益"
@@ -636,7 +619,7 @@ export function YangjibaoHoldingsBoard({
                     }
                   >
                     <span className="mb-1 block text-[10px] font-bold text-slate-500 sm:hidden">
-                      {dailyColumnLabel}收益
+                      当日收益{columnDate ? ` ${columnDate}` : ""}
                     </span>
                     <div className={`whitespace-nowrap text-xs font-black tracking-tight tabular-nums sm:text-[13px] sm:tracking-normal ${cnProfitClass(daily)}`}>
                       {daily != null ? formatSignedMoney(daily) : "—"}
@@ -650,7 +633,7 @@ export function YangjibaoHoldingsBoard({
                   </div>
 
                   <div
-                    className="min-w-0 border-l border-slate-100 pl-2 text-left leading-tight sm:border-0 sm:pl-0 sm:text-right"
+                    className="min-w-0 border-l border-slate-100 pl-2 text-left leading-tight sm:border-0 sm:pl-0 sm:text-center"
                     title={
                       sectorLabel !== "—"
                         ? isEstimateFallbackMeta(sectorMeta)
@@ -659,12 +642,14 @@ export function YangjibaoHoldingsBoard({
                         : undefined
                     }
                   >
-                    <span className="mb-1 block text-[10px] font-bold text-slate-500 sm:hidden">板块涨跌</span>
+                    <span className="mb-1 block text-[10px] font-bold text-slate-500 sm:hidden">
+                      关联板块{columnDate ? ` ${columnDate}` : ""}
+                    </span>
                     <div className={`whitespace-nowrap text-xs font-black tracking-tight tabular-nums sm:text-[13px] sm:tracking-normal ${cnProfitClass(sectorReturn)}`}>
                       {formatSignedPercent(sectorReturn)}
                     </div>
                     {sectorLabel !== "—" ? (
-                      <div className="mt-1 flex min-w-0 items-center justify-start gap-1 sm:mt-0 sm:justify-end">
+                      <div className="mt-1 flex min-w-0 items-center justify-start gap-1 sm:mt-0 sm:justify-center">
                         {isEstimateFallbackMeta(sectorMeta) ? (
                           <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-1 py-0 text-[8px] font-bold leading-4 text-amber-600">
                             估值
@@ -675,8 +660,10 @@ export function YangjibaoHoldingsBoard({
                     ) : null}
                   </div>
 
-                  <div className="min-w-0 border-l border-slate-100 pl-2 text-left leading-tight sm:border-0 sm:pl-0 sm:text-right">
-                    <span className="mb-1 block text-[10px] font-bold text-slate-500 sm:hidden">持有收益</span>
+                  <div className="min-w-0 border-l border-slate-100 pl-2 text-left leading-tight sm:border-0 sm:pl-0 sm:text-center">
+                    <span className="mb-1 block text-[10px] font-bold text-slate-500 sm:hidden">
+                      持有收益{columnDate ? ` ${columnDate}` : ""}
+                    </span>
                     <div className={`whitespace-nowrap text-xs font-black tracking-tight tabular-nums sm:text-[13px] sm:tracking-normal ${cnProfitClass(holdingProfit)}`}>
                       {formatSignedMoney(holdingProfit)}
                     </div>

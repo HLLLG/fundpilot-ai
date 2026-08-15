@@ -558,6 +558,7 @@ def _provider_meta(fetch_result: SpotBoardFetchResult, *, provider_path: str) ->
         "provider_path": provider_path,
         "from_stale_cache": fetch_result.from_stale_cache,
         "provider_elapsed_seconds": fetch_result.elapsed_seconds,
+        "joined_in_flight": fetch_result.joined_in_flight,
     }
 
 

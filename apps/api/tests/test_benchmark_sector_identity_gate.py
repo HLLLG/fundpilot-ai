@@ -44,7 +44,13 @@ def _benchmark(index_name: str) -> str:
         ("中证芯片产业指数", "半导体", "H30007"),
         ("中证煤炭指数", "煤炭", "399998"),
         ("中证煤炭等权指数", "煤炭", "399990"),
-        ("中证全指软件指数", "软件", "932094"),
+        # 这里原本期望 932094，来自中基协库的一条错名。2026-08 用中证官方接口逐条核对：
+        # 932094 的官方全称是「中证全指软件**开发**指数」（107 成分），
+        # 「中证全指软件指数」是 H30202（50 成分），当日涨跌也不同（0.11% vs 0.16%）。
+        # 两者同属 label「软件」，所以展示不受影响；但 index_code 会被拿去取基准日线，
+        # 记错就等于用另一只指数给这只基金算跟踪偏离。
+        ("中证全指软件指数", "软件", "H30202"),
+        ("中证全指软件开发指数", "软件", "932094"),
         ("中证全指信息技术指数", "计算机", "000993"),
         ("中证细分化工产业主题指数", "化工", "000813"),
         ("中证全指家用电器指数", "家电", "930697"),
@@ -145,6 +151,92 @@ def test_market_level_label_requires_the_whole_index_name() -> None:
     assert resolved[0] == "港股通"
 
 
+@pytest.mark.parametrize(
+    ("index_name", "expected_sector", "expected_code"),
+    [
+        ("国证房地产行业指数", "房地产", "399393"),
+        ("国证医药卫生行业指数", "医药", "399394"),
+        ("国证有色金属行业指数", "有色金属", "399395"),
+        ("国证食品饮料行业指数", "食品饮料", "399396"),
+    ],
+)
+def test_guozheng_industry_index_keeps_its_own_code(
+    index_name: str,
+    expected_sector: str,
+    expected_code: str,
+) -> None:
+    """国证行业指数系列必须记自己的代码，不能被裸别名改写成中证那只。
+
+    用户报告：国泰国证房地产行业指数A(160218) 的关联板块显示为「房地产」，取的却是
+    中证全指房地产(931775) 的行情。基金合同写明标的是国证房地产行业指数(399393)。
+    2026-08-14 实测三个数：931775 −0.95%、399393 −0.56%、而该基金当日估算 −0.53%
+    ≈ 95%×(−0.56%)，与合同权重逐位吻合——正确指数几乎完美解释了基金走势，
+    而当时展示的板块涨跌是它的近两倍。71 个交易日里两者日均偏差 0.43pp、
+    最大 1.48pp、7 天方向相反。
+    """
+    resolved = resolve_sector_from_benchmark(_benchmark(index_name))
+
+    assert resolved is not None, index_name
+    sector_name, _intraday_name, match = resolved
+    assert sector_name == expected_sector, index_name
+    assert match.index_code == expected_code, index_name
+
+
+@pytest.mark.parametrize(
+    ("index_name", "reason"),
+    [
+        ("国证银行行业指数", "别名'银行'指向中证800银行 H30022，不是国证这只"),
+        ("国证证券龙头指数", "别名'证券'指向中证证券公司30 931412"),
+        ("深证电子指数", "归一化后整名就等于裸别名'电子'，但那是中证电子 930652"),
+        ("深证医药指数", "同上，'医药'指向 AMAC医药制造 H30054"),
+    ],
+)
+def test_other_publishers_industry_index_fails_closed(
+    index_name: str,
+    reason: str,
+) -> None:
+    """未登记身份的别家发布方行业指数只能 fail-closed，不能借裸主题词冒名。
+
+    归一化会把「国证」「深证」前缀剥掉，于是「国证银行行业指数」只剩「银行行业」、
+    「深证电子指数」直接只剩「电子」——前者让裸别名成了子串，后者甚至完全相等。
+    两种形态命中的都是另一家发布方的另一只指数，所以发布机构判否对两条路都要生效。
+    """
+    assert resolve_sector_from_benchmark(_benchmark(index_name)) is None, (
+        f"{index_name} 不应产出板块：{reason}"
+    )
+
+
+def test_publisher_prefix_chain_does_not_split_one_index_identity() -> None:
+    """「中证沪深港…」的前缀链要按同一粒度比较，否则会把自己判成别家的指数。
+
+    文案侧的前缀是贪婪匹配出来的整链「中证沪深」，代码侧官方全称取到的是「中证」。
+    两边粒度不一致时，南方黄金股C 自己的基准会被判成发布机构冲突而 fail-closed。
+    """
+    resolved = resolve_sector_from_benchmark(_benchmark("中证沪深港黄金产业股票指数"))
+
+    assert resolved is not None
+    sector_name, _intraday_name, match = resolved
+    assert sector_name == "黄金股"
+    assert match.index_code == "931238"
+
+
+def test_benchmark_alias_table_maps_each_name_to_exactly_one_code() -> None:
+    """同名不同码会让解析结果取决于集合迭代顺序，同一份文案可能解析出不同指数。
+
+    实测曾有「中证食品饮料」同时指向 000807 与 930653（前者其实是中证申万食品饮料）。
+    """
+    from collections import defaultdict
+
+    from app.services.fund_benchmark_sector import _BENCHMARK_NAME_TO_CODE
+
+    by_name: dict[str, set[str]] = defaultdict(set)
+    for name, code in _BENCHMARK_NAME_TO_CODE:
+        by_name[name].add(code)
+
+    ambiguous = {name: sorted(codes) for name, codes in by_name.items() if len(codes) > 1}
+    assert ambiguous == {}
+
+
 def test_same_market_scope_qualifier_still_matches_the_sector() -> None:
     """「全指」「细分」这类同市场口径限定词不影响主题归属，必须继续放行。"""
     for index_name, expected in (
@@ -236,3 +328,25 @@ def test_exchange_rate_wording_does_not_break_hang_seng_tech_identity() -> None:
     sector_name, _intraday_name, match = resolved
     assert sector_name == "恒生科技"
     assert match.index_code == "HSTECH"
+
+
+@pytest.mark.parametrize(
+    ("index_name", "expected_display", "expected_code"),
+    [
+        ("上海黄金交易所AU99.99", "黄金9999", "AU9999"),
+        ("国证房地产行业指数", "房地产指数", "399393"),
+        ("中证沪深港黄金产业股票指数", "沪港深黄金", "931238"),
+    ],
+)
+def test_tracking_index_uses_yangjibao_short_display_name(
+    index_name: str,
+    expected_display: str,
+    expected_code: str,
+) -> None:
+    """持仓「板块」列展示养基宝简称，行情走合同指数自己的代码。"""
+    resolved = resolve_sector_from_benchmark(_benchmark(index_name))
+
+    assert resolved is not None, index_name
+    _sector, intraday_name, match = resolved
+    assert intraday_name == expected_display, index_name
+    assert match.index_code == expected_code, index_name

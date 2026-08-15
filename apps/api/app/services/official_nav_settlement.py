@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import threading
 from datetime import datetime, timezone
 
 from app.database import (
@@ -8,6 +10,8 @@ from app.database import (
     save_portfolio_summary,
 )
 from app.models import Holding, PortfolioSummary
+from app.request_context import reset_request_user_id, set_request_user_id, try_get_request_user_id
+from app.services.portfolio_refresh_gate import begin_nav_work, end_nav_work
 from app.services.fund_nav_service import get_official_nav_return, prime_official_nav_cache
 from app.services.fund_profile import match_profiles_to_holdings
 from app.services.holding_estimates import compute_daily_profit_from_rate, sum_daily_profit
@@ -16,6 +20,8 @@ from app.services.portfolio_holdings_service import load_persisted_holdings
 from app.services.portfolio_snapshot import save_daily_snapshot
 from app.services.profit_accrual_defer import is_profit_accrual_deferred
 from app.services.trading_session import build_trading_session
+
+logger = logging.getLogger(__name__)
 
 SOURCE = "official_nav_settlement"
 
@@ -320,3 +326,35 @@ def settle_official_nav_for_portfolio() -> dict:
         "snapshot_date": snapshot_date,
         "refreshed_at": fetched_at.isoformat(),
     }
+
+
+def schedule_official_nav_settlement(*, user_id: int | None = None) -> None:
+    """Import/apply 返回后后台拉官方净值并写回快照，不阻塞本次请求。"""
+    resolved = user_id if user_id is not None else try_get_request_user_id()
+    if resolved is None:
+        return
+    if not begin_nav_work(resolved):
+        return
+
+    def _run() -> None:
+        token = set_request_user_id(resolved)
+        try:
+            payload = settle_official_nav_for_portfolio()
+            if payload.get("ok") and not payload.get("skipped") and payload.get("holdings"):
+                from app.services.portfolio_holdings_cache import save_cached_holdings_response
+
+                save_cached_holdings_response(payload)
+        except Exception:
+            logger.exception(
+                "background official NAV settlement failed for user_id=%s",
+                resolved,
+            )
+        finally:
+            reset_request_user_id(token)
+            end_nav_work(resolved)
+
+    threading.Thread(
+        target=_run,
+        name=f"official-nav-settlement-{resolved}",
+        daemon=True,
+    ).start()

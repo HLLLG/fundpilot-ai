@@ -43,13 +43,18 @@ def resolve_sector_quote(
     label = lookup_label
 
     canon_for_label = get_canonical_sector(label)
-    if (
-        persisted_mapping
-        and canon_for_label is not None
-        and canon_for_label.source_type == "index"
-        and str(persisted_mapping.get("source_type", "")) != "index"
-    ):
-        persisted_mapping = None
+    if persisted_mapping and canon_for_label is not None:
+        persisted_code = str(persisted_mapping.get("source_code") or "").strip().upper()
+        current_code = str(canon_for_label.source_code or "").strip().upper()
+        # 注册表改了行情码（如黄金从 AU9999 夜盘改到 518880）后，旧 mapping
+        # 不能继续用 boards 里按旧简称缓存的涨跌，否则页面会一直显示改前的数。
+        if persisted_code and current_code and persisted_code != current_code:
+            persisted_mapping = None
+        elif (
+            canon_for_label.source_type == "index"
+            and str(persisted_mapping.get("source_type", "")) != "index"
+        ):
+            persisted_mapping = None
 
     if persisted_mapping:
         source_type = str(persisted_mapping.get("source_type", ""))

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   normalizeFundNameForLookup,
+  pickBestFundMatch,
   pickUniqueFundMatch,
 } from "./fundNameMatch";
 
@@ -27,6 +28,15 @@ describe("fundNameMatch", () => {
         { fund_code: "011374", fund_name: "招商前沿医疗保健股票C" },
       ]),
     ).toBeNull();
+  });
+
+  it("picks the closest share-class sibling when no exact name exists", () => {
+    expect(
+      pickBestFundMatch("招商医疗保健股票A", [
+        { fund_code: "011373", fund_name: "招商前沿医疗保健股票A" },
+        { fund_code: "011374", fund_name: "招商前沿医疗保健股票C" },
+      ])?.fund_code,
+    ).toBe("011373");
   });
 
   it("matches a held fund whose East Money name dropped 型证券投资基金", () => {

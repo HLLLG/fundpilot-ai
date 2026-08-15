@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = 8000
     cors_origins: str = "http://localhost:3001,http://127.0.0.1:3001"
-    # 可选：正则匹配额外 Origin（CloudBase 静态托管默认 *.webapps.tcloudbase.com）
+    # 可选：正则匹配额外 Origin（生产同源部署通常不需要）
     cors_origin_regex: str | None = None
     db_path: Path = PROJECT_ROOT / "data" / "app.db"
     # Thread-local MySQL sockets are bounded by both age and reuse count so a
@@ -91,6 +91,9 @@ class Settings(BaseSettings):
     ops_traffic_capture_enabled: bool = True
     ops_error_retention_days: int = 14
     ops_traffic_retention_days: int = 14
+    # sector_spot_cache / news_cache / ocr_text_cache 只在读取时看 TTL，过期行不会自己消失。
+    # 按 updated_at 清理，避免分时日 key、换版本前缀无限堆积。
+    spot_cache_retention_days: int = 14
     # 单个指纹在同一分钟内的最大落库条数，避免一个高频异常刷爆磁盘。
     ops_error_events_per_fingerprint_per_minute: int = 20
     # 上报端点无需登录（登录页自身崩溃时也要能上报），因此必须限流。
@@ -257,7 +260,6 @@ class Settings(BaseSettings):
     prompt_shadow_lease_seconds: int = 180
     prompt_shadow_challenger_deadline_seconds: int = 900
     factor_ic_stale_after_days: int = 30
-    cloudbase_env_id: str | None = None
     # 方案 A 默认关闭：美股 Tab 仅展示指数 + 汇率，不拉 QDII 穿透估值
     us_market_qdii_enabled: bool = False
     # 主题板块后台刷新：daemon 线程时段感知（A 股活跃 20min / 休市 3h），前台只读缓存
@@ -267,9 +269,13 @@ class Settings(BaseSettings):
     market_shared_idle_interval_seconds: int = 10800  # 非 A 股/美股活跃时段后台刷新间隔
     # 基金涨跌分布后台预热；关闭后诊断接口只读已有缓存，不在请求内同步打源
     fund_return_distribution_refresh_enabled: bool = True
-    # 持仓详情：按用户内存缓存 + 后台预热（分时/净值/详情）
+    # 持仓共享行情缓存：后台时钟按时段刷新；请求路径只读缓存
     holding_detail_cache_ttl_seconds: int = 300
     holding_intraday_warmup_enabled: bool = True
+    # 分时：仅连续竞价时段刷新；须 ≤ 服务端 live TTL，避免详情打开打到东财
+    holding_intraday_refresh_interval_seconds: int = 120
+    # 净值：收盘后等待官方披露的重试间隔；休市且已覆盖上一交易日则不再拉
+    holding_nav_refresh_interval_seconds: int = 900
     # 全市场基金→板块离线预计算（fund_primary_sectors_global）
     fund_primary_sector_global_enabled: bool = True
     fund_primary_sector_global_benchmark_ttl_days: int = 30
@@ -421,11 +427,7 @@ class Settings(BaseSettings):
     @property
     def resolved_cors_origin_regex(self) -> str | None:
         explicit = (self.cors_origin_regex or "").strip()
-        if explicit:
-            return explicit
-        if self.cloudbase_env_id:
-            return r"https://[\w-]+\.webapps\.tcloudbase\.com"
-        return None
+        return explicit or None
 
     @property
     def uses_mysql(self) -> bool:

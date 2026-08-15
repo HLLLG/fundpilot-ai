@@ -3,8 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   boardKindClass,
   formatBoardKindLabel,
-  formatThemeBoardUpdatedAt,
-  formatThemeBoardUpdatedFromIso,
   formatThemeFlowYi,
   formatThemePercent,
   formatThemeRank,
@@ -35,11 +33,6 @@ describe("marketThemeBoard formatters", () => {
     expect(formatThemePercent(-1.2)).toBe("-1.20%");
   });
 
-  it("formats updated timestamp", () => {
-    const label = formatThemeBoardUpdatedAt(new Date(2026, 5, 18, 8, 12, 37));
-    expect(label).toBe("更新于 06-18 08:12:37");
-  });
-
   it("formats board kind labels", () => {
     expect(formatBoardKindLabel("industry")).toBe("行业");
     expect(formatBoardKindLabel("concept")).toBe("概念");
@@ -51,12 +44,6 @@ describe("marketThemeBoard formatters", () => {
     expect(boardKindClass("industry")).toContain("slate");
     expect(boardKindClass("index")).toContain("brand");
     expect(boardKindClass("concept")).toContain("amber");
-  });
-
-  it("formats updated timestamp from iso, falling back when empty", () => {
-    expect(formatThemeBoardUpdatedFromIso(null)).toBe("加载中…");
-    expect(formatThemeBoardUpdatedFromIso("not-a-date")).toBe("加载中…");
-    expect(formatThemeBoardUpdatedFromIso("2026-06-18T08:12:37").startsWith("更新于")).toBe(true);
   });
 
   it("formats flow yi with sign", () => {

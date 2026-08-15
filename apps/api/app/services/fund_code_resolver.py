@@ -11,6 +11,7 @@ from threading import RLock, Thread
 from app.services.fund_name_fuzzy import (
     FUZZY_SEARCH_MIN_SCORE,
     best_fuzzy_fund_match,
+    best_similar_fund_match,
     fuzzy_name_match_score,
     fuzzy_search_funds,
 )
@@ -29,9 +30,7 @@ from app.services.fund_name_utils import (
 
 _SUBPROCESS_TIMEOUT = 120
 
-UNRESOLVED_FUND_CODE_HINT = (
-    "未在东财基金库匹配到代码，请点「搜索」手动选取正确基金，确认后再入库。"
-)
+UNRESOLVED_FUND_CODE_HINT = "请确认基金"
 
 _TABLE_SENTINEL_CHECKS: tuple[tuple[str, str], ...] = (
     ("000001", "华夏"),
@@ -370,6 +369,55 @@ def lookup_fund_code_by_name(fund_name: str) -> tuple[str | None, str | None]:
     fuzzy = best_fuzzy_fund_match(fund_name, table)
     if fuzzy:
         return fuzzy[0], "fuzzy"
+    return None, None
+
+
+def lookup_similar_fund_by_name(fund_name: str) -> tuple[str, str] | None:
+    """精确匹配失败时，取和确认页搜索同一套排序里的最相近一只。"""
+    target = normalize_fund_name_for_lookup(fund_name)
+    if not target:
+        return None
+    items = search_funds_by_keyword(fund_name, limit=12)
+    pairs = [
+        (str(item.get("fund_code") or ""), str(item.get("fund_name") or ""))
+        for item in items
+        if item.get("fund_code") and item.get("fund_name")
+    ]
+    if not pairs:
+        table = list(_fund_name_index().table)
+        ranked = fuzzy_search_funds(fund_name, table, limit=12)
+        pairs = [(code, name) for _score, code, name in ranked]
+    if not pairs:
+        similar = best_similar_fund_match(
+            fund_name,
+            list(_fund_name_index().table),
+            min_score=0.5,
+        )
+        if not similar:
+            return None
+        pairs = [(similar[0], similar[1])]
+    target_class = extract_share_class_letter(fund_name)
+    if target_class:
+        class_hits = [
+            item for item in pairs if extract_share_class_letter(item[1]) == target_class
+        ]
+        if class_hits:
+            pairs = class_hits
+    return pairs[0]
+
+
+def resolve_transaction_fund_code(
+    fund_name: str,
+    *,
+    existing_code: str | None = None,
+) -> tuple[str | None, str | None]:
+    """交易 OCR 选码：精确命中不提示；否则填最相近一只并标 similar。"""
+    code, _source = resolve_holding_fund_code(fund_name, existing_code=existing_code)
+    if code:
+        return code, None
+    similar = lookup_similar_fund_by_name(fund_name)
+    if similar:
+        return similar[0], "similar"
     return None, None
 
 

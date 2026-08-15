@@ -15,22 +15,6 @@ export function themeBoardHeading(): string {
   return "主题板块涨跌";
 }
 
-export function formatThemeBoardUpdatedAt(date: Date): string {
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `更新于 ${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
-export function formatThemeBoardUpdatedFromIso(iso: string | null | undefined): string {
-  if (!iso) {
-    return "加载中…";
-  }
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
-    return "加载中…";
-  }
-  return formatThemeBoardUpdatedAt(date);
-}
-
 export function formatBoardKindLabel(kind: string | null | undefined): string {
   if (kind === "industry") return "行业";
   if (kind === "index") return "指数";

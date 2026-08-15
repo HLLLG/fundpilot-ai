@@ -8,7 +8,7 @@ import { DashboardNav } from "@/components/DashboardNav";
 
 afterEach(cleanup);
 
-const TABS = ["holdings", "dashboard", "market", "discovery", "report"] as const;
+const TABS = ["holdings", "market", "discovery", "report", "me"] as const;
 
 describe("DashboardNav", () => {
   it("puts all five tabs one tap away on mobile", () => {
@@ -32,6 +32,9 @@ describe("DashboardNav", () => {
 
     fireEvent.click(screen.getByTestId("bottom-nav-report"));
     expect(onSelect).toHaveBeenCalledWith("report");
+
+    fireEvent.click(screen.getByTestId("bottom-nav-me"));
+    expect(onSelect).toHaveBeenCalledWith("me");
   });
 
   it("marks the active tab on both navs", () => {
@@ -48,8 +51,19 @@ describe("DashboardNav", () => {
     );
   });
 
+  it("keeps 我的 highlighted while 盈亏分析 is open", () => {
+    render(<DashboardNav activeTab="dashboard" onSelect={vi.fn()} />);
+
+    expect(screen.getByTestId("bottom-nav-me")).toHaveAttribute("aria-current", "page");
+    const [desktopNav] = screen.getAllByRole("navigation", { name: "主导航" });
+    expect(within(desktopNav).getByRole("button", { name: "我的" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(desktopNav).queryByRole("button", { name: "分析" })).not.toBeInTheDocument();
+  });
+
   it("keeps 日报 highlighted while the history drawer is open", () => {
-    // history 挂在日报页下面，不是独立标签。
     render(<DashboardNav activeTab="history" onSelect={vi.fn()} />);
 
     expect(screen.getByTestId("bottom-nav-report")).toHaveAttribute("aria-current", "page");

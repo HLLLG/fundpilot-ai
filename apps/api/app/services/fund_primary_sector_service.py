@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -70,6 +71,7 @@ _HIGH_TRUST_SECTOR_SOURCES = frozenset({"ocr_detail", "manual"})
 # 由业绩基准/跟踪标的解析出来的来源。这类行的板块名依赖指数身份表，指数身份被
 # 修正后必须重新校验，否则旧标签会一直挡住正确结果（用户行没有 TTL）。
 _BENCHMARK_DERIVED_SOURCES = frozenset({"benchmark_index", "precompute_benchmark"})
+_HOLDINGS_INFER_SOURCES = frozenset({"holdings_infer", "precompute_holdings"})
 
 
 from app.services.fund_primary_sector_types import PrimarySectorRecord
@@ -176,11 +178,16 @@ def _is_passive_index_fund_name(fund_name: str | None) -> bool:
     这里不靠主题词猜板块；只有明确写出指数/ETF/联接/LOF 的产品，才允许把
     第三方抓取到的精确指数身份用于行情参考。主动基金的业绩比较基准只保留为
     对比基准，不会升级成“关联板块”。
+
+    「南方黄金股C」这类简称不带「指数」二字，但合同跟踪的就是股票指数。
     """
     if not fund_name:
         return False
     normalized = fund_name.upper()
-    return any(marker in normalized for marker in ("指数", "ETF", "联接", "LOF"))
+    if any(marker in normalized for marker in ("指数", "ETF", "联接", "LOF")):
+        return True
+    compact = re.sub(r"\s+", "", fund_name)
+    return bool(re.search(r"黄金股[ACEH]?$", compact, flags=re.IGNORECASE))
 
 
 def _row_detail(row: Mapping[str, Any]) -> Mapping[str, Any] | None:
@@ -331,7 +338,9 @@ def _usable_benchmark_row_record(
             return None
         return _record_from_row({**dict(row), "fund_code": code})
     if _benchmark_row_identity_is_current(row):
-        return _record_from_row({**dict(row), "fund_code": code})
+        return _with_tracking_index_display(
+            _record_from_row({**dict(row), "fund_code": code})
+        )
     return _replay_benchmark_row(
         row, code, persist=persist, batch_context=batch_context
     )
@@ -396,13 +405,34 @@ def _usable_intraday_index_name(
     查不到行情源、又有更可靠的板块短名可用时，直接不落这个查不到数据的指数名，让所有
     下游消费者（列表日涨幅、详情页分时图）都统一退回板块短名，而不是把这个"死路"一样
     的指数名一直传下去。"""
+    from app.services.sector_registry_data import TRACKING_INDEX_DISPLAY_NAMES
+
     if not intraday_index_name:
         return intraday_index_name
     if get_canonical_sector(intraday_index_name) is not None:
         return intraday_index_name
+    if intraday_index_name in TRACKING_INDEX_DISPLAY_NAMES:
+        return intraday_index_name
     if sector_name and get_canonical_sector(sector_name) is not None:
         return None
     return intraday_index_name
+
+
+def _with_tracking_index_display(record: PrimarySectorRecord) -> PrimarySectorRecord:
+    from app.services.sector_registry_data import tracking_index_display_name
+
+    index_code = str((record.detail or {}).get("index_code") or "").strip()
+    display = tracking_index_display_name(index_code)
+    if not display or record.intraday_index_name == display:
+        return record
+    return PrimarySectorRecord(
+        fund_code=record.fund_code,
+        sector_name=record.sector_name,
+        intraday_index_name=display,
+        source=record.source,
+        confidence=record.confidence,
+        detail=record.detail,
+    )
 
 
 def _should_prefer_semantic_before_market_sources(fund_name: str | None, candidate) -> bool:
@@ -431,7 +461,13 @@ def _record_should_override_holding_sector(holding: Holding, record: PrimarySect
         # （如"机械设备"），不如基金自身名称主题（如"全球高端制造"）准确，不应该
         # 用它反复覆盖/抢占已经更贴切的主题标签，否则两个来源会来回"打架"。
         return False
-    if record.source in {"manual", "ocr_detail", "benchmark_index", "benchmark_freeform"}:
+    if record.source in {
+        "manual",
+        "ocr_detail",
+        "benchmark_index",
+        "precompute_benchmark",
+        "benchmark_freeform",
+    }:
         return True
     if (
         record.source in {"semantic_name", "semantic_name_freeform"}
@@ -504,13 +540,39 @@ def _effective_priority(
     return prio
 
 
+def _fund_name_for_upsert(
+    existing: dict | None, fund_name: str | None
+) -> str | None:
+    if fund_name:
+        return fund_name
+    if not existing:
+        return None
+    detail = _row_detail(existing) or {}
+    stored = str(detail.get("fund_name") or "").strip()
+    return stored or None
+
+
 def _can_upsert_primary_sector(
     existing: dict | None, new_source: str, *, fund_name: str | None = None
 ) -> bool:
     if not existing:
         return True
     old_source = str(existing.get("source") or "")
-    old_prio = _effective_priority(old_source, existing.get("sector_name"), fund_name)
+    resolved_name = _fund_name_for_upsert(existing, fund_name)
+    # 被动指数基金：合同跟踪指数比持仓穿透更可信。必须先于数字优先级判断，
+    # 否则 holdings_infer(70) 会无条件盖掉 benchmark_index(65)。
+    if _is_passive_index_fund_name(resolved_name):
+        if (
+            new_source in _HOLDINGS_INFER_SOURCES
+            and old_source in _BENCHMARK_DERIVED_SOURCES
+        ):
+            return False
+        if (
+            new_source in _BENCHMARK_DERIVED_SOURCES
+            and old_source in _HOLDINGS_INFER_SOURCES
+        ):
+            return True
+    old_prio = _effective_priority(old_source, existing.get("sector_name"), resolved_name)
     new_prio = _SOURCE_PRIORITY.get(new_source, 0)
     if new_prio > old_prio:
         return True
@@ -643,8 +705,14 @@ def resolve_primary_sector(
         return _semantic_record_from_candidate(code, fund_name or "", semantic_candidate)
 
     # 已有/新拉取的持仓穿透证据优先于第三方业绩基准。基准文本对主动基金只是
-    # 业绩比较参考，不应抢占“主要关联板块”。
-    if row and str(row.get("source") or "") in {"holdings_infer", "precompute_holdings"}:
+    # 业绩比较参考，不应抢占“主要关联板块”。被动指数基金相反：合同跟踪指数
+    # 才是当日涨跌的真实驱动，持仓穿透会把南方黄金股C 写成「贵金属」。
+    passive = _is_passive_index_fund_name(fund_name)
+    if (
+        row
+        and str(row.get("source") or "") in _HOLDINGS_INFER_SOURCES
+        and not passive
+    ):
         if _is_trustworthy_sector_label(fund_name, row.get("sector_name")):
             return _record_from_row(row)
 
@@ -653,29 +721,42 @@ def resolve_primary_sector(
         if batch_context is not None
         else load_fresh_global_sector(code)
     )
-    if global_row and str(global_row.get("source") or "") in {
-        "holdings_infer",
-        "precompute_holdings",
-    }:
+    if (
+        global_row
+        and str(global_row.get("source") or "") in _HOLDINGS_INFER_SOURCES
+        and not passive
+    ):
         return _record_from_row({**global_row, "fund_code": code})
+
+    if passive:
+        benchmark_record = _resolve_from_benchmark_index(
+            code,
+            fund_name=fund_name,
+            fetch=fetch_benchmark,
+            batch_context=batch_context,
+        )
+        if benchmark_record is not None:
+            return _with_tracking_index_display(benchmark_record)
 
     if fetch_holdings_infer:
         holdings_record = _resolve_from_holdings_infer(
             code,
             persist=bool(try_get_request_user_id()),
             batch_context=batch_context,
+            fund_name=fund_name,
         )
         if holdings_record is not None:
             return holdings_record
 
-    benchmark_record = _resolve_from_benchmark_index(
-        code,
-        fund_name=fund_name,
-        fetch=fetch_benchmark,
-        batch_context=batch_context,
-    )
-    if benchmark_record is not None:
-        return benchmark_record
+    if not passive:
+        benchmark_record = _resolve_from_benchmark_index(
+            code,
+            fund_name=fund_name,
+            fetch=fetch_benchmark,
+            batch_context=batch_context,
+        )
+        if benchmark_record is not None:
+            return _with_tracking_index_display(benchmark_record)
 
     if global_row:
         global_source = str(global_row.get("source") or "")
@@ -959,12 +1040,23 @@ def refresh_benchmark_sectors_for_holdings(
                 stocks=stocks_for_code,
                 evidence_payload=holdings_evidence_for_code,
                 batch_context=batch_context,
+                fund_name=updated.fund_name,
             )
             if record is not None:
-                fields: dict[str, str] = {"sector_name": record.sector_name}
-                if record.intraday_index_name and not updated.intraday_index_name:
-                    fields["intraday_index_name"] = record.intraday_index_name
-                updated = updated.model_copy(update=fields)
+                existing_after = (
+                    batch_context.user_row(code)
+                    if batch_context is not None
+                    else get_fund_primary_sector(code)
+                )
+                # 被动指数基金合同跟踪指数已经落库时，持仓穿透不能再把内存里的
+                # 板块改写成「贵金属」这类重仓行业——persist 已被挡住，展示也必须挡住。
+                if _can_upsert_primary_sector(
+                    existing_after, "holdings_infer", fund_name=updated.fund_name
+                ):
+                    fields: dict[str, str] = {"sector_name": record.sector_name}
+                    if record.intraday_index_name and not updated.intraday_index_name:
+                        fields["intraday_index_name"] = record.intraday_index_name
+                    updated = updated.model_copy(update=fields)
         if (
             fetch_holdings_infer
             and not _is_trustworthy_sector_label(updated.fund_name, updated.sector_name)
@@ -997,6 +1089,7 @@ def _resolve_from_holdings_infer(
     batch_context: PrimarySectorBatchContext | None = None,
     materialize_research: bool = False,
     materialization_source: str = "holdings_infer",
+    fund_name: str | None = None,
 ) -> PrimarySectorRecord | None:
     from app.services.fund_holdings_sector_infer import (
         assess_sector_from_portfolio_stocks,
@@ -1096,7 +1189,9 @@ def _resolve_from_holdings_infer(
                 if batch_context is not None
                 else get_fund_primary_sector(code)
             )
-            if _can_upsert_primary_sector(existing, "holdings_infer"):
+            if _can_upsert_primary_sector(
+                existing, "holdings_infer", fund_name=fund_name
+            ):
                 saved = save_fund_primary_sector(
                     fund_code=code,
                     sector_name=sector_name,
@@ -1329,7 +1424,7 @@ def _resolve_from_benchmark_index(
             if batch_context is not None
             else get_fund_primary_sector(code)
         )
-        if _can_upsert_primary_sector(existing, source):
+        if _can_upsert_primary_sector(existing, source, fund_name=fund_name):
             saved = save_fund_primary_sector(
                 fund_code=code,
                 sector_name=sector_name,
@@ -1346,7 +1441,7 @@ def _resolve_from_benchmark_index(
             batch_context.remember_global_row(global_saved)
     with _benchmark_miss_cache_lock:
         _benchmark_miss_cache.pop(fund_code, None)
-    return record
+    return _with_tracking_index_display(record)
 
 
 def _benchmark_miss_cached(fund_code: str) -> bool:
@@ -1387,13 +1482,15 @@ def _record_from_row(row: dict) -> PrimarySectorRecord:
             detail = json.loads(detail)
         except json.JSONDecodeError:
             detail = None
-    return PrimarySectorRecord(
-        fund_code=str(row["fund_code"]),
-        sector_name=str(row["sector_name"]),
-        intraday_index_name=row.get("intraday_index_name"),
-        source=str(row.get("source") or "unknown"),
-        confidence=row.get("confidence"),
-        detail=detail if isinstance(detail, dict) else None,
+    return _with_tracking_index_display(
+        PrimarySectorRecord(
+            fund_code=str(row["fund_code"]),
+            sector_name=str(row["sector_name"]),
+            intraday_index_name=row.get("intraday_index_name"),
+            source=str(row.get("source") or "unknown"),
+            confidence=row.get("confidence"),
+            detail=detail if isinstance(detail, dict) else None,
+        )
     )
 
 

@@ -34,6 +34,7 @@ from app.services.sector_registry_data import (
 _SOURCE_CODE_SHAPE_TO_SECID_PREFIX: tuple[tuple[str, str], ...] = (
     (r"BK\d{4}", "90"),          # 东财概念/行业板块
     (r"AU\d{4}", "118"),         # 上金所现货（黄金 Au99.99）
+    (r"51\d{4}", "1"),           # 上海基金/ETF（黄金ETF 518880）
     (r"HS[A-Z0-9]*", "124"),     # 恒生系列
     (r"9[35]\d{4}", "2"),        # 中证
     (r"H[A-Z0-9]+", "2"),        # 中证字母前缀系列
@@ -73,8 +74,8 @@ _CORRECTED_QUOTES: dict[str, tuple[str, str]] = {
     "互联网": ("930604", "H30535"),      # 930604 是 中国互联网30（30 只成分）
     "红利": ("H30089", "000922"),        # H30089 是 红利潜力（另一套选样）
     "环保": ("930614", "000827"),        # 930614 是 环保50（50 只子集）
-    # 现货金 vs 黄金股
-    "黄金": ("BK1617", "AU9999"),        # BK1617 是黄金股票板（山东黄金等）
+    # 现货金 vs 黄金股 vs 夜盘 AU9999
+    "黄金": ("BK1617", "518880"),        # 不用股票板，也不用 AU9999 夜盘
 }
 
 
@@ -190,17 +191,40 @@ def test_corrected_sector_quote_does_not_regress(
 
 
 def test_gold_label_tracks_the_metal_and_gold_equities_stay_separate() -> None:
-    """黄金 ETF 联接跟踪 AU99.99 现货，不能拿黄金股票板当涨跌代理。
+    """黄金 ETF 联接跟踪 Au99.99，但关联板块涨跌必须走 A 股交易时段的黄金 ETF。
 
-    实测近 8 个交易日：基金净值 vs 黄金股票板 BK1617 日均偏差 1.82pp（单日最大
-    5.38pp），vs 实物金代理仅 0.25pp。
+    东财 118.AU9999 没有日 K，分时只给夜盘；收盘后快照会把夜盘涨跌当成当日收盘，
+    2026-08-14 实测现货夜盘 +0.99%、黄金 ETF −1.06%、博时黄金ETF联接A 净值 −0.95%。
+    黄金股票板 BK1617 与净值日均偏差约 1.8pp，同样不能当代理。
     """
-    assert THEME_BOARD_INDEX["黄金"] == ("118.AU9999", "AU9999", "index")
+    assert THEME_BOARD_INDEX["黄金"] == ("1.518880", "518880", "index")
     assert THEME_BOARD_INDEX["黄金股"] == ("2.931238", "931238", "index")
 
     policy = THEME_BOARD_PROVIDER_IDENTITIES["黄金"]
-    assert policy["source_codes"] == ("AU9999",)
-    assert "黄金9999" in policy["security_names"]
+    assert policy["source_codes"] == ("518880",)
+    assert "黄金ETF华安" in policy["security_names"]
+
+
+def test_tracking_index_short_names_keep_their_own_quote_identity() -> None:
+    from app.services.sector_canonical import get_canonical_sector
+
+    realty = get_canonical_sector("房地产指数")
+    assert realty is not None
+    assert realty.eastmoney_secid == "0.399393"
+    assert realty.source_code == "399393"
+    theme_realty = get_canonical_sector("房地产")
+    assert theme_realty is not None
+    assert theme_realty.source_code == "931775"
+
+    gold = get_canonical_sector("黄金9999")
+    assert gold is not None
+    assert gold.eastmoney_secid == "1.518880"
+    assert gold.source_code == "518880"
+    assert get_canonical_sector("黄金").source_code == "518880"
+
+    hsh = get_canonical_sector("沪港深黄金")
+    assert hsh is not None
+    assert hsh.source_code == "931238"
 
 
 def test_digital_economy_is_not_aliased_to_xinchuang() -> None:

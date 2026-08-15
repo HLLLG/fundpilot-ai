@@ -202,7 +202,7 @@ def _persist_holdings_after_sector_refresh_unlocked(
     """板块刷新成功后写回日快照与账户汇总，重启后保留最新当日收益。
 
     ``with_official_nav=False`` 时跳过逐只 AkShare 官方净值覆盖（fast 刷新用），
-    避免 CloudBase 网关 ~60s 超时；accurate 刷新仍走官方净值。
+    避免请求被反向代理空闲超时打断；accurate 刷新仍走官方净值。
     """
     merged = without_inactive_holdings(
         without_placeholder_holdings(

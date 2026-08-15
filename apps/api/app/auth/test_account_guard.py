@@ -3,13 +3,10 @@ from __future__ import annotations
 import os
 import re
 
-from app.config import get_settings
-
 # 与 pytest / Playwright / smoke 脚本里常见的测试账号格式对齐
 BLOCKED_TEST_ACCOUNT_PATTERNS = (
     r"@example\.com$",
     r"@t\.com$",
-    r"^cloudbase-test-",
     r"^e2e-",
     r"^uitest\+",
     r"^debug_test@",
@@ -24,12 +21,10 @@ BLOCKED_TEST_ACCOUNT_PATTERNS = (
 
 
 def is_production_api() -> bool:
-    """CloudBase 部署或显式 production 环境视为生产 API。"""
+    """显式 production 环境视为生产 API，禁止注册测试账号。"""
     if os.getenv("FUND_AI_ALLOW_TEST_ACCOUNTS", "").strip().lower() in {"1", "true", "yes"}:
         return False
-    if os.getenv("FUND_AI_APP_ENV", "").strip().lower() == "production":
-        return True
-    return bool((get_settings().cloudbase_env_id or "").strip())
+    return os.getenv("FUND_AI_APP_ENV", "").strip().lower() == "production"
 
 
 def is_blocked_test_account(account: str) -> bool:

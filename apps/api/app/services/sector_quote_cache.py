@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
+import time
 from collections import OrderedDict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import RLock
 
 from app.config import get_settings
 from app.database import _connect
 from app.services.performance_metrics import record_cache_event
+
+logger = logging.getLogger(__name__)
 
 _MEMORY: OrderedDict[str, tuple[float, dict]] = OrderedDict()
 _MEMORY_MAX_ENTRIES = 512
@@ -266,3 +270,128 @@ def save_spot_snapshot(cache_key: str, payload: dict) -> None:
         )
         connection.commit()
     record_cache_event(cache_key, "refresh")
+
+
+# 已换版本、不会再作为主查询 key 的前缀。按前缀立刻删，不必等 retention。
+# 仍作 fallback 的 v1（fund:nav:v1、board-flow-hist:v1）只走 updated_at 过期。
+_OBSOLETE_KEY_PREFIXES = (
+    "intraday:v1:",
+    "intraday:v2:",
+    "intraday:v3:",
+    "intraday:v4:",
+    "intraday:v5:",
+    "theme:boards:v1:",
+    "theme:boards:v2:",
+    "theme:boards:v3:",
+    "theme:boards:v4:",
+    "theme:boards:v5:",
+    "theme:boards:v6:",
+    "discovery:sector_heat:v1:",
+    "discovery:sector_heat:v2:",
+    "market:breadth:v1:",
+    "market:breadth:v2:",
+    "fund:diagnostics:v1:",
+    "fund:diagnostics:v2:",
+    "fund:diagnostics:v3:",
+    "fund-holdings-distribution:v1:",
+    "fund:return-distribution:intraday:v1:",
+    "fund:return-distribution:intraday:v2:",
+)
+_PRUNE_INTERVAL_SECONDS = 6 * 60 * 60
+_last_prune_monotonic = 0.0
+
+
+def _row_count(cursor) -> int:
+    try:
+        return max(0, int(cursor.rowcount or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def prune_expired_spot_snapshots(
+    *,
+    retention_days: int | None = None,
+    now: datetime | None = None,
+) -> int:
+    """删除过期与废弃版本的持久缓存行，并同步丢掉对应内存条目。"""
+    days = (
+        int(retention_days)
+        if retention_days is not None
+        else int(get_settings().spot_cache_retention_days)
+    )
+    days = max(1, days)
+    moment = now or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    else:
+        moment = moment.astimezone(timezone.utc)
+    cutoff = moment - timedelta(days=days)
+    cutoff_iso = cutoff.isoformat()
+    cutoff_ts = cutoff.timestamp()
+    removed = 0
+
+    with _connect() as connection:
+        _ensure_cache_table(connection)
+        for prefix in _OBSOLETE_KEY_PREFIXES:
+            cursor = connection.execute(
+                "DELETE FROM sector_spot_cache WHERE cache_key LIKE ?",
+                (f"{prefix}%",),
+            )
+            removed += _row_count(cursor)
+        cursor = connection.execute(
+            "DELETE FROM sector_spot_cache WHERE updated_at < ?",
+            (cutoff_iso,),
+        )
+        removed += _row_count(cursor)
+        connection.commit()
+
+    with _MEMORY_LOCK:
+        stale_keys = [
+            key
+            for key, (cached_at, _payload) in list(_MEMORY.items())
+            if cached_at < cutoff_ts or any(key.startswith(prefix) for prefix in _OBSOLETE_KEY_PREFIXES)
+        ]
+        for key in stale_keys:
+            _MEMORY.pop(key, None)
+            _MEMORY_REVALIDATED_AT.pop(key, None)
+
+    return removed
+
+
+def prune_durable_caches(
+    *,
+    retention_days: int | None = None,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    """清理 sector_spot_cache、news_cache 与 ocr_text_cache 的过期/废弃行。"""
+    from app.services.news_cache import prune_expired_news_cache
+
+    removed_spot = prune_expired_spot_snapshots(retention_days=retention_days, now=now)
+    removed_news = prune_expired_news_cache(retention_days=retention_days, now=now)
+    removed_ocr = 0
+    try:
+        from app.database import prune_expired_ocr_text_cache
+
+        removed_ocr = prune_expired_ocr_text_cache(retention_days=retention_days, now=now)
+    except Exception:
+        logger.debug("ocr cache prune skipped", exc_info=True)
+    if removed_spot or removed_news or removed_ocr:
+        logger.info(
+            "durable cache prune removed spot=%s news=%s ocr=%s",
+            removed_spot,
+            removed_news,
+            removed_ocr,
+        )
+    return {"spot": removed_spot, "news": removed_news, "ocr": removed_ocr}
+
+
+def maybe_prune_durable_caches() -> dict[str, int] | None:
+    """后台轮询用：两次清理至少间隔 6 小时。失败不记账，下次轮询再试。"""
+    global _last_prune_monotonic
+    now = time.monotonic()
+    if _last_prune_monotonic and now - _last_prune_monotonic < _PRUNE_INTERVAL_SECONDS:
+        return None
+    result = prune_durable_caches()
+    _last_prune_monotonic = now
+    return result
+

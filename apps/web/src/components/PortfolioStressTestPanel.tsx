@@ -144,7 +144,7 @@ export function PortfolioStressTestPanel({ enabled }: { enabled: boolean }) {
             </p>
           ) : null}
           <p className="mt-1 text-[11px] leading-5 text-slate-500">
-            新增或同步交易时可选填实际手续费；未知请留空，系统不会按 0。历史费用只用于核账，
+            支付宝成交金额已含手续费，导入交易不再单独记一笔费用。历史费用只用于核账，
             不会直接外推为新基金的未来渠道费率。
           </p>
         </section>

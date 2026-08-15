@@ -2170,6 +2170,8 @@ export type RefreshSectorQuotesResult = {
     from_stale_cache?: boolean;
   };
   fetched_at?: string;
+  coalesced?: boolean;
+  coalesced_reason?: string;
 };
 
 export type SectorQuotesStatus = {
@@ -2179,6 +2181,9 @@ export type SectorQuotesStatus = {
   idle_interval_seconds: number;
   auto_refresh_allowed: boolean;
   session: TradingSession;
+  background_sector_refresh_in_flight?: boolean;
+  spot_refresh_in_flight?: boolean;
+  official_nav_in_flight?: boolean;
 };
 
 export async function refreshSectorQuotes(
@@ -2985,6 +2990,7 @@ export type FundCodeResolution = {
   fund_code: string | null;
   source: string | null;
   resolved: boolean;
+  message?: string | null;
 };
 
 /** 截图识别的客户端预算。
@@ -3232,6 +3238,8 @@ export type ParsedTransaction = {
   direction: TransactionDirection;
   fund_name: string;
   fund_code: string | null;
+  /** 精确匹配失败后自动填入最相近基金时为 similar，确认页展示「请确认基金」。 */
+  match_source?: string | null;
   amount_yuan: number;
   /** 用户从原平台确认的实际成交份额；缺失时后端只能按金额/净值估算。 */
   confirmed_shares?: number | null;
@@ -3294,11 +3302,15 @@ export async function transactionsOcr(file: File): Promise<TransactionsOcrResult
 
 export async function applyTransactions(
   transactions: ParsedTransaction[],
+  options?: { applyPosition?: boolean },
 ): Promise<ApplyTransactionsResult> {
   const response = await apiFetch(`${API_BASE}/api/transactions/apply`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ transactions }),
+    body: JSON.stringify({
+      transactions,
+      apply_position: options?.applyPosition ?? true,
+    }),
   });
   if (!response.ok) {
     throw new Error(await response.text());

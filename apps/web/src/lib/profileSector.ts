@@ -19,6 +19,19 @@ const FUND_PRODUCT_LABEL_RE =
 /** 与 apps/api sector_canonical 一致的英文/数字板块短名 */
 const CANONICAL_ASCII_SECTOR_LABELS = new Set(["CPO", "PCB", "5G"]);
 
+/** 与 apps/api TRACKING_INDEX_DISPLAY 同步：合同跟踪指数的养基宝简称 */
+const TRACKING_INDEX_DISPLAY_NAMES = new Set([
+  "黄金9999",
+  "黄金999",
+  "房地产指数",
+  "国证地产",
+  "沪港深黄金",
+  "沪深港黄金",
+  "国证医药",
+  "国证有色",
+  "国证食品",
+]);
+
 /** 与 apps/api GLOBAL_FUND_SECTOR_SEEDS 同步 */
 const FUND_CODE_SECTOR_SEEDS: Record<string, { sector_name: string; intraday_index_name?: string }> = {
   "018957": { sector_name: "CPO" },
@@ -96,14 +109,38 @@ export function holdingDisplaySectorLabel(
   return "—";
 }
 
+function canonicalTrackingDisplayName(name: string | null | undefined): string | null {
+  const trimmed = name?.trim() || "";
+  if (!trimmed) {
+    return null;
+  }
+  return trimmed === "黄金999" ? "黄金9999" : trimmed;
+}
+
 function holdingRelatedBoardLabel(
-  holding: Pick<Holding, "sector_name" | "intraday_index_name">,
+  holding: Pick<Holding, "fund_name" | "sector_name" | "intraday_index_name">,
 ): string {
+  const indexName = canonicalTrackingDisplayName(holding.intraday_index_name);
+  if (
+    indexName &&
+    TRACKING_INDEX_DISPLAY_NAMES.has(indexName) &&
+    !isInvalidSectorLabel(indexName)
+  ) {
+    return indexName;
+  }
+  const fromFund = canonicalTrackingDisplayName(inferIndexFromFundName(holding.fund_name));
+  if (
+    fromFund &&
+    TRACKING_INDEX_DISPLAY_NAMES.has(fromFund) &&
+    !isInvalidSectorLabel(fromFund)
+  ) {
+    return fromFund;
+  }
   if (holding.sector_name?.trim() && !isInvalidSectorLabel(holding.sector_name)) {
     return holding.sector_name;
   }
-  if (holding.intraday_index_name?.trim()) {
-    return holding.intraday_index_name;
+  if (indexName) {
+    return indexName;
   }
   return "—";
 }
@@ -122,6 +159,7 @@ const FEEDER_THEME_TO_INDEX: Record<string, string> = {
   半导体: "中证半导体",
   新能源: "中证新能源",
   军工: "中证军工",
+  黄金: "黄金9999",
 };
 
 function inferIndexFromFundName(fundName: string | null | undefined): string | null {
@@ -150,7 +188,7 @@ function inferIndexFromFundName(fundName: string | null | undefined): string | n
 function sectorQuoteLookupLabel(
   holding: Pick<Holding, "fund_code" | "fund_name" | "sector_name" | "intraday_index_name">,
 ): string | null {
-  const fromFund = inferIndexFromFundName(holding.fund_name);
+  const fromFund = canonicalTrackingDisplayName(inferIndexFromFundName(holding.fund_name));
   if (fromFund) {
     return fromFund;
   }
@@ -158,11 +196,18 @@ function sectorQuoteLookupLabel(
   if (seeded?.sector_name && !isInvalidSectorLabel(seeded.sector_name)) {
     return seeded.sector_name;
   }
+  const indexName = canonicalTrackingDisplayName(holding.intraday_index_name);
+  if (
+    indexName &&
+    TRACKING_INDEX_DISPLAY_NAMES.has(indexName) &&
+    !isInvalidSectorLabel(indexName)
+  ) {
+    return indexName;
+  }
   const boardName = holding.sector_name?.trim();
   if (boardName && !isInvalidSectorLabel(boardName)) {
     return boardName;
   }
-  const indexName = holding.intraday_index_name?.trim();
   if (indexName && !isInvalidSectorLabel(indexName)) {
     return indexName;
   }
@@ -215,7 +260,7 @@ export function resolveIntradayQuery(
       }
     : holding;
 
-  const indexName = effectiveHolding.intraday_index_name?.trim();
+  const indexName = canonicalTrackingDisplayName(effectiveHolding.intraday_index_name);
   if (indexName && !isInvalidSectorLabel(indexName)) {
     return { source_type: "index", source_name: indexName };
   }
@@ -242,9 +287,12 @@ export function resolveIntradayQuery(
     return { source_type: metaType, source_name: metaName };
   }
 
-  const label = sectorQuoteLookupLabel(effectiveHolding);
+  const label = canonicalTrackingDisplayName(sectorQuoteLookupLabel(effectiveHolding));
   if (!label) {
     return null;
+  }
+  if (TRACKING_INDEX_DISPLAY_NAMES.has(label) && !isInvalidSectorLabel(label)) {
+    return { source_type: "index", source_name: label };
   }
 
   const boardName = effectiveHolding.sector_name?.trim();

@@ -93,6 +93,17 @@ def configured_background_jobs() -> tuple[BackgroundJobSpec, ...]:
             )
         )
 
+    if getattr(settings, "holding_intraday_warmup_enabled", False):
+        from app.services.shared_holding_market_cache import shared_holding_market_cache_loop
+
+        jobs.append(
+            BackgroundJobSpec(
+                name="shared-holding-market-cache",
+                target=shared_holding_market_cache_loop,
+                persistent=True,
+            )
+        )
+
     if (
         settings.fund_primary_sector_global_enabled
         and settings.fund_primary_sector_precompute_enabled

@@ -511,6 +511,27 @@ def _pending_transaction(
     )
 
 
+def _transaction_for_apply(
+    item: ParsedTransaction,
+    *,
+    confirm_date: str,
+    dedup_key: str,
+    apply_position: bool,
+) -> FundTransaction:
+    """默认写入 pending，后续确认会叠加份额。仅同步买卖点则直接记 confirmed 且不带份额。"""
+    tx = _pending_transaction(item, confirm_date=confirm_date, dedup_key=dedup_key)
+    if apply_position:
+        return tx
+    return tx.model_copy(
+        update={
+            "status": "confirmed",
+            "shares_delta": None,
+            "nav_on_confirm": None,
+            "confirmed_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
+
 def _ensure_buy_profile(
     item: ParsedTransaction,
     *,
@@ -603,15 +624,28 @@ def _seed_amounts_for_new_positions(
         profiles_by_code[saved.fund_code] = saved
 
 
-def apply_parsed_transactions(parsed: list[ParsedTransaction]) -> dict:
+def apply_parsed_transactions(
+    parsed: list[ParsedTransaction],
+    *,
+    apply_position: bool = True,
+) -> dict:
     from app.services.portfolio_mutation_guard import portfolio_mutation_guard
 
     with portfolio_mutation_guard():
-        return _apply_parsed_transactions_unlocked(parsed)
+        return _apply_parsed_transactions_unlocked(
+            parsed,
+            apply_position=apply_position,
+        )
 
 
-def _apply_parsed_transactions_unlocked(parsed: list[ParsedTransaction]) -> dict:
+def _apply_parsed_transactions_unlocked(
+    parsed: list[ParsedTransaction],
+    *,
+    apply_position: bool = True,
+) -> dict:
     """写入交易 → 确认 → 重算并返回持仓。
+
+    ``apply_position=False`` 时只落买卖点（去重后写入走势图），不建仓、不叠加份额。
 
     返回 {"holdings": [...], "inserted": n, "skipped": m, "pending": <仍 pending 条数>}。
     """
@@ -639,10 +673,11 @@ def _apply_parsed_transactions_unlocked(parsed: list[ParsedTransaction]) -> dict
     if insert_fund_transaction is not _ORIGINAL_INSERT_FUND_TRANSACTION:
         # Compatibility seam used by unit tests and external adapters.
         for item, confirm_date, dedup_key in valid_items:
-            tx = _pending_transaction(
+            tx = _transaction_for_apply(
                 item,
                 confirm_date=confirm_date,
                 dedup_key=dedup_key,
+                apply_position=apply_position,
             )
             processed.append(
                 (item, confirm_date, bool(insert_fund_transaction(tx)))
@@ -654,10 +689,11 @@ def _apply_parsed_transactions_unlocked(parsed: list[ParsedTransaction]) -> dict
         with _connect() as connection:
             ensure_primary_position_store(connection)
             for item, confirm_date, dedup_key in valid_items:
-                tx = _pending_transaction(
+                tx = _transaction_for_apply(
                     item,
                     confirm_date=confirm_date,
                     dedup_key=dedup_key,
+                    apply_position=apply_position,
                 )
                 cursor = _insert_fund_transaction_on_connection(
                     connection,
@@ -690,19 +726,20 @@ def _apply_parsed_transactions_unlocked(parsed: list[ParsedTransaction]) -> dict
                                 }
                             ]
                         )
-                supersedes = (
-                    f"fund-transaction:{stored_tx.id}:pending"
-                    if stored_tx.status == "confirmed"
-                    else None
-                )
-                append_portfolio_ledger_event(
-                    user_id=user_id,
-                    event=transaction_ledger_event_from_fund_transaction(
-                        stored_tx,
-                        supersedes_event_id=supersedes,
-                    ),
-                    connection=connection,
-                )
+                if apply_position:
+                    supersedes = (
+                        f"fund-transaction:{stored_tx.id}:pending"
+                        if stored_tx.status == "confirmed"
+                        else None
+                    )
+                    append_portfolio_ledger_event(
+                        user_id=user_id,
+                        event=transaction_ledger_event_from_fund_transaction(
+                            stored_tx,
+                            supersedes_event_id=supersedes,
+                        ),
+                        connection=connection,
+                    )
                 processed.append((item, confirm_date, was_inserted))
 
     buy_amounts: dict[str, float] = {}
@@ -710,28 +747,30 @@ def _apply_parsed_transactions_unlocked(parsed: list[ParsedTransaction]) -> dict
         # This compatibility repair is intentionally executed for exact
         # duplicates too: the prior attempt may have committed the ledger and
         # then failed while creating the provisional profile.
-        _ensure_buy_profile(
-            item,
-            confirm_date=confirm_date,
-            profiles_by_code=profiles_by_code,
-            profile_service=profile_service,
-        )
-        if item.direction == "buy" and item.fund_code:
-            buy_amounts[item.fund_code] = (
-                buy_amounts.get(item.fund_code, 0.0) + float(item.amount_yuan)
+        if apply_position:
+            _ensure_buy_profile(
+                item,
+                confirm_date=confirm_date,
+                profiles_by_code=profiles_by_code,
+                profile_service=profile_service,
             )
+            if item.direction == "buy" and item.fund_code:
+                buy_amounts[item.fund_code] = (
+                    buy_amounts.get(item.fund_code, 0.0) + float(item.amount_yuan)
+                )
 
         if not was_inserted:
             skipped += 1
             continue
         inserted += 1
 
-    confirm_pending_transactions()
-    _seed_amounts_for_new_positions(
-        [item.fund_code for item in parsed if item.fund_code],
-        profiles_by_code,
-        buy_amounts=buy_amounts,
-    )
+    if apply_position:
+        confirm_pending_transactions()
+        _seed_amounts_for_new_positions(
+            [item.fund_code for item in parsed if item.fund_code],
+            profiles_by_code,
+            buy_amounts=buy_amounts,
+        )
 
     from app.services.portfolio_holdings_service import sync_portfolio_from_profiles
 

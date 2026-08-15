@@ -111,9 +111,9 @@ from app.services.shared_executors import get_shared_io_executor
 
 logger = logging.getLogger(__name__)
 PREP_HEARTBEAT_SECONDS = 1.0
-# LLM 首个 token 到达前若长时间无输出，网关（如腾讯云开发 CloudBase）会在 SSE
-# 连接空闲约 60s 后主动断开（ERR_ABORT_HANDLER）。深度模式下模型思考耗时可能
-# 逼近甚至超过该阈值，因此需要更短的心跳间隔持续产出字节，防止连接被判定空闲。
+# LLM 首个 token 到达前若长时间无输出，反向代理可能把 SSE 连接判为空闲并断开
+# （ERR_ABORT_HANDLER）。深度模式下模型思考耗时可能逼近该阈值，因此需要更短的
+# 心跳间隔持续产出字节。
 LLM_HEARTBEAT_SECONDS = 12.0
 # Cover the whole discovery generator, not only the explicitly asynchronous
 # preparation and model-streaming sections.  Benchmark research, announcement

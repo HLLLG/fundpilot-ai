@@ -6,16 +6,14 @@ from app.config import refresh_settings
 from app.main import unhandled_exception_handler
 
 
-def test_cors_origin_regex_auto_when_cloudbase_env_configured(monkeypatch):
-    monkeypatch.setenv("FUND_AI_CLOUDBASE_ENV_ID", "fundpilot-ai-d1g1j23iof248e1ec")
+def test_cors_origin_regex_empty_by_default(monkeypatch):
     monkeypatch.delenv("FUND_AI_CORS_ORIGIN_REGEX", raising=False)
     settings = refresh_settings()
 
-    assert settings.resolved_cors_origin_regex == r"https://[\w-]+\.webapps\.tcloudbase\.com"
+    assert settings.resolved_cors_origin_regex is None
 
 
-def test_cors_origin_regex_explicit_overrides_cloudbase_default(monkeypatch):
-    monkeypatch.setenv("FUND_AI_CLOUDBASE_ENV_ID", "fundpilot-ai-d1g1j23iof248e1ec")
+def test_cors_origin_regex_uses_explicit_env(monkeypatch):
     monkeypatch.setenv("FUND_AI_CORS_ORIGIN_REGEX", r"https://example\.com")
     settings = refresh_settings()
 

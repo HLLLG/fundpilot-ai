@@ -53,3 +53,66 @@ export function pickUniqueFundMatch<T extends { fund_code: string; fund_name: st
   });
   return exact.length === 1 ? exact[0] : null;
 }
+
+function fundNameSimilarity(query: string, candidate: string): number {
+  const left = normalizeFundNameForLookup(query);
+  const right = normalizeFundNameForLookup(candidate);
+  if (!left || !right) {
+    return 0;
+  }
+  if (left === right) {
+    return 1;
+  }
+  const grams = (value: string) => {
+    const set = new Set<string>();
+    if (value.length < 2) {
+      set.add(value);
+      return set;
+    }
+    for (let index = 0; index < value.length - 1; index += 1) {
+      set.add(value.slice(index, index + 2));
+    }
+    return set;
+  };
+  const leftGrams = grams(left);
+  let overlap = 0;
+  for (const gram of grams(right)) {
+    if (leftGrams.has(gram)) {
+      overlap += 1;
+    }
+  }
+  return leftGrams.size ? overlap / leftGrams.size : 0;
+}
+
+/** 精确对不上时取搜索结果里最相近的一只，交给用户确认。 */
+export function pickBestFundMatch<T extends { fund_code: string; fund_name: string }>(
+  query: string,
+  items: T[],
+): T | null {
+  const unique = pickUniqueFundMatch(query, items);
+  if (unique) {
+    return unique;
+  }
+  const valid = items.filter((item) => item.fund_code && item.fund_code !== "000000");
+  if (!valid.length) {
+    return null;
+  }
+  const targetClass = extractShareClassLetter(query);
+  const classPool = targetClass
+    ? valid.filter((item) => {
+        const itemClass = extractShareClassLetter(item.fund_name);
+        return !itemClass || itemClass === targetClass;
+      })
+    : valid;
+  const pool = classPool.length ? classPool : valid;
+  let best = pool[0];
+  let bestScore = -1;
+  for (const item of pool) {
+    const score = fundNameSimilarity(query, item.fund_name);
+    if (score > bestScore) {
+      best = item;
+      bestScore = score;
+    }
+  }
+  return best;
+}

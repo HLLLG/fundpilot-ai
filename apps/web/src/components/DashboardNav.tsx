@@ -1,11 +1,11 @@
 "use client";
 
-import { Activity, FileText, LayoutList, PieChart, Search } from "lucide-react";
+import { Activity, FileText, LayoutList, Search, UserRound } from "lucide-react";
 import type { DashboardTabId } from "@/lib/storage";
 
 export type PrimaryDashboardTab = Extract<
   DashboardTabId,
-  "holdings" | "dashboard" | "market" | "discovery" | "report"
+  "holdings" | "market" | "discovery" | "report" | "me"
 >;
 
 type DashboardNavProps = {
@@ -25,28 +25,24 @@ type NavTab = {
 };
 
 /**
- * 桌面与移动端共用同一份扁平标签表。
- *
- * 历史实现把「发现基金」「生成日报」藏在移动端底栏的「更多」弹层里，等于给两个最常用
- * 的入口各加了一次点击；弹层还是绝对定位在底栏上方 z-index 60，正好落在后台任务卡片
- * 的位置上互相打架。现在五个标签直接平铺，和桌面完全一致，也不再需要弹层的
- * 外部点击 / Escape / 方向键漫游焦点那一整套逻辑。
+ * 桌面顶栏与移动端底栏共用同一份扁平标签表。
+ * 「分析」已收进「我的 → 盈亏分析」，两端导航条目保持一致。
  */
 const NAV_TABS: NavTab[] = [
   { id: "holdings", label: "持仓", mobileLabel: "持仓", icon: LayoutList },
-  { id: "dashboard", label: "分析", mobileLabel: "分析", icon: PieChart },
   { id: "market", label: "市场", mobileLabel: "市场", icon: Activity },
   { id: "discovery", label: "发现", mobileLabel: "发现", icon: Search },
   { id: "report", label: "日报", mobileLabel: "日报", icon: FileText },
+  { id: "me", label: "我的", mobileLabel: "我的", icon: UserRound },
 ];
 
-function isPrimaryTab(tab: DashboardTabId): tab is PrimaryDashboardTab {
-  return tab !== "history";
-}
-
-/** 历史抽屉挂在日报页下，打开它时底栏仍应高亮「日报」。 */
+/** 历史抽屉挂在日报下；盈亏分析挂在「我的」下，打开时底栏仍高亮所属标签。 */
 function isTabActive(tab: PrimaryDashboardTab, activeTab: DashboardTabId): boolean {
-  return tab === activeTab || (tab === "report" && activeTab === "history");
+  return (
+    tab === activeTab ||
+    (tab === "report" && activeTab === "history") ||
+    (tab === "me" && activeTab === "dashboard")
+  );
 }
 
 function unreadFor(
@@ -65,19 +61,17 @@ export function DashboardNav({
   discoveryTabUnread = false,
   onSelect,
 }: DashboardNavProps) {
-  const highlightedDesktop = isPrimaryTab(activeTab) ? activeTab : null;
-
   return (
     <>
       {/* Desktop top tabs — phones & tablets use bottom nav only */}
-      <nav className="dashboard-top-nav hidden min-w-0 lg:block" aria-label="主导航">
-        <div className="tab-segment overflow-x-auto">
+      <nav className="dashboard-top-nav hidden min-w-0 overflow-hidden lg:block" aria-label="主导航">
+        <div className="tab-segment">
           {NAV_TABS.map((tab) => (
             <button
               key={tab.id}
               type="button"
               onClick={() => onSelect(tab.id)}
-              aria-current={tab.id === highlightedDesktop ? "page" : undefined}
+              aria-current={isTabActive(tab.id, activeTab) ? "page" : undefined}
               className="tab-segment-btn relative !px-3"
             >
               {tab.label}
@@ -100,7 +94,8 @@ export function DashboardNav({
         </div>
       </nav>
 
-      {/* Mobile bottom nav — same five tabs, no overflow menu */}
+      {/* 手机底栏。定位和桌面隐藏在 globals.css，不依赖会随 chunk 热更新卸掉的
+          dashboard.css，否则未定位的底栏会掉进顶栏左上角。 */}
       <nav className="dashboard-bottom-nav" aria-label="主导航">
         {NAV_TABS.map(({ id, mobileLabel, icon: Icon }) => {
           const active = isTabActive(id, activeTab);

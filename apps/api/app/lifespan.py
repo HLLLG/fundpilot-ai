@@ -32,6 +32,12 @@ def _initialize_runtime(app: FastAPI, shutdown_event: threading.Event) -> None:
     cleanup_stale_analysis_jobs()
     cleanup_stale_discovery_jobs()
     cleanup_expired_stream_sessions()
+    try:
+        from app.services.sector_quote_cache import prune_durable_caches
+
+        prune_durable_caches()
+    except Exception:
+        logger.exception("durable cache prune failed")
     if shutdown_event.is_set():
         mark_ready()
         return

@@ -11,6 +11,10 @@ from app.models import Holding
 from app.request_context import reset_request_user_id, set_request_user_id
 from app.services.portfolio_holdings_service import load_persisted_holdings
 from app.services.portfolio_persistence import persist_holdings_after_sector_refresh
+from app.services.portfolio_refresh_gate import (
+    begin_background_sector_refresh,
+    end_background_sector_refresh,
+)
 from app.services.sector_quote_provider import fetch_spot_boards_result
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
 from app.services.trading_session import build_trading_session
@@ -56,16 +60,21 @@ def refresh_portfolio_sectors_for_user(user_id: int) -> None:
 def refresh_all_portfolio_sectors() -> None:
     if not _refresh_enabled():
         return
+    if not begin_background_sector_refresh():
+        return
     try:
-        refresh_shared_spot_boards(force_refresh=True)
-    except Exception as exc:
-        logger.info("portfolio sector spot boards refresh failed: %s", exc)
-
-    for user_id in list_distinct_portfolio_user_ids():
         try:
-            refresh_portfolio_sectors_for_user(user_id)
+            refresh_shared_spot_boards(force_refresh=True)
         except Exception as exc:
-            logger.info("portfolio sector refresh user=%s failed: %s", user_id, exc)
+            logger.info("portfolio sector spot boards refresh failed: %s", exc)
+
+        for user_id in list_distinct_portfolio_user_ids():
+            try:
+                refresh_portfolio_sectors_for_user(user_id)
+            except Exception as exc:
+                logger.info("portfolio sector refresh user=%s failed: %s", user_id, exc)
+    finally:
+        end_background_sector_refresh()
 
 
 def portfolio_sector_refresh_loop() -> None:

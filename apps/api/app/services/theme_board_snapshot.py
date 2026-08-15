@@ -800,13 +800,6 @@ def _refresh_enabled() -> bool:
     return bool(get_settings().theme_board_refresh_enabled)
 
 
-def theme_board_refresh_loop() -> None:
-    """兼容旧名：统一走 ``market_shared_refresh_loop``。"""
-    from app.services.market_shared_refresh import market_shared_refresh_loop
-
-    market_shared_refresh_loop()
-
-
 # ---------------------------------------------------------------------------
 # 现货榜兜底（仅日 K 全失败时）
 # ---------------------------------------------------------------------------

@@ -20,12 +20,17 @@ from app.services.sector_quote_identity import (
 logger = logging.getLogger(__name__)
 from app.services.sector_canonical import get_canonical_sector, get_intraday_canonical_sector
 from app.services.sector_quote_cache import get_spot_snapshot, save_spot_snapshot
-from app.services.trading_session import CN_TZ, build_trading_session, get_effective_trade_date
+from app.services.trading_session import (
+    CN_TZ,
+    build_trading_session,
+    get_effective_trade_date,
+    should_refresh_intraday_charts,
+)
 
 IntradayPoint = dict[str, str | float]
 
-# 盘中短缓存；收盘后长缓存（当日 9:30–15:00 曲线不再变）
-_INTRADAY_LIVE_TTL_SECONDS = 60.0
+# 盘中短缓存（须覆盖后台刷新间隔，避免详情打开 miss 打到东财）；收盘后长缓存
+_INTRADAY_LIVE_TTL_SECONDS = 180.0
 _INTRADAY_CLOSED_TTL_SECONDS = 86400.0
 _INTRADAY_STALE_TTL_SECONDS = 86400.0 * 7
 
@@ -67,6 +72,7 @@ def fetch_sector_intraday(
     source_name: str,
     *,
     force_refresh: bool = False,
+    cache_only: bool = False,
 ) -> tuple[list[IntradayPoint], str | None, str | None, float | None]:
     """返回 (points, note, session_date, close_change_percent)。"""
     label = (source_name or "").strip()
@@ -77,25 +83,35 @@ def fetch_sector_intraday(
     session = build_trading_session()
     session_kind = session["session_kind"]
     trade_date = get_effective_trade_date(session_kind=session_kind)
-    closed_session = session_kind in {
+    live_refreshing = should_refresh_intraday_charts(session)
+    require_complete_close = session_kind in {
         "trading_day_after_close",
         "non_trading_day",
         "trading_day_pre_open",
     }
 
     # v3：概念/行业板块优先东财 trends2（昨收基准）；v2 曾误用 AkShare 概念分钟优先
-    cache_key = f"intraday:v5:{source_type}:{label}:{trade_date}"
-    cache_ttl = _INTRADAY_CLOSED_TTL_SECONDS if closed_session else _INTRADAY_LIVE_TTL_SECONDS
+    # v6：按行情码缓存，黄金 / 黄金9999 共用 518880，避免换展示名后又 miss。
+    canon = get_intraday_canonical_sector(label)
+    cache_identity = (
+        (canon.source_code or "").strip() or label
+        if canon is not None
+        else label
+    )
+    cache_key = f"intraday:v6:{source_type}:{cache_identity}:{trade_date}"
+    cache_ttl = (
+        _INTRADAY_LIVE_TTL_SECONDS if live_refreshing else _INTRADAY_CLOSED_TTL_SECONDS
+    )
 
-    if not force_refresh:
+    if cache_only or not force_refresh:
         cached = get_spot_snapshot(cache_key, ttl_seconds=cache_ttl)
         cached_points = cached.get("points", []) if cached else []
         cache_complete = (
-            not closed_session or _is_complete_closed_intraday(cached_points)
+            not require_complete_close or _is_complete_closed_intraday(cached_points)
         )
         if cached is not None and cached_points and cache_complete:
             note = cached.get("note")
-            if closed_session and not note:
+            if require_complete_close and not note:
                 note = f"展示 {trade_date} 收盘分时（09:30–15:00）"
             return (
                 cached_points,
@@ -104,16 +120,31 @@ def fetch_sector_intraday(
                 cached.get("close_change_percent"),
             )
 
+    if cache_only:
+        stale = get_spot_snapshot(cache_key, ttl_seconds=_INTRADAY_STALE_TTL_SECONDS)
+        stale_points = stale.get("points", []) if stale else []
+        if len(stale_points) >= _MIN_INTRADAY_POINTS_TO_CACHE:
+            return (
+                stale_points,
+                stale.get("note") or f"展示 {trade_date} 缓存分时",
+                trade_date,
+                stale.get("close_change_percent"),
+            )
+        if live_refreshing:
+            note = "分时缓存更新中，请稍后重试"
+        else:
+            note = f"暂无 {trade_date} 分时缓存（休市不再拉取）"
+        return [], note, trade_date, None
+
     return _coalesce_intraday_fetch(
         cache_key,
         lambda: _load_intraday_from_network(
             source_type,
             label,
             trade_date=trade_date,
-            session_kind=session_kind,
-            closed_session=closed_session,
+            session=session,
+            require_complete_close=require_complete_close,
             cache_key=cache_key,
-            force_refresh=force_refresh,
         ),
     )
 
@@ -166,12 +197,11 @@ def _load_intraday_from_network(
     label: str,
     *,
     trade_date: str,
-    session_kind: str,
-    closed_session: bool,
+    session: dict,
+    require_complete_close: bool,
     cache_key: str,
-    force_refresh: bool,
 ) -> tuple[list[IntradayPoint], str | None, str | None, float | None]:
-    should_fetch = _should_fetch_intraday(session_kind) or force_refresh
+    should_fetch = _should_fetch_intraday(session)
     points: list[IntradayPoint] = []
     note: str | None = None
 
@@ -200,9 +230,9 @@ def _load_intraday_from_network(
 
     if not points:
         note = note or "暂无分时数据（数据源未返回或板块未映射）"
-    elif closed_session:
+    elif require_complete_close:
         note = f"展示 {trade_date} 收盘分时（09:30–15:00）"
-    elif session_kind == "trading_day_intraday":
+    elif session.get("session_kind") == "trading_day_intraday":
         note = "盘中实时分时"
 
     close_change_percent: float | None = None
@@ -249,14 +279,20 @@ def _load_intraday_from_network(
     return points, note, trade_date, close_change_percent
 
 
-def _should_fetch_intraday(session_kind: str) -> bool:
-    """收盘后/开盘前仍需拉取已定曲线（养基宝同款：展示上一交易日或当日 09:30–15:00）。"""
-    return session_kind in {
-        "trading_day_intraday",
-        "trading_day_pre_close",
+def _should_fetch_intraday(session: dict | str) -> bool:
+    """连续竞价拉实时分时；收盘后/周末/开盘前允许补一次上一交易日 09:30–15:00。
+
+    盘中轮询仍由 should_refresh_intraday_charts 限制。休市回补只在缓存未命中时发生
+    （调用方先读缓存），避免每个详情打开都打东财。
+    """
+    if isinstance(session, str):
+        return False
+    if should_refresh_intraday_charts(session):
+        return True
+    return str(session.get("session_kind") or "") in {
         "trading_day_after_close",
-        "trading_day_pre_open",
         "non_trading_day",
+        "trading_day_pre_open",
     }
 
 
@@ -282,6 +318,9 @@ def _eastmoney_secid_for_index_symbol(symbol: str | None) -> str:
     if code.startswith("39"):
         return f"0.{code}"
     if code.startswith("000"):
+        return f"1.{code}"
+    # 上海基金/ETF（华安黄金易 518880）
+    if len(code) == 6 and code.startswith("51") and code.isdigit():
         return f"1.{code}"
     return ""
 

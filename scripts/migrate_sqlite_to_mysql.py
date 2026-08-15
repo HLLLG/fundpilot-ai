@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""将本地 SQLite 数据迁移到 MySQL（CloudBase MySQL 或自建）。"""
+"""将本地 SQLite 数据迁移到 MySQL（Lighthouse 内网库或自建）。"""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ TABLES = [
         "users",
         [
             "id", "userRole", "username", "userAccount", "passwordHash",
-            "bio", "avatarUrl", "cloudbaseUid", "createdAt", "updatedAt",
+            "bio", "avatarUrl", "createdAt", "updatedAt",
             "isDeleted", "deletedAt", "authVersion", "lastLoginAt",
             "lastActiveAt", "passwordUpdatedAt",
         ],

@@ -228,6 +228,7 @@ def build_holding_detail(
             resolved.fund_code,
             resolved.fund_name,
             trading_days=252,
+            cache_only=True,
         )
         if history.source == "akshare" and history.points:
             latest_nav = history.latest_nav

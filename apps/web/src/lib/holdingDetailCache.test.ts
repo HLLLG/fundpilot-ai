@@ -1,42 +1,32 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildHoldingDetailCacheKey,
-  buildIntradayCacheKey,
-  HOLDING_DETAIL_STALE_MS,
-  isHoldingDetailCacheFresh,
-  writeHoldingDetailCache,
+  isTradingSessionCacheFresh,
+  TRADING_SESSION_CACHE_KEY,
+  writeTradingSessionCache,
 } from "@/lib/holdingDetailCache";
 import { peekClientCacheAgeMs, readClientCache } from "@/lib/clientCache";
+import type { TradingSession } from "@/lib/api";
 
-describe("holdingDetailCache", () => {
-  it("scopes detail cache by user and fund code", () => {
-    expect(buildHoldingDetailCacheKey(7, "008586")).toBe("holding-detail:7:008586");
-    expect(buildHoldingDetailCacheKey(null, "008586")).toBe("holding-detail:anon:008586");
-  });
+const SESSION: TradingSession = {
+  timezone: "Asia/Shanghai",
+  local_datetime: "2026-06-08 10:00",
+  calendar_date: "2026-06-08",
+  effective_trade_date: "2026-06-08",
+  is_trading_day: true,
+  is_continuous_trading: true,
+  session_kind: "trading_day_intraday",
+  market_open_time: "09:30",
+  decision_window: "盘中",
+  market_close_time: "15:00",
+};
 
-  it("builds intraday cache key from query", () => {
-    expect(buildIntradayCacheKey({ source_type: "index", source_name: "中证人工智能" })).toBe(
-      "sector-intraday:index:中证人工智能",
-    );
-  });
-
-  it("marks detail cache fresh within stale window", () => {
-    const key = buildHoldingDetailCacheKey(1, "008586");
-    writeHoldingDetailCache(1, "008586", {
-      index: 0,
-      holding: {
-        fund_code: "008586",
-        fund_name: "华夏人工智能ETF联接C",
-        holding_amount: 1000,
-        return_percent: 0,
-      },
-      fund_code_resolved: true,
-      provenance: {},
-    });
-    expect(readClientCache(key, -1, "memory")).not.toBeNull();
-    expect(isHoldingDetailCacheFresh(1, "008586")).toBe(true);
-    const ageMs = peekClientCacheAgeMs(key, "memory");
+describe("holdingDetailCache trading session", () => {
+  it("stores trading session for the clock bar, not holdings detail", () => {
+    writeTradingSessionCache(SESSION);
+    expect(readClientCache(TRADING_SESSION_CACHE_KEY, -1, "memory")).toEqual(SESSION);
+    expect(isTradingSessionCacheFresh()).toBe(true);
+    const ageMs = peekClientCacheAgeMs(TRADING_SESSION_CACHE_KEY, "memory");
     expect(ageMs).not.toBeNull();
-    expect(ageMs!).toBeLessThanOrEqual(HOLDING_DETAIL_STALE_MS);
+    expect(ageMs!).toBeLessThan(1000);
   });
 });

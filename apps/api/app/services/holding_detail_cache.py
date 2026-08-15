@@ -70,7 +70,3 @@ def save_cached_holding_detail(fund_code: str, fingerprint: str, payload: dict) 
         _MEMORY.move_to_end(key)
         while len(_MEMORY) > _MAX_ENTRIES:
             _MEMORY.popitem(last=False)
-
-
-def invalidate_holding_detail_cache_for_user() -> None:
-    bump_holding_detail_cache_generation()

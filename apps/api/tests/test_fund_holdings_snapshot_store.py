@@ -93,7 +93,7 @@ def _snapshot(
 
 
 def test_sqlite_migration_creates_append_only_holdings_schema() -> None:
-    assert SCHEMA_VERSION == 23
+    assert SCHEMA_VERSION == 24
     connection = sqlite3.connect(":memory:")
     run_migrations(connection)
 
@@ -141,7 +141,7 @@ def test_mysql_bootstrap_has_equivalent_holdings_schema() -> None:
 
     ensure_mysql_schema(Connection())
 
-    assert MYSQL_SCHEMA_VERSION == 23
+    assert MYSQL_SCHEMA_VERSION == 24
     ddl = next(
         statement
         for statement in statements
@@ -181,6 +181,8 @@ def test_mysql_v20_bootstrap_contains_performance_tables_and_indexes() -> None:
         in joined
     )
     assert "idx_fund_tx_pending_confirm" in joined
+    assert "cloudbaseUid" not in joined
+    assert "idx_users_cloudbase" not in joined
 
 
 def test_save_is_idempotent_and_new_hash_appends_revision() -> None:

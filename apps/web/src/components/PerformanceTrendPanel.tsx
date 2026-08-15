@@ -22,7 +22,6 @@ import { userFacingErrorMessage } from "@/lib/userFacingError";
 import { buildTradeMarkers } from "@/lib/tradeMarkers";
 
 const PREVIEW_LIMIT = 22;
-const NAV_HISTORY_TTL_MS = 24 * 60 * 60 * 1000;
 const INDEX_DAILY_TTL_MS = 60 * 60 * 1000;
 
 function buildPreviewSeries(points: FundNavHistory["points"]) {
@@ -132,9 +131,7 @@ export function PerformanceTrendPanel({
       return;
     }
     let cancelled = false;
-    const fundCacheKey = buildClientCacheKey("fund-nav-history", fundCode, days);
     const benchCacheKey = buildClientCacheKey("index-daily", benchmarkSymbol ?? "none", days);
-    const cachedFund = readClientCache<FundNavHistory>(fundCacheKey, NAV_HISTORY_TTL_MS);
     const cachedBench = benchmarkSymbol
       ? readClientCache<IndexDailyHistory>(benchCacheKey, INDEX_DAILY_TTL_MS)
       : null;
@@ -144,23 +141,18 @@ export function PerformanceTrendPanel({
       days,
       initialFundHistoryCoverageDays,
     );
-    const availableFund = cachedFund ?? initialFund;
 
-    if (initialFund && !cachedFund) {
-      writeClientCache(fundCacheKey, initialFund);
-    }
-    setFundHistory(availableFund);
+    setFundHistory(initialFund);
     setBenchHistory(cachedBench ?? null);
-    setFundLoading(!availableFund);
+    setFundLoading(!initialFund);
     setBenchmarkLoading(Boolean(benchmarkSymbol) && !cachedBench);
     setFundError(null);
     setBenchmarkError(null);
 
-    if (!availableFund) {
+    if (!initialFund) {
       void fetchFundNavHistory(fundCode, days)
         .then((result) => {
           if (cancelled) return;
-          writeClientCache(fundCacheKey, result);
           setFundHistory(result);
         })
         .catch((reason: unknown) => {

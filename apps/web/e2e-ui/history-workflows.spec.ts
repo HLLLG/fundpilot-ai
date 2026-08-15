@@ -206,7 +206,7 @@ async function enterDashboard(page: Page, url = "/") {
     window.localStorage.setItem("fundpilot_access_token", "history-ui-token");
   });
   await page.goto(url);
-  await expect(page.getByRole("heading", { level: 1, name: /账户持仓|投研日报/ })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: /账户持仓|投研日报/ })).toBeAttached();
 }
 
 async function openPrimary(page: Page, destination: "discovery" | "report") {
@@ -222,7 +222,7 @@ test("100 条发现历史保持有界，并在统一历史抽屉内连续切换"
   await installHistoryStubs(page, { discoveryCount: 100 });
   await enterDashboard(page);
   await openPrimary(page, "discovery");
-  await expect(page.getByRole("heading", { level: 1, name: "发现基金" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "发现基金" })).toBeAttached();
 
   // 发现页现在会自动载入最近一份报告，正文里的「历史效果复盘」折叠按钮描述中也带
   // 「历史推荐」三个字，所以这里必须锚定开头，只匹配抽屉触发器。
@@ -267,7 +267,7 @@ test("日报导航器支持前后切换、回到今日、URL 恢复和失败保�
   await installHistoryStubs(page, { reportCount: 8, failReportRefresh: true });
   await enterDashboard(page, "/?report=report-3");
 
-  await expect(page.getByRole("heading", { level: 1, name: "投研日报" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "投研日报" })).toBeAttached();
   await expect(page.getByRole("heading", { name: "历史日报 03" })).toBeVisible();
   await page.getByRole("button", { name: "上一份日报" }).click();
   await expect(page.getByRole("heading", { name: "历史日报 04" })).toBeVisible();

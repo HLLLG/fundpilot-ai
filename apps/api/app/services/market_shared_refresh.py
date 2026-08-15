@@ -267,3 +267,9 @@ def market_shared_refresh_loop() -> None:
             _maybe_refresh_us(now)
         except Exception as exc:
             logger.info("market shared us refresh failed: %s", exc)
+        try:
+            from app.services.sector_quote_cache import maybe_prune_durable_caches
+
+            maybe_prune_durable_caches()
+        except Exception as exc:
+            logger.info("durable cache prune failed: %s", exc)

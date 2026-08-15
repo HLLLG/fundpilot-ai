@@ -133,8 +133,55 @@ def test_v21_creates_sector_identity_tables_and_backfills_legacy_rows() -> None:
     ]
 
 
+def test_v24_drops_unused_users_cloudbase_uid() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
+    )
+    connection.execute("INSERT INTO schema_meta VALUES (1, 23)")
+    connection.execute(
+        """
+        CREATE TABLE users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            userRole TEXT NOT NULL DEFAULT 'user',
+            username TEXT NOT NULL,
+            userAccount TEXT NOT NULL UNIQUE,
+            passwordHash TEXT NOT NULL,
+            bio TEXT NOT NULL DEFAULT '',
+            avatarUrl TEXT NOT NULL DEFAULT '',
+            cloudbaseUid TEXT,
+            createdAt TEXT NOT NULL,
+            updatedAt TEXT NOT NULL,
+            isDeleted INTEGER NOT NULL DEFAULT 0,
+            deletedAt TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO users (
+            userRole, username, userAccount, passwordHash,
+            bio, avatarUrl, cloudbaseUid, createdAt, updatedAt
+        ) VALUES ('user', 'a', 'a@test', 'x', '', '', 'cb-1', 't', 't')
+        """
+    )
+
+    run_migrations(connection)
+
+    columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(users)")
+    }
+    assert "cloudbaseUid" not in columns
+    assert connection.execute(
+        "SELECT version FROM schema_meta WHERE id = 1"
+    ).fetchone()[0] == 24
+    assert connection.execute(
+        "SELECT userAccount FROM users WHERE userAccount = 'a@test'"
+    ).fetchone() is not None
+
+
 def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
-    assert SCHEMA_VERSION == 23
+    assert SCHEMA_VERSION == 24
     connection = sqlite3.connect(":memory:")
     connection.execute(
         "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
@@ -206,7 +253,7 @@ def test_v19_and_v20_add_only_performance_metadata_to_operational_tables() -> No
 
     assert connection.execute(
         "SELECT version FROM schema_meta WHERE id = 1"
-    ).fetchone()[0] == 23
+    ).fetchone()[0] == 24
     report_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(reports)")
     }

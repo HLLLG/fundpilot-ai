@@ -52,9 +52,6 @@ export default function RegisterPage() {
           <div className="mb-7">
             <p className="research-kicker">CREATE DESK</p>
             <h1 className="font-display mt-2 text-3xl font-bold text-[var(--brand-deep)]">创建账号</h1>
-            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-              注册后即可上传持仓截图，校对后建立你的第一份研究摘要。
-            </p>
           </div>
           <form className="space-y-4" onSubmit={onSubmit} aria-describedby={error ? "register-error" : undefined}>
             <label className="block text-sm font-semibold text-slate-700">
@@ -115,7 +112,6 @@ export default function RegisterPage() {
                 className="input-field mt-1.5"
               />
             </label>
-            <p className="-mt-2 text-xs leading-5 text-[var(--muted)]">密码至少 8 位；建议同时包含字母与数字。</p>
             {error ? (
               <>
                 <div id="register-error" role="alert" className="inline-notice inline-notice-error">
@@ -125,7 +121,7 @@ export default function RegisterPage() {
               </>
             ) : null}
             <button type="submit" disabled={submitting} aria-busy={submitting} className="btn-primary w-full">
-              {submitting ? "注册中…" : "免费注册，开始使用"}
+              {submitting ? "注册中…" : "注册"}
             </button>
           </form>
           <p className="mt-6 text-sm text-[var(--muted)]">
@@ -137,9 +133,6 @@ export default function RegisterPage() {
             >
               登录
             </Link>
-          </p>
-          <p className="mt-4 text-xs leading-5 text-[var(--muted)]">
-            投资有风险，入市需谨慎。本工具内容仅供参考，不构成投资建议。
           </p>
     </AuthShell>
   );

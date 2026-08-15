@@ -855,6 +855,7 @@ def infer_intraday_index_from_fund_name(fund_name: str | None) -> str | None:
         "半导体": "中证半导体",
         "新能源": "中证新能源",
         "军工": "中证军工",
+        "黄金": "黄金9999",
     }
     for theme, index_name in _feeder_theme_to_index.items():
         if f"{theme}ETF" in compact:

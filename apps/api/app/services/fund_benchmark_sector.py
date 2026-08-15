@@ -11,7 +11,11 @@ from dataclasses import dataclass
 from threading import RLock
 
 from app.services.amac_benchmark_index_data import amac_name_to_code_pairs
-from app.services.sector_registry_data import THEME_BOARD_INDEX
+from app.services.sector_registry_data import (
+    THEME_BOARD_INDEX,
+    THEME_BOARD_INDEX_OFFICIAL_NAME,
+    tracking_index_display_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +84,20 @@ _APPROVED_PROXY_INDEX_CODE_TO_SECTOR_LABEL: dict[str, str] = {
     "AU9999": "黄金",       # 上金所 Au99.99 现货
     # 跨市场但同主题、且无 A 股替代 label
     "HSSSHID": "创新药",    # 恒生沪深港创新药精选50
+    # 国证行业指数系列：同为沪深全市场、同主题，只是发布方不是中证。
+    #
+    # 这四条以前**不在表里**，却仍然被裸别名子串命中（"国证房地产行业指数" 命中 "房地产"），
+    # 于是 `index_code` 被静默写成中证那只的代码。登记出来是为了让身份显式且可复核：
+    # 现在整名先命中，`index_code` 记的是基金真正跟踪的那只指数。
+    #
+    # 主题分组仍归到 label（房地产 / 医药 …）。持仓页的涨跌不再借主题板默认码：
+    # 国证 399393 与中证全指 931775 日均偏差 0.43pp、最大 1.48pp、7 天方向相反，
+    # 国泰国证房地产行业指数A 的估算会贴近 399393 而不是 931775。
+    # 行情走 `TRACKING_INDEX_DISPLAY` / CANONICAL_SECTORS 里该指数自己的 secid。
+    "399393": "房地产",     # 国证房地产行业（东财简称"国证地产"）
+    "399394": "医药",       # 国证医药卫生行业（东财简称"国证医药"）
+    "399395": "有色金属",   # 国证有色金属行业（东财简称"国证有色"）
+    "399396": "食品饮料",   # 国证食品饮料行业（东财简称"国证食品"）
 }
 
 # 刻意**不**登记的代理（登记会让涨跌归因失真，已实测/核对）：
@@ -95,9 +113,57 @@ _APPROVED_PROXY_INDEX_CODE_TO_SECTOR_LABEL: dict[str, str] = {
 #   身份不可采信：930601（实为"中证软件"）/ 000828（实为"300高贝"）
 #                / 932066（实为"半导体行业精选"）
 
+# 非中证发布方的指数全称 → 代码。与 `THEME_BOARD_INDEX_OFFICIAL_NAME` 同为"官方全称"
+# 层级，只是这些代码不是任何 label 的行情码，所以放在这里而不是注册表里。
+# 名称取自基金合同的业绩比较基准原文（国泰 160218 / 160219 / 160221 / 160222）。
+_NON_CSINDEX_OFFICIAL_NAME: dict[str, str] = {
+    "399393": "国证房地产行业指数",
+    "399394": "国证医药卫生行业指数",
+    "399395": "国证有色金属行业指数",
+    "399396": "国证食品饮料行业指数",
+    # 中基协库对这两只记错了名字（把它们的名字挂在了另一只指数上），
+    # 2026-08 经中证官方接口逐条核对后按真名登记，避免整名文案再解析到隔壁：
+    #   932094 实为"中证全指软件开发指数"（107 成分），"中证全指软件指数"是 H30202（50 成分）
+    #   000807 实为"中证申万食品饮料指数"（50 成分），"中证食品饮料指数"是 930653（100 成分）
+    "932094": "中证全指软件开发指数",
+    "000807": "中证申万食品饮料指数",
+}
+
+
 def _build_benchmark_name_to_code() -> tuple[tuple[str, str], ...]:
-    """从 THEME_BOARD_INDEX 生成指数名 → 代码表（长匹配优先）。"""
-    pairs: set[tuple[str, str]] = set()
+    """指数名 → 代码表（长匹配优先；同名只保留可信度最高的一条）。
+
+    四层来源按可信度排序，高层覆盖低层的**同名**条目：
+
+    1. 发布方官方全称（`THEME_BOARD_INDEX_OFFICIAL_NAME` 与 `_NON_CSINDEX_OFFICIAL_NAME`）
+    2. 本函数下方手工登记的历史别名 / 合同文案写法
+    3. 由板块 label 合成的短名（"房地产"、"中证房地产"…）
+    4. 中基协 155 指数要素库
+
+    以前这里是个 `set[tuple[str, str]]`，**同名不同码会同时存在**，最终取哪条取决于集合
+    迭代顺序——实测 "中证食品饮料" 同时指向 000807 与 930653，即同一份基准文案在不同
+    进程里可能解析出不同的指数。按优先级归并之后结果唯一，且"为什么是这条"可解释。
+
+    第 1 层还有一个作用：让 "中证全指房地产指数" 这类文案**整名**命中自己的代码。
+    没有它时，整名无处可匹配，只能退到第 3 层的裸主题词 "房地产" 去子串命中，
+    而那条路对"别家发布方的同主题指数"是无差别放行的（见 `_alias_match_is_specific`）。
+    """
+    ranked: dict[str, tuple[int, str]] = {}
+
+    def register(name: str, code: str, rank: int) -> None:
+        name = name.strip()
+        code = code.strip()
+        if not name or not code:
+            return
+        current = ranked.get(name)
+        if current is None or rank < current[0]:
+            ranked[name] = (rank, code)
+
+    for code, official_name in THEME_BOARD_INDEX_OFFICIAL_NAME.items():
+        register(official_name, code, 1)
+    for code, official_name in _NON_CSINDEX_OFFICIAL_NAME.items():
+        register(official_name, code, 1)
+
     for label, (_secid, source_code, _kind) in THEME_BOARD_INDEX.items():
         if not source_code:
             continue
@@ -106,14 +172,14 @@ def _build_benchmark_name_to_code() -> tuple[tuple[str, str], ...]:
         code = source_code.strip().upper()
         if re.fullmatch(r"(?:\d{6}|H[A-Z0-9]+)", code) is None:
             continue
-        pairs.add((label, code))
+        register(label, code, 3)
         if not label.startswith("中证"):
-            pairs.add((f"中证{label}", code))
+            register(f"中证{label}", code, 3)
         if "主题" not in label:
-            pairs.add((f"{label}主题指数", code))
-            pairs.add((f"中证{label}主题指数", code))
+            register(f"{label}主题指数", code, 3)
+            register(f"中证{label}主题指数", code, 3)
     # 历史别名（指数展示名与注册表 label 不完全一致）
-    pairs.update(
+    legacy_pairs: set[tuple[str, str]] = (
         {
             # 930713（主题）与 931071（产业）必须按完整名称精确区分。
             ("中证人工智能主题指数", "930713"),
@@ -163,9 +229,17 @@ def _build_benchmark_name_to_code() -> tuple[tuple[str, str], ...]:
             ("黄金现货实盘合约Au9999", "AU9999"),
         }
     )
+    for name, code in legacy_pairs:
+        register(name, code, 2)
     for name, code in amac_name_to_code_pairs():
-        pairs.add((name, code))
-    return tuple(sorted(pairs, key=lambda item: len(item[0]), reverse=True))
+        register(name, code, 4)
+    return tuple(
+        sorted(
+            ((name, code) for name, (_rank, code) in ranked.items()),
+            key=lambda item: len(item[0]),
+            reverse=True,
+        )
+    )
 
 
 _BENCHMARK_NAME_TO_CODE: tuple[tuple[str, str], ...] = _build_benchmark_name_to_code()
@@ -205,9 +279,19 @@ def _index_code_to_sector_label(index_code: str) -> str | None:
     return None
 
 
-def _intraday_index_name_for_label(sector_label: str, index_name: str | None) -> str | None:
+def _intraday_index_name_for_label(
+    sector_label: str,
+    index_name: str | None,
+    index_code: str | None = None,
+) -> str | None:
     from app.services.fund_profile import infer_intraday_index_from_sector
+    from app.services.sector_canonical import get_canonical_sector
 
+    display = tracking_index_display_name(index_code)
+    if display:
+        return display
+    if index_name and get_canonical_sector(index_name) is not None:
+        return index_name
     inferred = infer_intraday_index_from_sector(sector_label)
     if inferred:
         return inferred
@@ -224,8 +308,10 @@ _MARKET_LEVEL_SECTOR_LABELS: frozenset[str] = frozenset({"港股", "港股通"})
 # 前缀集合必须与 `_INDEX_PHRASE_PUBLISHER_PREFIX_RE` 完全一致（同样不含"恒生"）：
 # 两边口径不一致会让守卫漏判——曾经短语侧剥掉"恒生"得到"港股通高股息低波动"，
 # 而别名"恒生港股通"没被剥，于是"不是子串"，恒生港股通高股息低波动基金被标成"港股通"。
+# 发布机构前缀单独捕获（group 1），主题部分是 group 2：判断"别家发布方的同主题指数"
+# 需要知道文案里写的是谁家的指数，而归一化会把这个信息抹掉。
 _INDEX_NAME_PHRASE_RE = re.compile(
-    r"(?:中证|国证|上证|深证|沪深|中债|MSCI|标普|纳斯达克)*"
+    r"((?:中证|国证|上证|深证|沪深|中债|MSCI|标普|纳斯达克)*)"
     r"([\u4e00-\u9fffA-Za-z0-9\.]{2,20}?)指数"
 )
 
@@ -297,9 +383,73 @@ def _index_name_phrases(text: str) -> tuple[str, ...]:
         dict.fromkeys(
             phrase
             for match in _INDEX_NAME_PHRASE_RE.finditer(text)
-            if (phrase := _normalize_index_phrase(match.group(1)))
+            if (phrase := _normalize_index_phrase(match.group(2)))
         )
     )
+
+
+def _index_phrase_publishers(text: str) -> dict[str, frozenset[str]]:
+    """归一化短语 → 文案里为它写明的发布机构集合（没写就是空集）。
+
+    "国证房地产行业指数" 归一化后是 "房地产行业"，发布机构 "国证" 在归一化时被剥掉；
+    而判断"这条别名命中的是不是别家的指数"恰恰要用它。同一短语可能在复合基准里出现
+    多次且前缀不同，所以按集合收集，只要有任一前缀与代码的发布方一致就算相符。
+    """
+    publishers: dict[str, set[str]] = {}
+    for match in _INDEX_NAME_PHRASE_RE.finditer(text):
+        phrase = _normalize_index_phrase(match.group(2))
+        if not phrase:
+            continue
+        prefix = _leading_publisher(match.group(1) or "")
+        bucket = publishers.setdefault(phrase, set())
+        if prefix:
+            bucket.add(prefix)
+    return {phrase: frozenset(values) for phrase, values in publishers.items()}
+
+
+# **首个**发布机构标记。刻意不带 `+`：`_INDEX_PHRASE_PUBLISHER_PREFIX_RE` 是用来把整串
+# 前缀剥干净的，而比较发布方时两边必须取同一个粒度——"中证沪深港黄金产业股票指数" 的
+# 前缀链是"中证沪深"，若一侧取整链、另一侧取"中证"，同一只指数会被判成互相矛盾。
+#
+# 比文案侧多认 AMAC 与恒生：那两个在文案里是主题名的一部分（"恒生科技"），不能从短语
+# 里剥；但在**官方全称**里它们确实是发布方标识（H30054 "AMAC医药制造指数"）。
+_LEADING_PUBLISHER_RE = re.compile(
+    r"^(?:中证|国证|上证|深证|沪深|中债|MSCI|标普|纳斯达克|AMAC|恒生)"
+)
+
+
+def _leading_publisher(value: str) -> str | None:
+    matched = _LEADING_PUBLISHER_RE.match(str(value or "").strip())
+    return matched.group(0) if matched else None
+
+
+def _publisher_of_index_code(index_code: str) -> str | None:
+    """代码 → 发布机构前缀；没有登记官方全称时返回 None（无法判定）。"""
+    code = str(index_code or "").strip().upper()
+    official = THEME_BOARD_INDEX_OFFICIAL_NAME.get(code) or _NON_CSINDEX_OFFICIAL_NAME.get(code)
+    if not official:
+        return None
+    return _leading_publisher(official)
+
+
+def _publisher_conflicts(
+    mapped_code: str,
+    phrase: str,
+    phrase_publishers: dict[str, frozenset[str]] | None,
+) -> bool:
+    """文案点名的发布机构与这条别名所指代码的发布机构是否互相矛盾。
+
+    只有**双方都能确定且不一致**时才判冲突。代码侧没登记官方全称时返回 False
+    （维持原行为），因为"证明不了同一家"不等于"证明了不是同一家"，而这条守卫
+    的每一次误判都会让一只本来有正确板块的基金退到"暂无可用关联板块"。
+    """
+    written = (phrase_publishers or {}).get(phrase) or frozenset()
+    if not written:
+        return False
+    code_publisher = _publisher_of_index_code(mapped_code)
+    if code_publisher is None:
+        return False
+    return code_publisher not in written
 
 
 def _phrases_without_verifiable_identity(phrases: tuple[str, ...]) -> frozenset[str]:
@@ -332,6 +482,8 @@ def _alias_match_is_specific(
     sector_label: str,
     phrases: tuple[str, ...],
     unverifiable_phrases: frozenset[str] = frozenset(),
+    mapped_code: str = "",
+    phrase_publishers: dict[str, frozenset[str]] | None = None,
 ) -> bool:
     """别名只是文案里某个更长指数名的片段时判否。
 
@@ -343,7 +495,16 @@ def _alias_match_is_specific(
         "中证科技传媒通信150指数"     命中别名 "传媒"     → H30365（三主题里挑一个）
         "沪深300非银行金融指数"       命中别名 "银行"     → H30022（语义相反）
 
-    别名与短语完整相等时无条件放行。别名只是短语的**真子串**时按四条判否：
+    **发布机构不一致时判否，整名相等也不例外。** 归一化会把 "国证" / "深证" 前缀剥掉，
+    于是 "国证房地产行业指数" 只剩 "房地产行业"，裸别名 "房地产" 成了它的子串；
+    而 "深证电子指数" 更是直接剩下 "电子"，与裸别名完全相等。两种形态命中的都是
+    **别家发布方的另一只指数**：前者把 `index_code` 写成中证的 931775（71 个交易日实测
+    日均偏差 0.43pp、最大 1.48pp、7 天方向相反），后者写成中证的 930652。
+    `index_code` 还会流到 `benchmark_fee_evaluation` 去取基准日线算跟踪偏离，
+    所以这不只是"板块名字看着还对"的问题。
+
+    别名与短语完整相等时（且发布方不矛盾）无条件放行。别名只是短语的**真子串**时
+    再按四条判否：
       1. 该短语整体就通不过身份门槛（见 `_phrases_without_verifiable_identity`）；
       2. 别名本身是市场级标签（港股 / 港股通）；
       3. 别名前紧邻否定词（"非"银行金融）；
@@ -356,7 +517,11 @@ def _alias_match_is_specific(
     if not normalized_alias:
         return True
     for phrase in phrases:
-        if normalized_alias == phrase or normalized_alias not in phrase:
+        if normalized_alias not in phrase:
+            continue
+        if _publisher_conflicts(mapped_code, phrase, phrase_publishers):
+            return False
+        if normalized_alias == phrase:
             continue
         if phrase in unverifiable_phrases:
             return False
@@ -440,6 +605,7 @@ def parse_benchmark_index(benchmark_text: str) -> BenchmarkIndexMatch | None:
             break
 
     phrases = _index_name_phrases(name_search_text)
+    phrase_publishers = _index_phrase_publishers(name_search_text)
     unverifiable_phrases = _phrases_without_verifiable_identity(phrases)
     index_name: str | None = None
     if code is None:
@@ -458,6 +624,8 @@ def parse_benchmark_index(benchmark_text: str) -> BenchmarkIndexMatch | None:
                 label,
                 phrases,
                 unverifiable_phrases,
+                mapped_code=mapped_code,
+                phrase_publishers=phrase_publishers,
             ):
                 continue
             code = mapped_code
@@ -484,7 +652,9 @@ def resolve_sector_from_benchmark(
     sector_label = _index_code_to_sector_label(match.index_code)
     if not sector_label:
         return None
-    intraday = _intraday_index_name_for_label(sector_label, match.index_name)
+    intraday = _intraday_index_name_for_label(
+        sector_label, match.index_name, match.index_code
+    )
     return sector_label, intraday, match
 
 

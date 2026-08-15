@@ -93,6 +93,7 @@ class FundDataService:
         fund_name: str = "",
         *,
         trading_days: int = 90,
+        cache_only: bool = False,
     ) -> FundNavHistory:
         if fund_code == "000000":
             return FundNavHistory(
@@ -104,7 +105,10 @@ class FundDataService:
 
         try:
             return self._nav_history_from_akshare(
-                fund_code, fund_name, trading_days=trading_days
+                fund_code,
+                fund_name,
+                trading_days=trading_days,
+                cache_only=cache_only,
             )
         except Exception as exc:
             return FundNavHistory(
@@ -150,18 +154,37 @@ class FundDataService:
         fund_name: str,
         *,
         trading_days: int,
+        cache_only: bool = False,
     ) -> FundNavHistory:
-        from app.services.fund_nav_cache import get_cached_fund_nav, save_cached_fund_nav
+        from app.services.fund_nav_cache import (
+            CANONICAL_NAV_TRADING_DAYS,
+            get_cached_fund_nav,
+            nav_covers_needed_date,
+            save_cached_fund_nav,
+        )
+        from app.services.trading_session import needed_official_nav_date
 
         cached = get_cached_fund_nav(fund_code, trading_days)
         if cached is not None and cached.points:
             if fund_name and not cached.fund_name:
                 cached = cached.model_copy(update={"fund_name": fund_name})
-            return cached
+            if cache_only or nav_covers_needed_date(cached, needed_official_nav_date()):
+                return cached
+
+        if cache_only:
+            if cached is not None and cached.points:
+                return cached
+            return FundNavHistory(
+                fund_code=fund_code,
+                fund_name=fund_name,
+                source="unavailable",
+                note="净值缓存尚未就绪，请稍后重开详情",
+            )
 
         from app.services.akshare_subprocess import fetch_fund_nav_history
 
-        result = fetch_fund_nav_history(fund_code, trading_days=trading_days)
+        fetch_days = max(trading_days, CANONICAL_NAV_TRADING_DAYS)
+        result = fetch_fund_nav_history(fund_code, trading_days=fetch_days)
         if result is None or "data" not in result:
             raise ValueError("AkShare 获取净值数据失败或返回空数据")
 
@@ -189,7 +212,8 @@ class FundDataService:
             period_change_percent=period_change,
         )
         save_cached_fund_nav(fund_code, trading_days, history)
-        return history
+        sliced = get_cached_fund_nav(fund_code, trading_days)
+        return sliced or history
 
     def _from_akshare_combined(
         self,
@@ -240,8 +264,14 @@ class FundDataService:
         limit: int = 30,
         before_date: str | None = None,
         pool_days: int = 800,
+        cache_only: bool = False,
     ) -> dict:
-        history = self.get_nav_history(fund_code, fund_name, trading_days=pool_days)
+        history = self.get_nav_history(
+            fund_code,
+            fund_name,
+            trading_days=pool_days,
+            cache_only=cache_only,
+        )
         if not history.points:
             return {
                 "fund_code": fund_code,

@@ -304,9 +304,9 @@ def create_user(
             """
             INSERT INTO users (
                 userRole, username, userAccount, passwordHash,
-                bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt,
+                bio, avatarUrl, createdAt, updatedAt, isDeleted, deletedAt,
                 authVersion, lastLoginAt, lastActiveAt, passwordUpdatedAt
-            ) VALUES (?, ?, ?, ?, '', '', NULL, ?, ?, 0, NULL, 1, NULL, NULL, ?)
+            ) VALUES (?, ?, ?, ?, '', '', ?, ?, 0, NULL, 1, NULL, NULL, ?)
             """,
             (user_role, username, user_account, password_hash, now, now, now),
         )
@@ -323,7 +323,7 @@ def get_user_by_id(user_id: int) -> dict[str, object] | None:
         row = connection.execute(
             """
             SELECT id, userRole, username, userAccount, passwordHash,
-                   bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt,
+                   bio, avatarUrl, createdAt, updatedAt, isDeleted, deletedAt,
                    authVersion, lastLoginAt, lastActiveAt, passwordUpdatedAt
             FROM users WHERE id = ? AND isDeleted = 0
             """,
@@ -339,7 +339,7 @@ def get_user_by_account(user_account: str) -> dict[str, object] | None:
         row = connection.execute(
             """
             SELECT id, userRole, username, userAccount, passwordHash,
-                   bio, avatarUrl, cloudbaseUid, createdAt, updatedAt, isDeleted, deletedAt,
+                   bio, avatarUrl, createdAt, updatedAt, isDeleted, deletedAt,
                    authVersion, lastLoginAt, lastActiveAt, passwordUpdatedAt
             FROM users WHERE userAccount = ?
             """,
@@ -1426,11 +1426,6 @@ def get_portfolio_intraday_curve_entry(trade_date: str) -> dict[str, Any] | None
     }
 
 
-def get_portfolio_intraday_curve(trade_date: str) -> list[dict[str, Any]] | None:
-    entry = get_portfolio_intraday_curve_entry(trade_date)
-    return entry["points"] if entry else None
-
-
 def get_investor_profile() -> InvestorProfile | None:
     user_id = _uid()
     with _connect() as connection:
@@ -1620,6 +1615,37 @@ def save_ocr_text_cache(cache_key: str, raw_text: str) -> None:
             (user_id, cache_key, raw_text),
         )
         connection.commit()
+
+
+def prune_expired_ocr_text_cache(
+    *,
+    retention_days: int | None = None,
+    now: datetime | None = None,
+) -> int:
+    """删除超过保留期的 OCR 文本缓存。键按图片哈希，不清理会随上传一直堆积。"""
+    days = (
+        int(retention_days)
+        if retention_days is not None
+        else int(get_settings().spot_cache_retention_days)
+    )
+    days = max(1, days)
+    moment = now or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    else:
+        moment = moment.astimezone(timezone.utc)
+    # SQLite CURRENT_TIMESTAMP 是 "YYYY-MM-DD HH:MM:SS"，和 ISO 混比不可靠，按日切。
+    cutoff = (moment - timedelta(days=days)).date().isoformat()
+    with _connect() as connection:
+        cursor = connection.execute(
+            "DELETE FROM ocr_text_cache WHERE updated_at < ?",
+            (cutoff,),
+        )
+        connection.commit()
+        try:
+            return max(0, int(cursor.rowcount or 0))
+        except (TypeError, ValueError):
+            return 0
 
 
 def get_sector_mapping(sector_label: str) -> dict[str, Any] | None:

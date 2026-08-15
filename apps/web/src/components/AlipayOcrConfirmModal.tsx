@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, X } from "lucide-react";
+import { ChevronUp, Plus, X } from "lucide-react";
 import { InlineNotice } from "@/components/InlineNotice";
+import { CLIPBOARD_IMAGE_PASTE_QUERY } from "@/components/ScreenshotIntakeExtras";
+import { FundCodeSearchButton, ReviewEditRow } from "@/components/ocrReviewFields";
 import type { FundSearchItem, Holding } from "@/lib/api";
 import { searchFunds } from "@/lib/api";
-import { cnProfitClass } from "@/lib/holdingMetrics";
+import { cnProfitClass, formatPlainMoney, formatSignedMoney } from "@/lib/holdingMetrics";
+import { collectImageFiles, ocrProgressLabel } from "@/lib/ocrBatchUpload";
 import { useDialogA11y } from "@/lib/useDialogA11y";
+import { useMediaQuery } from "@/lib/useMediaQuery";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
 
 type FundCodeResolution = {
@@ -20,12 +24,15 @@ type FundCodeResolution = {
 type AlipayOcrConfirmModalProps = {
   holdings: Holding[];
   fundCodeResolutions?: FundCodeResolution[];
-  amountSemanticsNote?: string | null;
   ocrSource?: string | null;
   isBusy?: boolean;
+  isUploading?: boolean;
+  uploadProgress?: { current: number; total: number } | null;
   errorMessage?: string | null;
   onChange: (holdings: Holding[]) => void;
   onConfirm: () => void;
+  onContinueUpload?: () => void;
+  onUploadMore?: (files: File[]) => void;
   onClose: () => void;
 };
 
@@ -100,7 +107,7 @@ function FundCodeSearchPanel({
 
   return (
     <div
-      className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg"
+      className="absolute left-0 right-0 top-11 z-20 mt-1 max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -155,11 +162,14 @@ function FundCodeSearchPanel({
 export function AlipayOcrConfirmModal({
   holdings,
   fundCodeResolutions = [],
-  amountSemanticsNote,
   isBusy = false,
+  isUploading = false,
+  uploadProgress = null,
   errorMessage = null,
   onChange,
   onConfirm,
+  onContinueUpload,
+  onUploadMore,
   onClose,
 }: AlipayOcrConfirmModalProps) {
   const resolutionByName = useMemo(
@@ -168,10 +178,14 @@ export function AlipayOcrConfirmModal({
   );
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const continueFileRef = useRef<HTMLInputElement>(null);
   const searchTriggerRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const isDesktopCompose = useMediaQuery(CLIPBOARD_IMAGE_PASTE_QUERY);
+  const locked = isBusy || isUploading;
   const requestClose = () => {
-    if (!isBusy) {
+    if (!locked) {
       onClose();
     }
   };
@@ -186,25 +200,26 @@ export function AlipayOcrConfirmModal({
     const code = displayCode(holding, resolution);
     return !code;
   }).length;
-  const autoOpenedSearchRef = useRef(false);
 
-  useEffect(() => {
-    if (autoOpenedSearchRef.current || isBusy || searchIndex !== null) {
+  const handleContinueUpload = () => {
+    if (isDesktopCompose) {
+      onContinueUpload?.();
       return;
     }
-    const firstUnresolved = holdings.findIndex((holding) => {
-      const resolution = resolutionByName.get(holding.fund_name);
-      return !displayCode(holding, resolution);
-    });
-    if (firstUnresolved < 0) {
+    if (onUploadMore) {
+      continueFileRef.current?.click();
       return;
     }
-    autoOpenedSearchRef.current = true;
-    setSearchIndex(firstUnresolved);
-    setSearchQuery(holdings[firstUnresolved]?.fund_name ?? "");
-  }, [holdings, resolutionByName, isBusy, searchIndex]);
+    onContinueUpload?.();
+  };
 
   const removeAt = (index: number) => {
+    if (editingIndex === index) {
+      setEditingIndex(null);
+    }
+    if (searchIndex === index) {
+      setSearchIndex(null);
+    }
     onChange(holdings.filter((_, itemIndex) => itemIndex !== index));
   };
 
@@ -214,7 +229,7 @@ export function AlipayOcrConfirmModal({
 
   const openSearch = (index: number) => {
     setSearchIndex(index);
-    setSearchQuery(holdings[index]?.fund_name ?? "");
+    setSearchQuery(holdings[index]?.fund_name || holdings[index]?.fund_code || "");
   };
 
   const closeSearch = (index: number | null = searchIndex) => {
@@ -222,6 +237,14 @@ export function AlipayOcrConfirmModal({
     if (index != null) {
       window.requestAnimationFrame(() => searchTriggerRefs.current[index]?.focus());
     }
+  };
+
+  const applySearchedFund = (index: number, item: FundSearchItem) => {
+    updateAt(index, {
+      fund_code: item.fund_code,
+      fund_name: item.fund_name,
+    });
+    closeSearch(index);
   };
 
   return (
@@ -241,22 +264,19 @@ export function AlipayOcrConfirmModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="ocr-confirm-modal-title"
-        aria-busy={isBusy}
+        aria-busy={locked}
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div>
             <h2 id="ocr-confirm-modal-title" className="text-lg font-black text-slate-950">
               确认识别结果
             </h2>
-            <p className="mt-1 text-xs leading-5 text-slate-500">
-              可修改基金代码、名称、金额与收益；代码不对时点搜索从东财选取。
-            </p>
           </div>
           <button
             ref={closeButtonRef}
             type="button"
             onClick={requestClose}
-            disabled={isBusy}
+            disabled={locked}
             className="touch-target inline-flex items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
             aria-label="关闭"
           >
@@ -264,166 +284,200 @@ export function AlipayOcrConfirmModal({
           </button>
         </div>
 
-        <ol className="workflow-rail" aria-label="持仓导入进度">
-          <li className="is-done"><span>01</span><strong>截图进入</strong></li>
-          <li aria-current="step"><span>02</span><strong>校对数据</strong></li>
-          <li><span>03</span><strong>确认写入</strong></li>
-        </ol>
-
         {errorMessage ? (
           <div className="px-4 pt-4">
             <InlineNotice tone="error" message={errorMessage} />
           </div>
         ) : null}
 
-        {amountSemanticsNote ? (
-          <div className="border-b border-[var(--info-border)] bg-[var(--info-bg)] px-5 py-3 text-xs leading-5 text-[var(--info-fg)]">
-            {amountSemanticsNote}
-          </div>
-        ) : null}
-
-        {unresolvedCount > 0 ? (
-          <div className="border-b border-[var(--warn-border)] bg-[var(--warn-bg)] px-5 py-3 text-xs leading-5 text-[var(--warn-fg)]">
-            有 {unresolvedCount} 只基金未自动匹配到代码，请逐一点「搜索」从东财基金库选取后再确认入库。
-          </div>
-        ) : null}
-
-        <div className="ocr-review-list min-h-0 flex-1 overflow-y-auto px-4 py-2 sm:px-5">
+        <div className="ocr-review-list min-h-0 flex-1 overflow-y-auto bg-[#f5f7fa] px-4 py-3">
+          <div className="space-y-2">
           {holdings.map((holding, index) => {
             const resolution = resolutionByName.get(holding.fund_name);
             const code = displayCode(holding, resolution);
             const unresolved = !code;
+            const editing = editingIndex === index;
+            const searching = searchIndex === index;
+            const confirmHint =
+              unresolved ||
+              resolution?.source === "similar" ||
+              resolution?.message === "请确认基金";
+            const rowLabel = holding.fund_name || `第 ${index + 1} 只基金`;
 
             return (
               <div
                 key={`${holding.fund_name}-${index}`}
-                className={`ocr-review-row border-b px-1 py-4 sm:px-2 ${
-                  unresolved
-                    ? "border-[var(--warn-border)] bg-[var(--warn-bg)]/80"
-                    : "border-[var(--line)] bg-transparent"
+                className={`ocr-review-row relative rounded-2xl bg-white px-4 py-3 shadow-[0_2px_12px_rgba(15,23,42,0.06)] ${
+                  unresolved ? "ring-1 ring-[var(--warn-border)]" : ""
                 }`}
               >
-                <div className="mb-3 flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <div className="relative">
-                      <div className="flex items-center gap-2">
-                        <input
-                          value={code}
-                          inputMode="numeric"
-                          aria-label={`基金代码：${holding.fund_name || `第 ${index + 1} 只基金`}`}
-                          onChange={(event) => {
-                            const next = event.target.value.replace(/\D/g, "").slice(0, 6);
-                            updateAt(index, { fund_code: next || "000000" });
-                          }}
-                          placeholder="待匹配"
-                          className={`min-h-11 w-24 rounded-lg border px-2 py-2 text-xs font-bold tabular-nums outline-none focus:border-blue-400 ${
-                            unresolved
-                              ? "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]"
-                              : "border-slate-200 bg-white text-slate-800"
-                          }`}
-                        />
-                        <button
-                          ref={(node) => {
-                            searchTriggerRefs.current[index] = node;
-                          }}
-                          type="button"
-                          onClick={() => openSearch(index)}
-                          className={`inline-flex min-h-11 items-center gap-1 rounded-lg border px-2 py-2 text-[11px] font-semibold transition ${
-                            unresolved
-                              ? "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)] hover:border-[var(--warn-border)]"
-                              : "border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-[var(--info-fg)]"
-                          }`}
-                        >
-                          <Search size={12} />
-                          {unresolved ? "搜索匹配" : "搜索"}
-                        </button>
-                        {resolution?.source ? (
-                          <span className="text-[10px] text-slate-500">
-                            {resolution.source === "fuzzy" ? "模糊匹配" : resolution.source}
-                          </span>
-                        ) : null}
-                      </div>
-                      {unresolved && resolution?.message ? (
-                        <p className="mt-1 text-[11px] leading-4 text-[var(--warn-icon)]">{resolution.message}</p>
-                      ) : null}
-                      {searchIndex === index ? (
-                        <FundCodeSearchPanel
-                          initialQuery={searchQuery}
-                          onSelect={(item) => {
-                            updateAt(index, {
-                              fund_code: item.fund_code,
-                              fund_name: item.fund_name,
-                            });
-                            closeSearch(index);
-                          }}
-                          onClose={() => closeSearch(index)}
-                        />
-                      ) : null}
-                    </div>
-                    <input
-                      value={holding.fund_name}
-                      aria-label={`基金名称：第 ${index + 1} 只基金`}
-                      onChange={(event) => updateAt(index, { fund_name: event.target.value })}
-                      className="min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm font-black text-slate-950 outline-none focus:border-blue-400"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeAt(index)}
-                    className="touch-target inline-flex shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-white hover:text-[var(--danger-icon)]"
-                    aria-label="移除"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => removeAt(index)}
+                  className="touch-target absolute right-1.5 top-1.5 z-10 inline-flex items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-[var(--danger-icon)]"
+                  aria-label="移除"
+                >
+                  <X size={16} />
+                </button>
 
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <div className="text-[11px] font-semibold text-slate-500">持有金额</div>
-                    <input
-                      value={String(holding.holding_amount ?? 0)}
-                      inputMode="decimal"
-                      aria-label={`持有金额：${holding.fund_name || `第 ${index + 1} 只基金`}`}
-                      onChange={(event) =>
-                        updateAt(index, { holding_amount: parseAmountInput(event.target.value) })
-                      }
-                      className="mt-0.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 font-black tabular-nums text-slate-950 outline-none focus:border-blue-400"
+                {editing ? (
+                  <div className="relative pr-6">
+                    <FundCodeSearchButton
+                      code={code}
+                      fundName={holding.fund_name}
+                      unresolved={unresolved}
+                      buttonRef={(node) => {
+                        searchTriggerRefs.current[index] = node;
+                      }}
+                      onClick={() => openSearch(index)}
                     />
-                  </div>
-                  <div>
-                    <div className="text-[11px] font-semibold text-slate-500">持有收益</div>
-                    <input
+                    {confirmHint ? (
+                      <p className="mb-2 text-[11px] leading-4 text-slate-500">请确认基金</p>
+                    ) : null}
+                    <ReviewEditRow
+                      label="基金名称"
+                      value={holding.fund_name}
+                      ariaLabel={`基金名称：${rowLabel}`}
+                      onChange={(value) => updateAt(index, { fund_name: value })}
+                    />
+                    <ReviewEditRow
+                      label="持有金额"
+                      value={String(holding.holding_amount ?? 0)}
+                      ariaLabel={`持有金额：${rowLabel}`}
+                      inputMode="decimal"
+                      onChange={(value) =>
+                        updateAt(index, { holding_amount: parseAmountInput(value) })
+                      }
+                    />
+                    <ReviewEditRow
+                      label="持有收益"
                       value={
                         holding.holding_profit === null || holding.holding_profit === undefined
                           ? ""
                           : String(holding.holding_profit)
                       }
+                      ariaLabel={`持有收益：${rowLabel}`}
                       inputMode="decimal"
-                      aria-label={`持有收益：${holding.fund_name || `第 ${index + 1} 只基金`}`}
-                      onChange={(event) =>
-                        updateAt(index, { holding_profit: parseProfitInput(event.target.value) })
+                      className={`tabular-nums ${cnProfitClass(holding.holding_profit)}`}
+                      onChange={(value) =>
+                        updateAt(index, { holding_profit: parseProfitInput(value) })
                       }
-                      className={`mt-0.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-right font-black tabular-nums outline-none focus:border-blue-400 ${cnProfitClass(holding.holding_profit)}`}
                     />
+                    <button
+                      type="button"
+                      onClick={() => setEditingIndex(null)}
+                      className="mt-1 flex min-h-11 w-full flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-medium text-[var(--brand)] hover:bg-[var(--brand-soft)]"
+                    >
+                      <ChevronUp size={16} strokeWidth={2.25} />
+                      收起
+                    </button>
+                    {searching ? (
+                      <FundCodeSearchPanel
+                        initialQuery={searchQuery}
+                        onSelect={(item) => applySearchedFund(index, item)}
+                        onClose={() => closeSearch(index)}
+                      />
+                    ) : null}
                   </div>
-                </div>
+                ) : (
+                  <div className="relative pr-6">
+                    <div className="grid grid-cols-[minmax(0,1fr)_5.75rem_5.25rem] items-center gap-x-3 gap-y-0.5">
+                      <FundCodeSearchButton
+                        code={code}
+                        fundName={holding.fund_name}
+                        unresolved={unresolved}
+                        buttonRef={(node) => {
+                          searchTriggerRefs.current[index] = node;
+                        }}
+                        onClick={() => openSearch(index)}
+                      />
+                      <p className="text-right text-[10px] font-semibold text-slate-500">持有金额</p>
+                      <p className="text-right text-[10px] font-semibold text-slate-500">持有收益</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchIndex(null);
+                          setEditingIndex(index);
+                        }}
+                        aria-label={`修改持仓：${rowLabel}`}
+                        className="col-span-3 grid min-h-11 grid-cols-[minmax(0,1fr)_5.75rem_5.25rem] items-center gap-x-3 text-left"
+                      >
+                        <span className="line-clamp-2 text-sm font-bold leading-5 text-slate-900">
+                          {holding.fund_name || "未识别基金"}
+                        </span>
+                        <span className="text-right text-sm font-bold tabular-nums text-slate-900">
+                          {formatPlainMoney(holding.holding_amount)}
+                        </span>
+                        <span
+                          className={`text-right text-sm font-bold tabular-nums ${cnProfitClass(holding.holding_profit)}`}
+                        >
+                          {formatSignedMoney(holding.holding_profit)}
+                        </span>
+                      </button>
+                    </div>
+                    {confirmHint ? (
+                      <p className="mt-1 text-[11px] leading-4 text-slate-500">请确认基金</p>
+                    ) : null}
+                    {searching ? (
+                      <FundCodeSearchPanel
+                        initialQuery={searchQuery}
+                        onSelect={(item) => applySearchedFund(index, item)}
+                        onClose={() => closeSearch(index)}
+                      />
+                    ) : null}
+                  </div>
+                )}
               </div>
             );
           })}
+          </div>
+
+          {onContinueUpload || onUploadMore ? (
+            <button
+              type="button"
+              onClick={handleContinueUpload}
+              disabled={locked}
+              className="mb-2 mt-3 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-2xl border border-dashed border-[var(--info-border)] bg-white py-3 text-sm font-bold text-blue-600 transition hover:bg-[var(--info-bg)] disabled:opacity-50"
+            >
+              <Plus size={15} />
+              继续上传
+            </button>
+          ) : null}
         </div>
 
-        <div className="border-t border-slate-100 px-4 py-4">
+        <div className="border-t border-slate-100 px-4 pb-[max(1rem,env(safe-area-inset-bottom,0px))] pt-4">
+          {onUploadMore ? (
+            <input
+              ref={continueFileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="sr-only"
+              tabIndex={-1}
+              disabled={locked}
+              aria-label="继续选择持仓截图"
+              onChange={(event) => {
+                const { files } = collectImageFiles(event.target.files);
+                if (files.length) {
+                  onUploadMore(files);
+                }
+                event.currentTarget.value = "";
+              }}
+            />
+          ) : null}
           <button
             type="button"
-            disabled={isBusy || holdings.length === 0 || unresolvedCount > 0}
+            disabled={locked || holdings.length === 0 || unresolvedCount > 0}
             onClick={onConfirm}
             className="btn-primary min-h-11 w-full px-4 py-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isBusy
-              ? "正在更新..."
-              : unresolvedCount > 0
-                ? `请先补全基金代码（${unresolvedCount}）`
-                : `完成（${holdings.length}）`}
+            {isUploading
+              ? ocrProgressLabel(true, uploadProgress, "识别中...")
+              : isBusy
+                ? "正在更新..."
+                : unresolvedCount > 0
+                  ? `请先补全基金代码（${unresolvedCount}）`
+                  : `完成（${holdings.length}）`}
           </button>
         </div>
       </div>

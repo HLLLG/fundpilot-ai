@@ -39,7 +39,6 @@ export default function LoginPage() {
         <div className="mb-8">
           <p className="research-kicker">ACCOUNT ACCESS</p>
           <h1 className="font-display mt-2 text-3xl font-bold text-[var(--brand-deep)]">欢迎回来</h1>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">继续查看今日组合状态、风险变化与下一步行动。</p>
         </div>
         <form className="space-y-5" onSubmit={onSubmit} aria-describedby={error ? "login-error" : undefined}>
           <label className="block text-sm font-semibold text-slate-700">
@@ -83,7 +82,7 @@ export default function LoginPage() {
           </button>
         </form>
         <p className="mt-5 text-xs leading-6 text-[var(--muted)]">
-          忘记密码？出于账号安全，重置链接由管理员核验身份后单独生成；请通过工单或联系人反馈账号邮箱。
+          忘记密码？请wx联系 HLHLLg
         </p>
         <p className="mt-7 text-sm text-[var(--muted)]">
           还没有账号？{" "}

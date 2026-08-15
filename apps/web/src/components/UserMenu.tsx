@@ -1,165 +1,27 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { Activity, ChevronDown, LogOut, Settings, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
+import { UserAvatar } from "@/components/UserAvatar";
 
-export function UserMenu() {
-  const { user, logout } = useAuth();
-  const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+type UserMenuProps = {
+  onOpenMe: () => void;
+};
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const trigger = triggerRef.current;
-    const onPointerDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-        return;
-      }
-      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
-        return;
-      }
-      const items = Array.from(
-        menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
-      );
-      if (!items.length) {
-        return;
-      }
-      event.preventDefault();
-      const currentIndex = items.indexOf(document.activeElement as HTMLElement);
-      if (event.key === "Home") {
-        items[0].focus();
-      } else if (event.key === "End") {
-        items[items.length - 1].focus();
-      } else {
-        const delta = event.key === "ArrowDown" ? 1 : -1;
-        const nextIndex = currentIndex < 0 ? 0 : (currentIndex + delta + items.length) % items.length;
-        items[nextIndex].focus();
-      }
-    };
-    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-      if (trigger?.isConnected) {
-        trigger.focus();
-      }
-    };
-  }, [open]);
-
+export function UserMenu({ onOpenMe }: UserMenuProps) {
+  const { user } = useAuth();
   const displayName = user?.username || user?.userAccount || "用户";
-  const initial = displayName.slice(0, 1).toUpperCase();
 
   return (
-    <div ref={rootRef} className="relative z-50">
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1 pl-1 pr-2.5 shadow-sm transition hover:border-[var(--info-border)] hover:bg-[var(--info-bg)]/80"
-        aria-expanded={open}
-        aria-haspopup="menu"
-        aria-controls="user-menu-popover"
-        aria-label="打开账号菜单"
-      >
-        {user?.avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={user.avatarUrl}
-            alt=""
-            className="h-9 w-9 rounded-full object-cover"
-          />
-        ) : (
-          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[var(--brand)] to-[var(--brand-strong)] text-sm font-black text-white shadow-[0_6px_16px_rgba(35,86,224,0.30)] ring-2 ring-white">
-            {initial}
-          </span>
-        )}
-        <ChevronDown
-          size={16}
-          className={`text-slate-500 transition ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-
-      {open ? (
-        <div
-          ref={menuRef}
-          id="user-menu-popover"
-          role="menu"
-          aria-label="账号菜单"
-          className="absolute right-0 z-[60] mt-2 w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white py-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.12)]"
-        >
-          <div className="border-b border-slate-100 px-3 py-2.5">
-            <p className="truncate text-sm font-bold text-slate-800">{displayName}</p>
-            <p className="truncate text-xs text-slate-500">{user?.userAccount}</p>
-          </div>
-          <button
-            type="button"
-            role="menuitem"
-            className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
-            onClick={() => {
-              setOpen(false);
-              router.push("/settings");
-            }}
-          >
-            <Settings size={16} className="text-blue-600" />
-            账号设置
-          </button>
-          {user?.userRole === "admin" ? (
-            <button
-              type="button"
-              role="menuitem"
-              className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
-              onClick={() => {
-                setOpen(false);
-                router.push("/admin/users");
-              }}
-            >
-              <ShieldCheck size={16} className="text-[var(--info-icon)]" />
-              用户管理中心
-            </button>
-          ) : null}
-          {user?.userRole === "admin" ? (
-            <button
-              type="button"
-              role="menuitem"
-              className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
-              onClick={() => {
-                setOpen(false);
-                router.push("/admin/ops");
-              }}
-            >
-              <Activity size={16} className="text-[var(--info-icon)]" />
-              运维监控
-            </button>
-          ) : null}
-          <button
-            type="button"
-            role="menuitem"
-            className="flex min-h-11 w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm font-bold text-slate-700 transition hover:bg-slate-50"
-            onClick={() => {
-              setOpen(false);
-              logout();
-            }}
-          >
-            <LogOut size={16} className="text-slate-500" />
-            退出登录
-          </button>
-        </div>
-      ) : null}
-    </div>
+    <button
+      type="button"
+      onClick={onOpenMe}
+      className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1 pl-1 pr-2.5 shadow-sm transition hover:border-[var(--info-border)] hover:bg-[var(--info-bg)]/80"
+      aria-label="打开我的"
+    >
+      <UserAvatar name={displayName} avatarUrl={user?.avatarUrl} size="sm" />
+      <span className="max-w-[5.5rem] truncate text-sm font-bold text-slate-800 sm:max-w-[7.5rem]">
+        {displayName}
+      </span>
+    </button>
   );
 }

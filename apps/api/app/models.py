@@ -196,6 +196,8 @@ class ParsedTransaction(BaseModel):
     direction: TransactionDirection
     fund_name: str
     fund_code: str | None = None
+    # 精确匹配失败后填入最相近基金时为 "similar"，确认页展示「请确认基金」。
+    match_source: str | None = None
     amount_yuan: float
     trade_time: str            # "YYYY-MM-DD HH:MM:SS"
     confirm_date: str | None = None   # ISO date
@@ -273,6 +275,8 @@ class FundTransaction(BaseModel):
 
 class ApplyTransactionsRequest(BaseModel):
     transactions: list[ParsedTransaction] = Field(default_factory=list)
+    # True：写入买卖点并按成交加减仓。False：只记买卖点（走势图打点），不改持仓金额/份额。
+    apply_position: bool = True
 
 
 class LedgerBaselinePositionInput(BaseModel):

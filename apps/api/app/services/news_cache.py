@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
+from app.config import get_settings
 from app.database import _connect
 from app.models import NewsItem
+
 NEWS_CACHE_STALE_SECONDS = 900
 
 
@@ -82,3 +84,30 @@ def _as_utc(value: datetime | None) -> datetime:
     if resolved.tzinfo is None:
         return resolved.replace(tzinfo=timezone.utc)
     return resolved.astimezone(timezone.utc)
+
+
+def prune_expired_news_cache(
+    *,
+    retention_days: int | None = None,
+    now: datetime | None = None,
+) -> int:
+    """删除超过保留期的新闻缓存行（key 按日切分，不清理会一直堆积）。"""
+    days = (
+        int(retention_days)
+        if retention_days is not None
+        else int(get_settings().spot_cache_retention_days)
+    )
+    days = max(1, days)
+    cutoff = (_as_utc(now) - timedelta(days=days)).isoformat()
+    with _connect() as connection:
+        _ensure_cache_table(connection)
+        cursor = connection.execute(
+            "DELETE FROM news_cache WHERE updated_at < ?",
+            (cutoff,),
+        )
+        connection.commit()
+        try:
+            return max(0, int(cursor.rowcount or 0))
+        except (TypeError, ValueError):
+            return 0
+

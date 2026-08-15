@@ -283,7 +283,8 @@ export type DashboardTabId =
   | "history"
   | "dashboard"
   | "market"
-  | "discovery";
+  | "discovery"
+  | "me";
 
 const DASHBOARD_TAB_IDS: DashboardTabId[] = [
   "holdings",
@@ -292,6 +293,7 @@ const DASHBOARD_TAB_IDS: DashboardTabId[] = [
   "dashboard",
   "market",
   "discovery",
+  "me",
 ];
 
 export function loadDashboardTab(fallback: DashboardTabId = "holdings"): DashboardTabId {

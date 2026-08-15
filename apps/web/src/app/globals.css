@@ -67,6 +67,31 @@
   --motion-base: 200ms;
   --motion-large: 300ms;
   --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* 底栏高度是布局常量，必须放在首屏 CSS。工作台样式在 dashboard.css，
+     热更新卸掉那份文件时，这里的值仍能让浮层避开底栏。 */
+  --bottom-nav-h: 3.25rem;
+  --app-masthead-h: 4.25rem;
+  --app-masthead-gap: 0.75rem;
+}
+
+/* 底栏的定位和桌面隐藏必须在首屏 CSS。
+   `.dashboard-bottom-nav` 的视觉样式在按需加载的 dashboard.css 里；热更新
+   会短暂卸掉那份文件。若定位也只写在那里，未定位的底栏会掉进顶栏左上角。 */
+.dashboard-bottom-nav {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 50;
+  display: flex;
+  align-items: stretch;
+}
+
+@media (min-width: 1024px) {
+  .dashboard-bottom-nav {
+    display: none;
+  }
 }
 
 * {
@@ -195,6 +220,11 @@ button:disabled {
   background: transparent;
   border: 0;
   border-bottom: 1px solid var(--line);
+}
+
+.dashboard-top-nav .tab-segment {
+  overflow: hidden;
+  border-bottom: 0;
 }
 
 .tab-segment-btn {
@@ -1071,14 +1101,14 @@ button:disabled {
 .landing-editorial-hero {
   display: grid;
   grid-template-columns: minmax(0, 0.92fr) minmax(32rem, 1.08fr);
-  grid-template-areas: "copy preview" "proof preview";
-  min-height: 44rem;
+  grid-template-areas: "copy preview";
+  min-height: 36rem;
   gap: 2.5rem 4rem;
   align-items: center;
   padding: 5.75rem 0 5rem;
 }
 
-.landing-hero-copy { grid-area: copy; align-self: end; }
+.landing-hero-copy { grid-area: copy; align-self: center; }
 .research-desk-preview { grid-area: preview; margin: 0; }
 .landing-proof-rail { grid-area: proof; align-self: start; }
 .research-kicker {
@@ -1104,14 +1134,6 @@ button:disabled {
 .landing-compact-trust span { display: inline-flex; align-items: center; gap: 0.35rem; }
 .landing-compact-trust svg { color: var(--accent-strong); }
 
-.research-desk-preview figcaption {
-  margin-bottom: 0.65rem;
-  text-align: right;
-  color: var(--muted);
-  font-size: 0.6875rem;
-  letter-spacing: 0.08em;
-}
-
 .desk-window {
   overflow: hidden;
   border: 1px solid rgba(247, 243, 232, 0.13);
@@ -1121,9 +1143,8 @@ button:disabled {
   box-shadow: var(--shadow-lg);
 }
 
-.desk-window-head { display: grid; grid-template-columns: auto 1fr auto; gap: 0.8rem; align-items: center; min-height: 4rem; padding: 0 1.25rem; border-bottom: 1px solid rgba(255,255,255,.1); }
+.desk-window-head { display: grid; grid-template-columns: auto 1fr; gap: 0.8rem; align-items: center; min-height: 4rem; padding: 0 1.25rem; border-bottom: 1px solid rgba(255,255,255,.1); }
 .desk-window-head > span { font-size: 0.8125rem; font-weight: 700; }
-.desk-window-head small { color: #9eb0b6; font-size: 0.6875rem; }
 .desk-window .brand-seal { background: #f2ede0; color: var(--brand-deep); }
 .desk-window .brand-seal + span { display: none; }
 .desk-status { padding: 2.5rem 2rem 2rem; border-bottom: 1px solid rgba(255,255,255,.1); }
@@ -1179,7 +1200,7 @@ button:disabled {
 .membership-editorial .btn-secondary { color:#f4e8d1; border-color:rgba(244,232,209,.38); }
 .membership-editorial .research-kicker,
 .auth-atmosphere .research-kicker { color:#e7c987; }
-.landing-footer { display:grid; grid-template-columns:auto 1fr auto; gap:2rem; align-items:center; padding:2rem 0 6rem; border-top:1px solid var(--line-strong); color:var(--muted); font-size:.75rem; }
+.landing-footer { padding:2.5rem 0 3.5rem; border-top:1px solid var(--line-strong); color:var(--muted); font-size:.75rem; }
 .landing-footer p { text-align:center; }
 .landing-registration { display:flex; flex-wrap:wrap; justify-content:center; gap:.3rem .8rem; margin-top:.5rem; color:var(--brand-deep); font-weight:650; }
 .landing-registration a { color:var(--accent-strong); text-decoration:underline; text-decoration-thickness:1px; text-underline-offset:.2em; }
@@ -1245,7 +1266,7 @@ button:disabled {
   /* `minmax(0,1fr)` 而不是 `1fr`：后者的自动最小值是 min-content，任何一段不可断行
      的长内容（CJK 大标题、长代码、URL）都会把整列撑出视口。显式给 0 下界后，列宽
      永远不超过容器，溢出被限制在那个元素自身。 */
-  .landing-editorial-hero { grid-template-columns:minmax(0,1fr); grid-template-areas:"copy" "preview" "proof"; min-height:auto; padding:4rem 0; }
+  .landing-editorial-hero { grid-template-columns:minmax(0,1fr); grid-template-areas:"copy" "preview"; min-height:auto; padding:4rem 0; }
   .research-desk-preview { max-width:46rem; }
   .editorial-heading { grid-template-columns:1fr; gap:.65rem; }
   .decision-track,.editorial-ledger,.use-case-lines,.trust-manifesto { margin-left:0; }
@@ -1270,8 +1291,6 @@ button:disabled {
      Chromium 允许在逗号后断行，因此桌面调试完全看不出问题。 */
   .landing-title { max-width:100%; font-size:clamp(2.65rem,12vw,4.1rem); line-height:1.06; }
   .landing-deck { font-size:.9375rem; line-height:1.8; }
-  .desk-window-head { grid-template-columns:auto 1fr; }
-  .desk-window-head small { display:none; }
   .desk-status { padding:1.75rem 1.25rem 1.5rem; }
   .desk-track { padding:1.25rem; }
   .desk-track span { flex-direction:column; align-items:flex-start; gap:.25rem; }
@@ -1294,8 +1313,6 @@ button:disabled {
   .use-case-lines h3 { margin-top:.5rem; }
   .membership-editorial { grid-template-columns:1fr; padding:1.5rem; }
   .membership-editorial h2 { font-size:1.55rem; }
-  .landing-footer { grid-template-columns:1fr; gap:1rem; padding-bottom:7rem; text-align:center; }
-  .landing-footer > span { justify-self:center; }
   .settings-content { border-left:0; padding-left:0; }
   .settings-index nav { display:none; }
   .settings-data-list > div { grid-template-columns:2rem 5.5rem minmax(0,1fr); }

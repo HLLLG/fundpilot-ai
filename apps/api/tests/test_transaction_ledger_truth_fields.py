@@ -1033,3 +1033,108 @@ def test_earlier_additional_buy_backfills_first_purchase_date() -> None:
     )
     assert profiles["001234"].first_purchase_date == "2026-06-08"
     assert profiles["001234"].profit_accrual_deferred_until is None
+
+
+def test_markers_only_records_trade_without_changing_position(monkeypatch) -> None:
+    from app.database import (
+        get_fund_profile_by_code,
+        list_fund_transactions,
+    )
+
+    confirm_calls = {"count": 0}
+    monkeypatch.setattr(
+        transaction_ledger,
+        "confirm_pending_transactions",
+        lambda: confirm_calls.__setitem__("count", confirm_calls["count"] + 1) or 0,
+    )
+    monkeypatch.setattr(
+        transaction_ledger,
+        "_seed_amounts_for_new_positions",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("markers-only must not seed holding amounts")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
+        lambda **_kwargs: [
+            Holding(fund_code="000001", fund_name="已有持仓", holding_amount=3500)
+        ],
+    )
+    item = ParsedTransaction(
+        direction="buy",
+        fund_name="华夏人工智能ETF联接C",
+        fund_code="008586",
+        amount_yuan=2000,
+        trade_time="2026-08-13 14:55:30",
+        confirm_date="2026-08-13",
+    )
+
+    result = transaction_ledger.apply_parsed_transactions(
+        [item],
+        apply_position=False,
+    )
+
+    assert result["inserted"] == 1
+    assert result["skipped"] == 0
+    assert confirm_calls["count"] == 0
+    stored = list_fund_transactions(fund_code="008586")
+    assert len(stored) == 1
+    assert stored[0].status == "confirmed"
+    assert stored[0].shares_delta is None
+    assert stored[0].amount_yuan == 2000
+    assert get_fund_profile_by_code("008586") is None
+    assert list_portfolio_ledger_events(user_id=1, fund_code="008586") == []
+    assert result["holdings"][0]["holding_amount"] == 3500
+
+    retry = transaction_ledger.apply_parsed_transactions(
+        [item],
+        apply_position=False,
+    )
+    assert retry["inserted"] == 0
+    assert retry["skipped"] == 1
+    assert len(list_fund_transactions(fund_code="008586")) == 1
+
+
+def test_markers_only_compatibility_insert_skips_buy_profile(monkeypatch) -> None:
+    inserted: list[FundTransaction] = []
+    monkeypatch.setattr(
+        transaction_ledger,
+        "insert_fund_transaction",
+        lambda tx: inserted.append(tx) or True,
+    )
+    monkeypatch.setattr(transaction_ledger, "list_fund_profiles", lambda: [])
+    monkeypatch.setattr(
+        transaction_ledger,
+        "_ensure_buy_profile",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("markers-only must not create buy profiles")
+        ),
+    )
+    monkeypatch.setattr(transaction_ledger, "confirm_pending_transactions", lambda: 0)
+    monkeypatch.setattr(
+        transaction_ledger,
+        "_seed_amounts_for_new_positions",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(transaction_ledger, "list_pending_fund_transactions", lambda: [])
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
+        lambda **_kwargs: [],
+    )
+
+    result = transaction_ledger.apply_parsed_transactions(
+        [
+            ParsedTransaction(
+                direction="buy",
+                fund_name="测试基金",
+                fund_code="000001",
+                amount_yuan=100,
+                trade_time="2026-07-01 14:30:00",
+            )
+        ],
+        apply_position=False,
+    )
+
+    assert result["inserted"] == 1
+    assert inserted[0].status == "confirmed"
+    assert inserted[0].shares_delta is None

@@ -157,6 +157,38 @@ def best_fuzzy_fund_match(
     return best
 
 
+def best_similar_fund_match(
+    query: str,
+    table: list[tuple[str, str]],
+    *,
+    min_score: float = FUZZY_SEARCH_MIN_SCORE,
+) -> tuple[str, str, float] | None:
+    """OCR 校对用：精确匹配失败时取最相近的一只，交给用户确认。
+
+    与 ``best_fuzzy_fund_match`` 不同，这里允许候选名多出实义词（如「前沿」），
+    也不因第二名接近而放弃；份额类别能对上时优先同类。
+    """
+    target_class = extract_share_class_letter(query)
+    ranked: list[tuple[str, str, float]] = []
+    for code, name in iter_fuzzy_candidates(query, table):
+        score = fuzzy_name_match_score(query, name)
+        if score < min_score:
+            continue
+        ranked.append((code, name, score))
+    if not ranked:
+        return None
+    if target_class:
+        class_hits = [
+            item
+            for item in ranked
+            if extract_share_class_letter(item[1]) == target_class
+        ]
+        if class_hits:
+            ranked = class_hits
+    ranked.sort(key=lambda item: item[2], reverse=True)
+    return ranked[0]
+
+
 def fuzzy_search_funds(
     query: str,
     table: list[tuple[str, str]],

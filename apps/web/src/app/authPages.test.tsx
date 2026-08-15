@@ -67,7 +67,7 @@ describe("authentication pages", () => {
     });
     fireEvent.change(screen.getByLabelText("密码"), { target: { value: "password-1" } });
     fireEvent.change(screen.getByLabelText("确认密码"), { target: { value: "password-2" } });
-    fireEvent.click(screen.getByRole("button", { name: /免费注册/ }));
+    fireEvent.click(screen.getByRole("button", { name: "注册" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("两次输入的密码不一致");
     expect(mocks.registerUser).not.toHaveBeenCalled();

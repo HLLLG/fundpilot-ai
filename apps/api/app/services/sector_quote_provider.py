@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import FIRST_COMPLETED, wait
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Callable
 
@@ -40,6 +40,7 @@ class SpotBoardFetchResult:
     from_stale_cache: bool = False
     live_attempted: bool = False
     elapsed_seconds: float = 0.0
+    joined_in_flight: bool = False
 
 
 def fetch_spot_boards(
@@ -94,6 +95,56 @@ def load_spot_boards_from_cache_only() -> SpotBoardFetchResult:
 
 
 def fetch_spot_boards_result(
+    *,
+    force_refresh: bool = False,
+    timeout_seconds: float | None = None,
+) -> SpotBoardFetchResult:
+    """Fetch board quotes together with provider metadata.
+
+    A live pull already in flight is joined instead of starting a second one.
+    """
+    from app.services.portfolio_refresh_gate import (
+        begin_shared_spot_refresh,
+        end_shared_spot_refresh,
+        join_timeout_seconds,
+        shared_spot_refresh_in_flight,
+        wait_shared_spot_refresh,
+    )
+
+    join_timeout = join_timeout_seconds(timeout_seconds)
+    if force_refresh:
+        if not begin_shared_spot_refresh():
+            wait_shared_spot_refresh(timeout=join_timeout)
+            return replace(
+                _fetch_spot_boards_result(
+                    force_refresh=False,
+                    timeout_seconds=timeout_seconds,
+                ),
+                joined_in_flight=True,
+            )
+        try:
+            return _fetch_spot_boards_result(
+                force_refresh=True,
+                timeout_seconds=timeout_seconds,
+            )
+        finally:
+            end_shared_spot_refresh()
+    if shared_spot_refresh_in_flight():
+        wait_shared_spot_refresh(timeout=join_timeout)
+        return replace(
+            _fetch_spot_boards_result(
+                force_refresh=False,
+                timeout_seconds=timeout_seconds,
+            ),
+            joined_in_flight=True,
+        )
+    return _fetch_spot_boards_result(
+        force_refresh=False,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _fetch_spot_boards_result(
     *,
     force_refresh: bool = False,
     timeout_seconds: float | None = None,

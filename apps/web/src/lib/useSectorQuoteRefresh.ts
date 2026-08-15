@@ -10,6 +10,7 @@ import type {
 import { mergeHoldingsPreserveQuoteFields } from "@/lib/holdingMetrics";
 import {
   applySectorMapping,
+  fetchSectorQuotesStatus,
   refreshSectorQuotes,
   type RefreshSectorQuotesResult,
 } from "@/lib/api";
@@ -113,7 +114,26 @@ export function useSectorQuoteRefresh({
       const generation = ++refreshGenerationRef.current;
       setIsRefreshing(true);
       try {
-        const result = await refreshSectorQuotes(holdingsRef.current, { forceRefresh, budget });
+        let nextForce = forceRefresh;
+        let nextBudget = budget;
+        try {
+          const status = await fetchSectorQuotesStatus();
+          if (
+            status.background_sector_refresh_in_flight ||
+            status.spot_refresh_in_flight
+          ) {
+            nextForce = false;
+          }
+          if (status.official_nav_in_flight && nextBudget === "accurate") {
+            nextBudget = "fast";
+          }
+        } catch {
+          // Status probe is best-effort; the refresh endpoint still coalesces.
+        }
+        const result = await refreshSectorQuotes(holdingsRef.current, {
+          forceRefresh: nextForce,
+          budget: nextBudget,
+        });
         return applyRefreshResult(result, generation);
       } catch (error) {
         if (generation === refreshGenerationRef.current) {

@@ -12,7 +12,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-MYSQL_SCHEMA_VERSION = 23
+MYSQL_SCHEMA_VERSION = 24
 
 MYSQL_MIGRATION_GUARD_NAME = "sqlite_to_mysql"
 MYSQL_SCHEMA_LOCK_NAME = "fundpilot.mysql_schema.v18"
@@ -793,7 +793,6 @@ def _ensure_mysql_schema_locked(
             passwordHash VARCHAR(255) NOT NULL,
             bio VARCHAR(500) NOT NULL DEFAULT '',
             avatarUrl VARCHAR(512) NOT NULL DEFAULT '',
-            cloudbaseUid VARCHAR(64) NULL,
             createdAt VARCHAR(64) NOT NULL,
             updatedAt VARCHAR(64) NOT NULL,
             isDeleted TINYINT NOT NULL DEFAULT 0,
@@ -801,8 +800,7 @@ def _ensure_mysql_schema_locked(
             authVersion INT NOT NULL DEFAULT 1,
             lastLoginAt VARCHAR(64) NULL,
             lastActiveAt VARCHAR(64) NULL,
-            passwordUpdatedAt VARCHAR(64) NULL,
-            INDEX idx_users_cloudbase (cloudbaseUid)
+            passwordUpdatedAt VARCHAR(64) NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
@@ -1885,6 +1883,26 @@ def _ensure_mysql_schema_locked(
                 cursor.execute(
                     f"ALTER TABLE users ADD COLUMN {column} {definition}"
                 )
+        cursor.execute(
+            """
+            SELECT 1 FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'users'
+              AND INDEX_NAME = 'idx_users_cloudbase'
+            """
+        )
+        if fetchone() is not None:
+            cursor.execute("ALTER TABLE users DROP INDEX idx_users_cloudbase")
+        cursor.execute(
+            """
+            SELECT 1 FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'users'
+              AND COLUMN_NAME = 'cloudbaseUid'
+            """
+        )
+        if fetchone() is not None:
+            cursor.execute("ALTER TABLE users DROP COLUMN cloudbaseUid")
         cursor.execute(
             "UPDATE users SET passwordUpdatedAt = createdAt "
             "WHERE passwordUpdatedAt IS NULL"

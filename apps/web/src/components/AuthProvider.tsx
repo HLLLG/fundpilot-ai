@@ -17,6 +17,7 @@ import {
   type AuthUser,
 } from "@/lib/auth";
 import { ApiError, fetchCurrentUser } from "@/lib/api";
+import { clearCachedPortfolioHoldings } from "@/lib/portfolioHoldingsCache";
 import { BrandMark } from "@/components/BrandMark";
 
 type AuthContextValue = {
@@ -126,11 +127,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    clearCachedPortfolioHoldings(user?.id);
     clearAccessToken();
     setUser(null);
     setBootstrapError(null);
     router.replace("/login");
-  }, [router]);
+  }, [router, user?.id]);
 
   const value = useMemo(
     () => ({ user, loading, bootstrapError, setSession, logout, refreshUser }),
@@ -143,6 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const clearBrokenSession = () => {
+    clearCachedPortfolioHoldings(user?.id);
     clearAccessToken();
     setUser(null);
     setBootstrapError(null);

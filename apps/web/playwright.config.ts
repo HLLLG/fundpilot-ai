@@ -24,7 +24,7 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       ...process.env,
-      // 强制 SQLite，避免本机 .env 里的 CloudBase MySQL 被 E2E 写入
+      // 强制 SQLite，避免本机 .env 里的远程 MySQL 被 E2E 写入
       // pydantic-settings ignores an empty override and would reload the
       // developer's MySQL URL from .env.  A non-MySQL sentinel makes the
       // application's backend choice deterministically SQLite.

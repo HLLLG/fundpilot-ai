@@ -1,19 +1,28 @@
 "use client";
 
-import Image from "next/image";
-import { useRef } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { OCR_PRIVACY_COPY } from "@/lib/ocrPrivacy";
+import { useEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Images } from "lucide-react";
+import { collectImageFiles, ocrProgressLabel } from "@/lib/ocrBatchUpload";
 import { useDialogA11y } from "@/lib/useDialogA11y";
+import { useScreenshotIntake } from "@/lib/useScreenshotIntake";
+import {
+  CLIPBOARD_IMAGE_PASTE_QUERY,
+  ScreenshotComposerGrid,
+  ScreenshotDropOverlay,
+  ScreenshotPhoneGuide,
+} from "@/components/ScreenshotIntakeExtras";
+import { useMediaQuery } from "@/lib/useMediaQuery";
 
 const TRANSACTION_GUIDE_IMAGE = "/guides/alipay-transaction-records.png";
 
 type BatchTransactionModalProps = {
   open: boolean;
   onClose: () => void;
-  onUpload: (file: File) => void;
+  onUpload: (files: File[]) => void;
   isUploading?: boolean;
+  uploadProgress?: { current: number; total: number } | null;
   errorMessage?: string | null;
+  continueFromReview?: boolean;
 };
 
 export function BatchTransactionModal({
@@ -21,10 +30,14 @@ export function BatchTransactionModal({
   onClose,
   onUpload,
   isUploading = false,
+  uploadProgress = null,
   errorMessage = null,
+  continueFromReview = false,
 }: BatchTransactionModalProps) {
+  const [mode, setMode] = useState<"chooser" | "composer">("chooser");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const isDesktopCompose = useMediaQuery(CLIPBOARD_IMAGE_PASTE_QUERY);
   const requestClose = () => {
     if (!isUploading) {
       onClose();
@@ -35,127 +48,179 @@ export function BatchTransactionModal({
     onClose: requestClose,
     initialFocusRef: closeButtonRef,
   });
+  const screenshotIntake = useScreenshotIntake({
+    open,
+    accepting: open && !isUploading && isDesktopCompose,
+  });
+
+  useEffect(() => {
+    if (!open) {
+      setMode("chooser");
+      return;
+    }
+    if (continueFromReview && isDesktopCompose) {
+      setMode("composer");
+    }
+  }, [open, continueFromReview, isDesktopCompose]);
+
+  useEffect(() => {
+    if (open && isDesktopCompose && screenshotIntake.items.length > 0 && mode === "chooser") {
+      setMode("composer");
+    }
+  }, [open, isDesktopCompose, screenshotIntake.items.length, mode]);
 
   if (!open) {
     return null;
   }
 
+  const dialogTitle = mode === "composer" ? "上传图片" : "导入交易-支持批量导入";
+  const backAriaLabel = mode === "composer" && !continueFromReview ? "返回" : "关闭";
+
+  const handleBack = () => {
+    if (mode === "composer" && !continueFromReview) {
+      screenshotIntake.clearItems();
+      setMode("chooser");
+      return;
+    }
+    onClose();
+  };
+
+  const handleSelectedFiles = (files: File[]) => {
+    if (!files.length) {
+      return;
+    }
+    if (isDesktopCompose || mode === "composer") {
+      screenshotIntake.appendFiles(files);
+      setMode("composer");
+      return;
+    }
+    onUpload(files);
+  };
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 sm:items-center sm:p-4"
+      className="fixed inset-0 z-[60] flex items-stretch justify-center overflow-hidden bg-[var(--panel)] sm:items-center sm:bg-slate-950/40 sm:p-4"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           requestClose();
         }
       }}
+      {...screenshotIntake.dropHandlers}
       role="presentation"
     >
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="flex max-h-[94vh] w-full max-w-md flex-col overflow-hidden rounded-t-[28px] bg-[#f5f7fa] shadow-2xl sm:rounded-[28px]"
+        className="workflow-dialog relative flex h-full min-h-0 w-full max-w-lg flex-col overflow-hidden bg-[var(--panel)] sm:h-[95vh] sm:rounded-[18px] sm:shadow-[var(--shadow-lg)]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="batch-transaction-modal-title"
       >
-        <header className="relative flex items-center justify-center border-b border-slate-200/70 bg-white px-4 py-3.5">
+        <ScreenshotDropOverlay active={screenshotIntake.dragActive} />
+        <header className="relative flex items-center justify-center border-b border-slate-200/70 bg-white px-4 pb-3.5 pt-[max(0.875rem,env(safe-area-inset-top,0px))]">
           <button
             ref={closeButtonRef}
             type="button"
-            onClick={onClose}
+            onClick={handleBack}
             disabled={isUploading}
             className="touch-target absolute left-2 inline-flex items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
-            aria-label="关闭"
+            aria-label={backAriaLabel}
           >
             <ChevronLeft size={22} strokeWidth={2.25} />
           </button>
           <h2 id="batch-transaction-modal-title" className="text-base font-bold text-slate-900">
-            导入交易
+            {dialogTitle}
           </h2>
         </header>
 
-        <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-5 pb-2 pt-6">
-          <TransactionRecordGuide />
-          <p className="mt-6 text-center text-[15px] leading-7 text-slate-800">
-            上传
-            <span className="font-bold text-[var(--brand-strong)]">「交易记录」或「交易分析」</span>
-            截图，按成交写入买入/卖出，并在走势图打点
-          </p>
-          <p className="mt-2 text-center text-[13px] leading-5 text-slate-500">
-            路径：支付宝 → 我的 → 总资产 → 基金 → 交易记录
-            <br />
-            也可在基金持有页切到「交易分析」Tab 后截图
-            <br />
-            只要当前持仓、没有成交时间，请走「同步持仓」
-          </p>
-          <p className="mt-4 rounded-xl border border-[var(--info-border)] bg-[var(--info-bg)]/80 px-3 py-2 text-xs leading-5 text-slate-600">
-            {OCR_PRIVACY_COPY.uploadNotice}
-          </p>
-          {errorMessage ? (
-            <p role="alert" className="mt-3 w-full rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2 text-sm leading-5 text-[var(--danger-fg)]">
-              {errorMessage}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="sr-only"
+          tabIndex={-1}
+          disabled={isUploading}
+          aria-label="选择一张或多张交易记录截图"
+          onChange={(event) => {
+            const { files } = collectImageFiles(event.target.files);
+            handleSelectedFiles(files);
+            event.currentTarget.value = "";
+          }}
+        />
+
+        {mode === "chooser" ? (
+          <>
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-5 py-2">
+              <ScreenshotPhoneGuide
+                src={TRANSACTION_GUIDE_IMAGE}
+                alt="支付宝「交易分析」明细示意图：每条包含买入或卖出、基金名称、成交金额与成交时间"
+              />
+            </div>
+            <p className="relative shrink-0 bg-[var(--panel)] px-5 py-2 text-center text-[15px] leading-6 text-slate-800">
+              上传
+              <span className="font-bold text-[var(--brand)]">「交易记录」</span>
+              截图，按成交写入买入/卖出，并在走势图打点
             </p>
-          ) : null}
-        </div>
+            {errorMessage || screenshotIntake.pasteError ? (
+              <p role="alert" className="mx-5 mb-2 shrink-0 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2 text-sm leading-5 text-[var(--danger-fg)]">
+                {errorMessage ?? screenshotIntake.pasteError}
+              </p>
+            ) : null}
 
-        <div className="space-y-3 bg-[#f5f7fa] px-5 pb-8 pt-3">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="sr-only"
-            tabIndex={-1}
-            disabled={isUploading}
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) {
-                onUpload(file);
-              }
-              event.currentTarget.value = "";
-            }}
-          />
-          <button
-            type="button"
-            disabled={isUploading}
-            onClick={() => fileInputRef.current?.click()}
-            className="flex w-full items-center justify-center gap-1 rounded-full bg-gradient-to-r from-[#4a86e8] to-[#3b78e0] px-4 py-4 text-[16px] font-bold text-white shadow-[0_10px_24px_rgba(74,134,232,0.35)] transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isUploading ? "识别中..." : "去相册选择"}
-            {!isUploading ? <ChevronRight size={18} strokeWidth={2.5} /> : null}
-          </button>
-        </div>
+            <div className="flex shrink-0 flex-col items-center gap-1.5 bg-[var(--panel)] px-5 pt-1 pb-[max(1.25rem,calc(0.75rem+env(safe-area-inset-bottom,0px)))] sm:pb-5">
+              <button
+                type="button"
+                disabled={isUploading}
+                onClick={() => {
+                  if (isDesktopCompose) {
+                    setMode("composer");
+                    return;
+                  }
+                  fileInputRef.current?.click();
+                }}
+                className="btn-primary w-[200px] min-h-9 py-2 text-[14px]"
+              >
+                <Images size={15} strokeWidth={2.25} />
+                {ocrProgressLabel(isUploading, uploadProgress, "上传图片")}
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              <ScreenshotComposerGrid
+                items={screenshotIntake.items}
+                disabled={isUploading}
+                onAdd={() => fileInputRef.current?.click()}
+                onRemove={screenshotIntake.removeItem}
+              />
+              {errorMessage || screenshotIntake.pasteError ? (
+                <p role="alert" className="mt-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2 text-sm leading-5 text-[var(--danger-fg)]">
+                  {errorMessage ?? screenshotIntake.pasteError}
+                </p>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 flex-col items-center bg-[var(--panel)] px-5 pt-1 pb-[max(1.25rem,calc(0.75rem+env(safe-area-inset-bottom,0px)))] sm:pb-5">
+              <button
+                type="button"
+                disabled={isUploading || screenshotIntake.items.length === 0}
+                onClick={() => onUpload(screenshotIntake.files)}
+                className="btn-primary w-[200px] min-h-9 py-2 text-[14px] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {ocrProgressLabel(
+                  isUploading,
+                  uploadProgress,
+                  screenshotIntake.items.length
+                    ? `开始识别（${screenshotIntake.items.length}）`
+                    : "开始识别",
+                )}
+                {!isUploading ? <ChevronRight size={16} strokeWidth={2.5} /> : null}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
-    </div>
-  );
-}
-
-/** 交易记录示意图：真实版式截图。
- *
- * 原来是手绘的占位插图（几行「基金名 + ±金额」的胶囊），和支付宝真实的「交易记录 /
- * 交易分析」页长得完全不一样：真实页每条是「买入/卖出 + 基金名称 + 金额元 + 成交时间」，
- * 而解析器正是靠买入/卖出锚点、`元` 金额和成交时间戳定位交易的。示意图缺这三样，照着它
- * 截图的用户会传上来一张解析不出任何交易的图。这里换成按真实版式渲染并跑通识别的截图。
- */
-function TransactionRecordGuide() {
-  return (
-    <div className="relative mx-auto w-[62%] min-w-[200px] max-w-[250px]">
-      <div className="rounded-[2.25rem] border-[7px] border-slate-900 bg-slate-900 p-[5px] shadow-[0_24px_48px_rgba(15,23,42,0.18)]">
-        <div className="relative overflow-hidden rounded-[1.65rem] bg-white">
-          <div className="pointer-events-none absolute left-1/2 top-0 z-10 h-[22px] w-[34%] -translate-x-1/2 rounded-b-[14px] bg-slate-900" />
-          <Image
-            src={TRANSACTION_GUIDE_IMAGE}
-            alt="支付宝「交易记录 / 交易分析」页面示意图：每条包含买入或卖出、基金名称、成交金额与成交时间"
-            width={472}
-            height={1021}
-            className="aspect-[390/844] h-auto w-full object-cover object-top"
-            draggable={false}
-          />
-        </div>
-      </div>
-      <div
-        className="pointer-events-none absolute -bottom-3 left-1/2 h-3 w-[70%] -translate-x-1/2 rounded-[100%] bg-slate-900/10 blur-md"
-        aria-hidden
-      />
     </div>
   );
 }

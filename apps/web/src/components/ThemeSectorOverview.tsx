@@ -15,7 +15,6 @@ import { MethodologyNote } from "@/components/MethodologyNote";
 import {
   boardKindClass,
   formatBoardKindLabel,
-  formatThemeBoardUpdatedFromIso,
   formatThemeFlowYi,
   formatThemePercent,
   formatThemeRank,
@@ -449,10 +448,9 @@ export function ThemeSectorOverview({
               典型触发是 api 容器刚重启（`snapshot_refreshed_before_process_boot`），
               此时榜单仍有完整数据。说成「不可用」会让用户以为下面的数字不能用。
             */}
-            <p className="mt-1 text-xs text-slate-500">
-              {formatThemeBoardUpdatedFromIso(data?.refreshed_at)}
-              {data?.stale ? " · 可能不是最新，正在刷新" : ""}
-            </p>
+            {data?.stale ? (
+              <p className="mt-1 text-xs text-slate-500">可能不是最新，正在刷新</p>
+            ) : null}
             {data?.message ? (
               <p className="mt-1 text-xs text-[var(--warn-icon)]">{data.message}</p>
             ) : null}

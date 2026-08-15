@@ -147,12 +147,6 @@ from app.services.sector_intraday_provider import (
     resolve_intraday_source,
 )
 from app.services.holding_detail_service import build_holding_detail
-from app.services.holding_detail_cache import (
-    get_cached_holding_detail,
-    holding_detail_fingerprint,
-    save_cached_holding_detail,
-)
-from app.services.holding_intraday_warmup import schedule_warm_holdings_intraday
 from app.services.news_freshness import build_news_pipeline_context
 from app.services.news_service import NewsService
 from app.services.portfolio_mutation_guard import PortfolioMutationLockError
@@ -402,7 +396,7 @@ def _build_transactions_ocr_response(
     filename: str | None,
 ) -> dict:
     from app.services.alipay_transactions_parser import parse_alipay_transactions
-    from app.services.fund_code_resolver import resolve_holding_fund_code
+    from app.services.fund_code_resolver import resolve_transaction_fund_code
     from app.services.fund_profile import FundProfileService
     from app.services.ocr_parser import detect_ocr_source
     from app.services.ocr_text_service import OcrUnavailable, extract_text_from_image
@@ -447,12 +441,14 @@ def _build_transactions_ocr_response(
                 if profile and profile.fund_code != "000000"
                 else None
             )
-            code, _ = resolve_holding_fund_code(
+            code, match_source = resolve_transaction_fund_code(
                 parsed.fund_name,
                 existing_code=profile_code,
             )
             if code:
-                parsed = parsed.model_copy(update={"fund_code": code})
+                parsed = parsed.model_copy(
+                    update={"fund_code": code, "match_source": match_source},
+                )
         enriched.append(parsed.model_dump(mode="json"))
 
     return {
@@ -471,7 +467,10 @@ def apply_transactions(payload: ApplyTransactionsRequest) -> dict:
     )
 
     try:
-        return apply_parsed_transactions(payload.transactions)
+        return apply_parsed_transactions(
+            payload.transactions,
+            apply_position=payload.apply_position,
+        )
     except TransactionTruthConflict as exc:
         raise HTTPException(
             status_code=409,
@@ -696,7 +695,29 @@ def allocate_penetration_daily(request: AllocatePenetrationRequest) -> dict:
 def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
     if not get_settings().sector_quotes_enabled:
         raise HTTPException(status_code=503, detail="板块实时行情已关闭")
+    from app.services.portfolio_refresh_gate import (
+        background_sector_refresh_in_flight,
+        join_timeout_seconds,
+        nav_work_in_flight,
+        wait_background_sector_refresh,
+        wait_nav_work,
+    )
+
+    user_id = get_request_user_id()
     timeout_seconds = None if request.budget == "accurate" else 8.0
+    join_timeout = join_timeout_seconds(timeout_seconds)
+    coalesced_reasons: list[str] = []
+
+    if background_sector_refresh_in_flight():
+        wait_background_sector_refresh(timeout=join_timeout)
+        coalesced_reasons.append("background_sector_refresh")
+
+    was_nav_busy = nav_work_in_flight(user_id)
+    if was_nav_busy:
+        wait_nav_work(user_id, timeout=join_timeout)
+        coalesced_reasons.append("official_nav_in_flight")
+
+    joined_background = "background_sector_refresh" in coalesced_reasons
     # Client holdings are a display snapshot, not portfolio membership truth.
     # A stale tab must never be able to delete a fund by refreshing quotes.
     current_holdings, current_source, snapshot_date, _ = load_persisted_holdings(
@@ -705,18 +726,24 @@ def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
     refresh_holdings = current_holdings or request.holdings
     result = refresh_holdings_sector_quotes(
         refresh_holdings,
-        force_refresh=request.force_refresh,
+        force_refresh=False if joined_background else request.force_refresh,
         timeout_seconds=timeout_seconds,
+        cache_only=joined_background,
     )
+    if result.get("joined_in_flight") or result.get("summary", {}).get("joined_in_flight"):
+        coalesced_reasons.append("spot_refresh_in_flight")
     if result.get("ok") and result.get("holdings"):
         refreshed = [Holding.model_validate(item) for item in result["holdings"]]
         fetched_at = None
         if result.get("fetched_at"):
             fetched_at = datetime.fromisoformat(str(result["fetched_at"]))
+        want_nav = request.budget == "accurate" and not was_nav_busy
+        if request.budget == "accurate" and not want_nav:
+            coalesced_reasons.append("official_nav_in_flight")
         enriched = persist_holdings_after_sector_refresh(
             refreshed,
             fetched_at=fetched_at,
-            with_official_nav=request.budget == "accurate",
+            with_official_nav=want_nav,
         )
         result["holdings"] = serialize_holdings_for_client(enriched)
         cache_payload = build_portfolio_holdings_response(
@@ -727,12 +754,11 @@ def refresh_sector_quotes(request: RefreshSectorQuotesRequest) -> dict:
             fetch_benchmark=False,
         )
         save_cached_holdings_response(cache_payload)
-        user_id = get_request_user_id()
-        schedule_warm_holdings_intraday(
-            enriched,
-            user_key=str(user_id),
-            user_id=user_id,
-        )
+    unique_reasons = list(dict.fromkeys(coalesced_reasons))
+    result["coalesced"] = bool(unique_reasons)
+    if unique_reasons:
+        result["coalesced_reason"] = unique_reasons[0]
+        result["coalesced_reasons"] = unique_reasons
     return result
 
 
@@ -767,6 +793,12 @@ def sector_quotes_status() -> dict:
         "trading_day_intraday",
         "trading_day_pre_close",
     }
+    from app.services.portfolio_refresh_gate import (
+        background_sector_refresh_in_flight,
+        nav_work_in_flight,
+        shared_spot_refresh_in_flight,
+    )
+
     return {
         "enabled": settings.sector_quotes_enabled,
         "ttl_seconds": settings.sector_quotes_ttl_seconds,
@@ -774,6 +806,9 @@ def sector_quotes_status() -> dict:
         "idle_interval_seconds": settings.market_shared_idle_interval_seconds,
         "auto_refresh_allowed": auto_allowed,
         "session": session,
+        "background_sector_refresh_in_flight": background_sector_refresh_in_flight(),
+        "spot_refresh_in_flight": shared_spot_refresh_in_flight(),
+        "official_nav_in_flight": nav_work_in_flight(get_request_user_id()),
     }
 
 
@@ -786,6 +821,8 @@ def sector_quotes_intraday(
     if not get_settings().sector_quotes_enabled:
         raise HTTPException(status_code=503, detail="板块实时行情已关闭")
     source_type, source_name = resolve_intraday_source(source_type, source_name)
+    # 详情页打开时允许缓存未命中再拉一次上一交易日完整 09:30–15:00。
+    # 周末/开盘前若始终 cache_only，新标的（如黄金 ETF）会空白一整周。
     points, note, session_date, close_change_percent = fetch_sector_intraday(
         source_type,
         source_name,
@@ -804,15 +841,6 @@ def sector_quotes_intraday(
 @app.post("/api/holdings/detail")
 def holding_detail(request: HoldingDetailRequest) -> dict:
     try:
-        holding = request.holdings[request.index]
-        fingerprint = holding_detail_fingerprint(
-            fund_code=holding.fund_code,
-            holding_amount=holding.holding_amount,
-        )
-        cached = get_cached_holding_detail(holding.fund_code, fingerprint)
-        if cached is not None:
-            return cached
-
         detail = build_holding_detail(
             request.holdings,
             request.index,
@@ -824,9 +852,7 @@ def holding_detail(request: HoldingDetailRequest) -> dict:
     except IndexError as exc:
         raise HTTPException(status_code=400, detail="持仓索引超出范围") from exc
 
-    payload = detail.model_dump(mode="json")
-    save_cached_holding_detail(holding.fund_code, fingerprint, payload)
-    return payload
+    return detail.model_dump(mode="json")
 
 
 @app.post("/api/analyze")
@@ -1646,6 +1672,8 @@ def fund_nav_history(fund_code: str, days: int = 90) -> dict:
     profile = get_fund_profile_by_code(fund_code)
     fund_name = profile.fund_name if profile else ""
     trading_days = max(20, min(days, 800))
+    # 详情「业绩走势」必须能在缓存未命中时当场拉取。只读 cache_only 会在
+    # 后台预热尚未轮到该基金（或 v1→v2 换 key）时一直显示「净值缓存尚未就绪」。
     history = FundDataService().get_nav_history(
         fund_code,
         fund_name,
@@ -1837,16 +1865,6 @@ def _portfolio_holdings_sync() -> dict:
             expected_generation=request_generation,
         ):
             return get_cached_holdings_response() or fast_snapshot
-        schedule_warm_holdings_intraday(
-            [Holding.model_validate(item) for item in fast_snapshot.get("holdings", [])],
-            user_key=user_key,
-            user_id=int(user_key) if user_key.isdigit() else None,
-            portfolio_summary=(
-                PortfolioSummary.model_validate(fast_snapshot["portfolio_summary"])
-                if fast_snapshot.get("portfolio_summary")
-                else None
-            ),
-        )
         return fast_snapshot
 
     holdings, source, snapshot_date, refreshed_at = load_persisted_holdings(
@@ -1860,16 +1878,6 @@ def _portfolio_holdings_sync() -> dict:
     )
     if not save_cached_holdings_response(payload, expected_generation=request_generation):
         return get_cached_holdings_response() or payload
-    schedule_warm_holdings_intraday(
-        [Holding.model_validate(item) for item in payload.get("holdings", [])],
-        user_key=user_key,
-        user_id=int(user_key) if user_key.isdigit() else None,
-        portfolio_summary=(
-            PortfolioSummary.model_validate(payload["portfolio_summary"])
-            if payload.get("portfolio_summary")
-            else None
-        ),
-    )
     return payload
 
 

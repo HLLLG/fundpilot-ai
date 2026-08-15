@@ -272,11 +272,6 @@ def parse_us_index_spot_sina(payload: dict[str, list[dict[str, object]]]) -> lis
     return result
 
 
-def parse_us_index_spot(payload: dict[str, list[dict[str, object]]]) -> list[dict[str, object]]:
-    """兼容旧测试：等同 ``parse_us_index_spot_sina``。"""
-    return parse_us_index_spot_sina(payload)
-
-
 def _fetch_eastmoney_global_index_spot() -> list[dict[str, object]] | None:
     proxies = {"http": None, "https": None}
     session = requests.Session()

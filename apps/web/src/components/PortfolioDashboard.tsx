@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useId, useState } from "react";
+import { ChevronLeft } from "lucide-react";
 import type { PortfolioAllocationRow, PortfolioDashboardData, ProfitRange } from "@/lib/api";
 import { fetchPortfolioDashboard } from "@/lib/api";
 import { buildClientCacheKey } from "@/lib/clientCache";
@@ -167,9 +168,11 @@ function profitClass(value: number | null | undefined) {
 export function PortfolioDashboard({
   userId,
   fallbackSummary = null,
+  onBack,
 }: {
   userId: number | null;
   fallbackSummary?: PortfolioDashboardData["summary"] | null;
+  onBack?: () => void;
 }) {
   const professionalDetailsId = useId().replace(/:/g, "");
   const [profitRange, setProfitRange] = useState<ProfitRange>("today");
@@ -244,9 +247,23 @@ export function PortfolioDashboard({
         : "#64748b";
 
   return (
-    <div className="pl-page mx-auto max-w-5xl">
-      <div className="analysis-hero briefing-hero overflow-hidden">
-        <div className="pl-hero !rounded-none !border-0 !bg-transparent">
+    <div className="analysis-workspace pl-page min-w-0 overflow-hidden rounded-[18px] border border-[var(--line-strong)] bg-[var(--panel)]">
+      {onBack ? (
+        <div className="analysis-toolbar flex min-h-11 items-center gap-3 px-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="inline-flex min-h-11 items-center gap-1 text-sm font-bold text-[var(--brand)] transition hover:text-[var(--brand-strong)]"
+          >
+            <ChevronLeft size={18} strokeWidth={2.25} />
+            返回
+          </button>
+          <span className="text-sm font-extrabold text-[var(--brand-deep)]">盈亏分析</span>
+        </div>
+      ) : null}
+
+      <div className="analysis-hero">
+        <div className="pl-hero !rounded-none !border-0 !bg-transparent text-left">
           <div className="pl-hero-label">{hero.label}</div>
           <div className={`pl-hero-value ${profitClass(hero.value)}`}>
             {hero.valueFormat === "percent" ? formatPercent(hero.value) : formatMoney(hero.value)}
@@ -257,7 +274,7 @@ export function PortfolioDashboard({
             </div>
           ) : null}
           {hero.showMetricToggle ? (
-            <div className="pl-toggle">
+            <div className="pl-toggle inline-flex">
               <button
                 type="button"
                 aria-pressed={!showReturnHeader}
@@ -276,33 +293,35 @@ export function PortfolioDashboard({
               </button>
             </div>
           ) : null}
-          <p
-            className="mx-auto mt-2 max-w-xl text-xs leading-5 text-slate-500"
-            aria-live="polite"
-          >
+          <p className="mt-2 max-w-xl text-xs leading-5 text-slate-500" aria-live="polite">
             {awaitingCurrentRange ? "正在读取所选区间数据…" : hero.explanation}
             {dataDate ? ` · 数据截至 ${dataDate}` : ""}
           </p>
         </div>
       </div>
 
-      <div className="analysis-range mt-3 overflow-hidden">
-      <div className="pl-range-bar !rounded-none !border-0 !border-t !border-[var(--line)]" role="tablist" aria-label="时间范围">
-        {RANGE_TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={profitRange === tab.id}
-            onClick={() => setProfitRange(tab.id)}
-            className="pl-range-tab"
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <div className="analysis-range">
+        <div
+          className="pl-range-bar flex !rounded-none !border-0 !border-t !border-[var(--line)]"
+          role="tablist"
+          aria-label="时间范围"
+        >
+          {RANGE_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={profitRange === tab.id}
+              onClick={() => setProfitRange(tab.id)}
+              className="pl-range-tab"
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
+      <div className="analysis-body">
       {fetchError ? (
         <InlineNotice
           tone={showAnalysisContent ? "warning" : "error"}
@@ -339,7 +358,7 @@ export function PortfolioDashboard({
       {showAnalysisContent ? (
       <div data-testid="portfolio-analysis-content">
       <section className="pl-panel section-card">
-        <div className="pl-panel-head">
+        <div className="pl-panel-head flex min-w-0 flex-wrap items-center justify-between gap-3">
           <div className="pl-panel-title">收益走势</div>
           <div className="pl-legend">
             <span className="pl-legend-item">
@@ -371,7 +390,7 @@ export function PortfolioDashboard({
         </div>
       </section>
 
-      <div className="mt-3 grid gap-3" data-testid="portfolio-daily-insights">
+      <div className="mt-3 grid gap-3 md:grid-cols-2" data-testid="portfolio-daily-insights">
         <DailyProfitTop5
           gainers={currentData?.daily_top5?.gainers ?? []}
           losers={currentData?.daily_top5?.losers ?? []}
@@ -398,7 +417,7 @@ export function PortfolioDashboard({
       >
         {/* 「不影响上方的日常盈亏阅读」是在替用户判断该不该读这一段。
             标题已经写着「专业」，两块内容也都默认收起，行为本身就是提示。 */}
-        <div className="pl-panel-head">
+        <div className="pl-panel-head flex min-w-0 flex-wrap items-center justify-between gap-3">
           <h2 id={`${professionalDetailsId}-title`} className="pl-panel-title">
             专业量化依据
           </h2>
@@ -492,6 +511,7 @@ export function PortfolioDashboard({
           </div>
         ) : null}
       </section>
+      </div>
     </div>
   );
 }

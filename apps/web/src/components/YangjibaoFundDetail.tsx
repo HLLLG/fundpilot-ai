@@ -8,7 +8,6 @@ import {
   ChevronUp,
   Loader2,
   Pencil,
-  RefreshCw,
   X,
 } from "lucide-react";
 import type {
@@ -68,13 +67,6 @@ import {
   resolveIntradayFallbackQuery,
   resolveIntradayQuery,
 } from "@/lib/profileSector";
-import {
-  readHoldingDetailCache,
-  readIntradayCache,
-  writeHoldingDetailCache,
-  writeIntradayCache,
-} from "@/lib/holdingDetailCache";
-import { useAuth } from "@/components/AuthProvider";
 import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 import { formatTradeDateShort } from "@/lib/tradeDateLabel";
 import { useDialogA11y } from "@/lib/useDialogA11y";
@@ -209,8 +201,6 @@ export function YangjibaoFundDetail({
   onAdjustHolding,
   onApplyTransaction,
 }: YangjibaoFundDetailProps) {
-  const { user } = useAuth();
-  const userId = user?.id ?? null;
   const [tab, setTab] = useState<DetailTab>("sector");
   const [detail, setDetail] = useState<HoldingDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(true);
@@ -218,10 +208,11 @@ export function YangjibaoFundDetail({
   const [intradayPoints, setIntradayPoints] = useState<Array<{ time: string; percent: number }>>([]);
   const [intradayClosePercent, setIntradayClosePercent] = useState<number | null>(null);
   const [intradayNote, setIntradayNote] = useState<string | null>(null);
-  const [intradayRefreshing, setIntradayRefreshing] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [holdingsExpanded, setHoldingsExpanded] = useState(false);
   const [quoteTradeDate, setQuoteTradeDate] = useState<string | null>(null);
+  const [liveIntraday, setLiveIntraday] = useState(false);
+  const [intradayTick, setIntradayTick] = useState(0);
   const [purchaseDateSaving, setPurchaseDateSaving] = useState(false);
   const [purchaseDateError, setPurchaseDateError] = useState<string | null>(null);
   const [purchaseDatePickerOpen, setPurchaseDatePickerOpen] = useState(false);
@@ -233,8 +224,8 @@ export function YangjibaoFundDetail({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [modifyOpen, setModifyOpen] = useState(false);
   const [txDirection, setTxDirection] = useState<"buy" | "sell" | null>(null);
-  const [intradayForceSeq, setIntradayForceSeq] = useState(0);
   const intradayRequestSeq = useRef(0);
+  const loadedIntradayQueryRef = useRef<string | null>(null);
   const mainCloseButtonRef = useRef<HTMLButtonElement>(null);
   const deleteCancelButtonRef = useRef<HTMLButtonElement>(null);
   const detailDialogRef = useDialogA11y<HTMLDivElement>({
@@ -395,7 +386,6 @@ export function YangjibaoFundDetail({
         portfolio_summary: portfolioSummary,
         sector_quote_meta: sectorMeta,
       });
-      writeHoldingDetailCache(userId, result.holding.fund_code, result);
       setDetail(result);
       setPurchaseDatePickerOpen(false);
     } catch (error) {
@@ -446,7 +436,6 @@ export function YangjibaoFundDetail({
         portfolio_summary: portfolioSummary,
         sector_quote_meta: sectorMeta,
       });
-      writeHoldingDetailCache(userId, result.holding.fund_code, result);
       setDetail(result);
       setFundCodeEditOpen(false);
     } catch (error) {
@@ -499,7 +488,6 @@ export function YangjibaoFundDetail({
         portfolio_summary: mutationResult.portfolioSummary ?? portfolioSummary,
         sector_quote_meta: sectorMeta,
       });
-      writeHoldingDetailCache(userId, result.holding.fund_code, result);
       setDetail(result);
     } catch (error) {
       const message = userFacingErrorMessage(error, "详情刷新失败");
@@ -511,20 +499,12 @@ export function YangjibaoFundDetail({
     let cancelled = false;
     const inputs = detailInputsRef.current;
     const detailTarget = detailTargetRef.current;
-    const fundCode = detailTarget?.fund_code;
     const resolvedIndex = findHoldingIndex(inputs.holdings, detailTarget);
     const detailIndex = resolvedIndex >= 0 ? resolvedIndex : holdingIndex;
-    const cachedDetail = readHoldingDetailCache(userId, fundCode);
 
-    if (cachedDetail) {
-      setDetail(cachedDetail);
-      setDetailLoading(false);
-    } else {
-      setDetailLoading(true);
-    }
+    setDetailLoading(true);
     setDetailError(null);
 
-    // 缓存期内也静默后台更新（stale-while-revalidate）
     void fetchHoldingDetail({
       holdings: inputs.holdings,
       index: detailIndex,
@@ -534,9 +514,6 @@ export function YangjibaoFundDetail({
       .then((result) => {
         if (cancelled) {
           return;
-        }
-        if (result.holding.fund_code) {
-          writeHoldingDetailCache(userId, result.holding.fund_code, result);
         }
         setDetail(result);
         const latestInputs = detailInputsRef.current;
@@ -550,7 +527,7 @@ export function YangjibaoFundDetail({
         }
       })
       .catch((error) => {
-        if (!cancelled && !cachedDetail) {
+        if (!cancelled) {
           setDetail(null);
           setDetailError(userFacingErrorMessage(error, "基金详情加载失败"));
         }
@@ -563,7 +540,7 @@ export function YangjibaoFundDetail({
     return () => {
       cancelled = true;
     };
-  }, [detailRequestKey, holdingIndex, userId]);
+  }, [detailRequestKey, holdingIndex]);
 
   useEffect(() => {
     if (tab !== "sector") {
@@ -571,17 +548,22 @@ export function YangjibaoFundDetail({
     }
     const query = intradayQueryRef.current;
     if (!query) {
+      loadedIntradayQueryRef.current = null;
       setIntradayPoints([]);
       setIntradayClosePercent(null);
       setIntradayNote("暂无板块映射，请先在持仓页刷新板块或上传详情截图建档");
       setIntradayLoading(false);
-      setIntradayRefreshing(false);
       return;
     }
 
     const requestId = ++intradayRequestSeq.current;
-    const forceRefresh = intradayForceSeq > 0;
-    const cachedIntraday = !forceRefresh ? readIntradayCache(query) : null;
+    const queryChanged = loadedIntradayQueryRef.current !== intradayQueryKey;
+    if (queryChanged) {
+      setIntradayPoints([]);
+      setIntradayClosePercent(null);
+      setIntradayNote(null);
+      setIntradayLoading(true);
+    }
 
     const applyIntraday = (result: {
       points: Array<{ time: string; percent: number }>;
@@ -608,41 +590,16 @@ export function YangjibaoFundDetail({
       }
     };
 
-    if (cachedIntraday && cachedIntraday.points.length >= 2) {
-      applyIntraday(cachedIntraday);
-      setIntradayLoading(false);
-    } else if (cachedIntraday) {
-      if (cachedIntraday.note) {
-        setIntradayNote(cachedIntraday.note);
-      }
-      setIntradayLoading(false);
-    } else {
-      setIntradayPoints([]);
-      setIntradayClosePercent(null);
-      setIntradayNote(null);
-      setIntradayLoading(true);
-    }
-    // 缓存命中时不显示刷新动画；手动 forceRefresh 才亮 spinner
-    setIntradayRefreshing(forceRefresh);
-
     void (async () => {
       try {
-        let result = await fetchSectorIntraday(
-          query,
-          forceRefresh ? { forceRefresh: true } : undefined,
-        );
+        let result = await fetchSectorIntraday(query);
         if (requestId !== intradayRequestSeq.current) {
           return;
         }
-        // 主查询（常见于业绩基准原文抠出的场内指数名）查不到数据时，退回按"关联板块"
-        // 短名再试一次——短名大多已经注册过行情源，不必强行扩充指数名别名表。
         const fallbackQuery = intradayFallbackQueryRef.current;
         if (result.points.length < 2 && fallbackQuery) {
           try {
-            const fallbackResult = await fetchSectorIntraday(
-              fallbackQuery,
-              forceRefresh ? { forceRefresh: true } : undefined,
-            );
+            const fallbackResult = await fetchSectorIntraday(fallbackQuery);
             if (requestId !== intradayRequestSeq.current) {
               return;
             }
@@ -653,23 +610,18 @@ export function YangjibaoFundDetail({
             // 兜底查询失败时保留主查询结果（含其 note），静默忽略。
           }
         }
-        writeIntradayCache(query, result);
-        if (result.points.length >= 2 || !cachedIntraday) {
-          applyIntraday(result);
-        } else if (result.note && !cachedIntraday.note) {
-          setIntradayNote(result.note);
-        }
+        loadedIntradayQueryRef.current = intradayQueryKey;
+        applyIntraday(result);
       } catch {
         if (requestId !== intradayRequestSeq.current) {
           return;
         }
-        if (!cachedIntraday) {
+        if (queryChanged) {
           setIntradayPoints([]);
           setIntradayNote("分时数据暂不可用");
         }
       } finally {
         if (requestId === intradayRequestSeq.current) {
-          setIntradayRefreshing(false);
           setIntradayLoading(false);
         }
       }
@@ -678,13 +630,24 @@ export function YangjibaoFundDetail({
     return () => {
       intradayRequestSeq.current += 1;
     };
-  }, [tab, intradayQueryKey, intradayForceSeq, holdingIndex]);
+  }, [tab, intradayQueryKey, holdingIndex, intradayTick]);
 
   useEffect(() => {
     return hydrateTradingSession((session) => {
       setQuoteTradeDate(formatTradeDateShort(session.effective_trade_date));
+      setLiveIntraday(Boolean(session.is_continuous_trading));
     });
   }, []);
+
+  useEffect(() => {
+    if (tab !== "sector" || !liveIntraday) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setIntradayTick((value) => value + 1);
+    }, 120_000);
+    return () => window.clearInterval(timer);
+  }, [tab, liveIntraday]);
 
   const tradeDateLabel = quoteTradeDate ?? "—";
 
@@ -932,20 +895,7 @@ export function YangjibaoFundDetail({
                 </span>
                 <span className="flex shrink-0 items-center gap-1 text-[10px] text-slate-500">
                   {dataSourceLabel}
-                  <button
-                    type="button"
-                    onClick={() => setIntradayForceSeq((value) => value + 1)}
-                    disabled={intradayRefreshing || intradayLoading}
-                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50"
-                    title="刷新分时"
-                    aria-label="刷新分时"
-                  >
-                    {intradayRefreshing ? (
-                      <Loader2 size={10} className="animate-spin" />
-                    ) : (
-                      <RefreshCw size={10} />
-                    )}
-                  </button>
+                  {intradayLoading ? <Loader2 size={10} className="animate-spin" /> : null}
                 </span>
               </div>
               {intradayLoading ? (

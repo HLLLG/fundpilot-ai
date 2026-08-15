@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -8,19 +7,27 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Images,
   PenLine,
   Plus,
   X,
 } from "lucide-react";
 import type { Holding } from "@/lib/api";
-import { BRAND } from "@/lib/brand";
-import { OCR_PRIVACY_COPY } from "@/lib/ocrPrivacy";
+import { collectImageFiles, ocrProgressLabel } from "@/lib/ocrBatchUpload";
 import { useDialogA11y } from "@/lib/useDialogA11y";
+import { useScreenshotIntake } from "@/lib/useScreenshotIntake";
+import {
+  ScreenshotComposerGrid,
+  ScreenshotDropOverlay,
+  ScreenshotPhoneGuide,
+  CLIPBOARD_IMAGE_PASTE_QUERY,
+} from "@/components/ScreenshotIntakeExtras";
+import { useMediaQuery } from "@/lib/useMediaQuery";
 
 const ALIPAY_GUIDE_IMAGE = "/guides/alipay-holdings-overview.png";
 
 const ALIPAY_CHANNEL_COPY: { title: string; hint: ReactNode } = {
-  title: "同步持仓",
+  title: "同步持仓-支持批量导入",
   hint: (
     <>
       上传支付宝
@@ -33,11 +40,13 @@ const ALIPAY_CHANNEL_COPY: { title: string; hint: ReactNode } = {
 type AddHoldingModalProps = {
   open: boolean;
   onClose: () => void;
-  onUpload: (file: File) => void;
+  onUpload: (files: File[]) => void;
   onManualSubmit: (holdings: Holding[]) => void | Promise<void>;
   isUploading?: boolean;
+  uploadProgress?: { current: number; total: number } | null;
   isSubmitting?: boolean;
   errorMessage?: string | null;
+  continueFromReview?: boolean;
 };
 
 type ManualEntry = {
@@ -64,14 +73,17 @@ export function AddHoldingModal({
   onUpload,
   onManualSubmit,
   isUploading = false,
+  uploadProgress = null,
   isSubmitting = false,
   errorMessage = null,
+  continueFromReview = false,
 }: AddHoldingModalProps) {
-  const [mode, setMode] = useState<"chooser" | "manual">("chooser");
+  const [mode, setMode] = useState<"chooser" | "composer" | "manual">("chooser");
   const [entries, setEntries] = useState<ManualEntry[]>([createManualEntry()]);
   const [formError, setFormError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const isDesktopCompose = useMediaQuery(CLIPBOARD_IMAGE_PASTE_QUERY);
   const busy = isUploading || isSubmitting;
   const requestClose = () => {
     if (!busy) {
@@ -83,14 +95,28 @@ export function AddHoldingModal({
     onClose: requestClose,
     initialFocusRef: closeButtonRef,
   });
+  const screenshotIntake = useScreenshotIntake({
+    open,
+    accepting: open && !busy && mode !== "manual" && isDesktopCompose,
+  });
 
   useEffect(() => {
     if (!open) {
       setMode("chooser");
       setEntries([createManualEntry()]);
       setFormError(null);
+      return;
     }
-  }, [open]);
+    if (continueFromReview && isDesktopCompose) {
+      setMode("composer");
+    }
+  }, [open, continueFromReview, isDesktopCompose]);
+
+  useEffect(() => {
+    if (open && isDesktopCompose && screenshotIntake.items.length > 0 && mode === "chooser") {
+      setMode("composer");
+    }
+  }, [open, isDesktopCompose, screenshotIntake.items.length, mode]);
 
   if (!open) {
     return null;
@@ -133,107 +159,118 @@ export function AddHoldingModal({
   };
 
   const channelCopy = ALIPAY_CHANNEL_COPY;
+  const dialogTitle =
+    mode === "manual" ? "手动新增" : mode === "composer" ? "上传图片" : channelCopy.title;
+  const backAriaLabel =
+    mode === "manual" || (mode === "composer" && !continueFromReview) ? "返回" : "关闭";
+
+  const handleBack = () => {
+    if (mode === "manual") {
+      setFormError(null);
+      setMode("chooser");
+      return;
+    }
+    if (mode === "composer" && !continueFromReview) {
+      screenshotIntake.clearItems();
+      setMode("chooser");
+      return;
+    }
+    onClose();
+  };
+
+  const handleSelectedFiles = (files: File[]) => {
+    if (!files.length) {
+      return;
+    }
+    if (isDesktopCompose || mode === "composer") {
+      screenshotIntake.appendFiles(files);
+      setMode("composer");
+      return;
+    }
+    onUpload(files);
+  };
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 sm:items-center sm:p-4"
+      className="fixed inset-0 z-[60] flex items-stretch justify-center overflow-hidden bg-[var(--panel)] sm:items-center sm:bg-slate-950/40 sm:p-4"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           requestClose();
         }
       }}
+      {...screenshotIntake.dropHandlers}
       role="presentation"
     >
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="workflow-dialog flex max-h-[94vh] w-full max-w-lg flex-col overflow-hidden rounded-t-[18px] bg-[var(--panel)] shadow-[var(--shadow-lg)] sm:rounded-[18px]"
+        className="workflow-dialog relative flex h-full min-h-0 w-full max-w-lg flex-col overflow-hidden bg-[var(--panel)] sm:h-[95vh] sm:rounded-[18px] sm:shadow-[var(--shadow-lg)]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="add-holding-modal-title"
       >
-        <header className="relative flex items-center justify-center border-b border-slate-200/70 bg-white px-4 py-3.5">
+        <ScreenshotDropOverlay active={screenshotIntake.dragActive} />
+        <header className="relative flex items-center justify-center border-b border-slate-200/70 bg-white px-4 pb-3.5 pt-[max(0.875rem,env(safe-area-inset-top,0px))]">
           <button
             ref={closeButtonRef}
             type="button"
-            onClick={() => {
-              if (mode === "manual") {
-                setFormError(null);
-                setMode("chooser");
-                return;
-              }
-              onClose();
-            }}
+            onClick={handleBack}
             disabled={busy}
             className="touch-target absolute left-2 inline-flex items-center justify-center rounded-full text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
-            aria-label={mode === "manual" ? "返回" : "关闭"}
+            aria-label={backAriaLabel}
           >
             <ChevronLeft size={22} strokeWidth={2.25} />
           </button>
           <h2 id="add-holding-modal-title" className="text-base font-bold text-slate-900">
-            {mode === "manual" ? "手动新增" : channelCopy.title}
+            {dialogTitle}
           </h2>
         </header>
 
-        <ol className="workflow-rail" aria-label="持仓导入进度">
-          <li aria-current="step"><span>01</span><strong>录入基金</strong></li>
-          <li><span>02</span><strong>核对数据</strong></li>
-          <li><span>03</span><strong>保存持仓</strong></li>
-        </ol>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="sr-only"
+          tabIndex={-1}
+          disabled={busy}
+          aria-label="选择一张或多张持仓截图"
+          onChange={(event) => {
+            const { files } = collectImageFiles(event.target.files);
+            handleSelectedFiles(files);
+            event.currentTarget.value = "";
+          }}
+        />
 
         {mode === "chooser" ? (
           <>
-            <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-5 pb-2 pt-6">
-              <AlipayPhoneGuide src={ALIPAY_GUIDE_IMAGE} />
-              <p className="mt-6 text-center text-[15px] leading-7 text-slate-800">{channelCopy.hint}</p>
-              <ol className="mt-5 w-full space-y-2.5">
-                {[
-                  "打开支付宝 → 我的 → 总资产 → 基金，进入「我的持有」",
-                  "截图保存当前持仓总览页",
-                  `回到这里上传截图，${BRAND.name}自动识别`,
-                ].map((text, index) => (
-                  <li key={index} className="flex items-center gap-3">
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--brand-soft)] text-xs font-black text-[var(--brand-strong)]">
-                      {index + 1}
-                    </span>
-                    <span className="text-[13px] leading-5 text-slate-600">{text}</span>
-                  </li>
-                ))}
-              </ol>
-              <p className="mt-4 rounded-xl border border-[var(--info-border)] bg-[var(--info-bg)]/80 px-3 py-2 text-xs leading-5 text-slate-600">
-                {OCR_PRIVACY_COPY.uploadNotice}
-              </p>
-              {errorMessage ? (
-                <p role="alert" className="mt-3 w-full rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2 text-sm leading-5 text-[var(--danger-fg)]">
-                  {errorMessage}
-                </p>
-              ) : null}
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-5 py-2">
+              <ScreenshotPhoneGuide src={ALIPAY_GUIDE_IMAGE} alt="支付宝「我的持有」页面示意图" />
             </div>
+            <p className="relative shrink-0 bg-[var(--panel)] px-5 py-2 text-center text-[15px] leading-6 text-slate-800">
+              {channelCopy.hint}
+            </p>
+            {errorMessage || screenshotIntake.pasteError ? (
+              <p role="alert" className="mx-5 mb-2 shrink-0 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2 text-sm leading-5 text-[var(--danger-fg)]">
+                {errorMessage ?? screenshotIntake.pasteError}
+              </p>
+            ) : null}
 
-            <div className="space-y-3 bg-[#f5f7fa] px-5 pb-8 pt-3">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="sr-only"
-                tabIndex={-1}
-                disabled={busy}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) {
-                    onUpload(file);
-                  }
-                  event.currentTarget.value = "";
-                }}
-              />
+            <div className="flex shrink-0 flex-col items-center gap-1.5 bg-[var(--panel)] px-5 pt-1 pb-[max(1.25rem,calc(0.75rem+env(safe-area-inset-bottom,0px)))] sm:pb-5">
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => fileInputRef.current?.click()}
-                className="btn-primary w-full py-4 text-[16px]"
+                onClick={() => {
+                  if (isDesktopCompose) {
+                    setMode("composer");
+                    return;
+                  }
+                  fileInputRef.current?.click();
+                }}
+                className="btn-primary w-[200px] min-h-9 py-2 text-[14px]"
               >
-                {isUploading ? "识别中..." : "去相册选择"}
-                {!isUploading ? <ChevronRight size={18} strokeWidth={2.5} /> : null}
+                <Images size={15} strokeWidth={2.25} />
+                {ocrProgressLabel(isUploading, uploadProgress, "上传图片")}
               </button>
               <button
                 type="button"
@@ -242,13 +279,46 @@ export function AddHoldingModal({
                   setFormError(null);
                   setMode("manual");
                 }}
-                className="btn-ghost w-full py-3 text-[15px]"
+                className="btn-ghost w-[200px] min-h-8 py-1.5 text-[13px]"
               >
-                <PenLine size={18} strokeWidth={2.25} />
+                <PenLine size={15} strokeWidth={2.25} />
                 手动输入
               </button>
             </div>
           </>
+        ) : mode === "composer" ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              <ScreenshotComposerGrid
+                items={screenshotIntake.items}
+                disabled={busy}
+                onAdd={() => fileInputRef.current?.click()}
+                onRemove={screenshotIntake.removeItem}
+              />
+              {errorMessage || screenshotIntake.pasteError ? (
+                <p role="alert" className="mt-3 rounded-xl border border-[var(--danger-border)] bg-[var(--danger-bg)] px-3 py-2 text-sm leading-5 text-[var(--danger-fg)]">
+                  {errorMessage ?? screenshotIntake.pasteError}
+                </p>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 flex-col items-center bg-[var(--panel)] px-5 pt-1 pb-[max(1.25rem,calc(0.75rem+env(safe-area-inset-bottom,0px)))] sm:pb-5">
+              <button
+                type="button"
+                disabled={busy || screenshotIntake.items.length === 0}
+                onClick={() => onUpload(screenshotIntake.files)}
+                className="btn-primary w-[200px] min-h-9 py-2 text-[14px] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {ocrProgressLabel(
+                  isUploading,
+                  uploadProgress,
+                  screenshotIntake.items.length
+                    ? `开始识别（${screenshotIntake.items.length}）`
+                    : "开始识别",
+                )}
+                {!isUploading ? <ChevronRight size={16} strokeWidth={2.5} /> : null}
+              </button>
+            </div>
+          </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -443,26 +513,3 @@ function entryToHolding(entry: ManualEntry): Holding | null {
   };
 }
 
-function AlipayPhoneGuide({ src }: { src: string }) {
-  return (
-    <div className="relative mx-auto w-[62%] min-w-[200px] max-w-[250px]">
-      <div className="rounded-[2.25rem] border-[7px] border-slate-900 bg-slate-900 p-[5px] shadow-[0_24px_48px_rgba(15,23,42,0.18)]">
-        <div className="relative overflow-hidden rounded-[1.65rem] bg-white">
-          <div className="pointer-events-none absolute left-1/2 top-0 z-10 h-[22px] w-[34%] -translate-x-1/2 rounded-b-[14px] bg-slate-900" />
-          <Image
-            src={src}
-            alt="支付宝全部持有页面示意图"
-            width={390}
-            height={844}
-            className="aspect-[390/844] h-auto w-full object-cover object-top"
-            draggable={false}
-          />
-        </div>
-      </div>
-      <div
-        className="pointer-events-none absolute -bottom-3 left-1/2 h-3 w-[70%] -translate-x-1/2 rounded-[100%] bg-slate-900/10 blur-md"
-        aria-hidden
-      />
-    </div>
-  );
-}

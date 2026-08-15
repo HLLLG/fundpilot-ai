@@ -70,11 +70,9 @@ def sector_quote_lookup_label(
         fund_name = profile.fund_name
 
     # 先按"精确度"从高到低尝试有行情源的规范映射：场内指数名 → 板块短名。
-    # 业绩基准原文抠出来的指数名（如"中证高端装备制造指数"）往往不在别名表里，
-    # 若命中不到规范映射就直接把这段原始文本当 query key 用，几乎必然查不到行情——
-    # 应该退回板块短名（如"机械设备"），只要它已注册过行情源即可，不必持续扩充
-    # 指数名别名白名单。
-    if index_name and _looks_like_index_name(index_name):
+    # 合同跟踪指数的养基宝简称（黄金9999 / 沪港深黄金）不以「指数」结尾，
+    # 但仍已登记行情身份，必须优先于主题板短名（否则房地产会落到 931775）。
+    if index_name:
         canon = get_canonical_sector(index_name)
         if canon:
             return canon.label
@@ -114,8 +112,25 @@ def sector_quote_lookup_label(
     return None
 
 
+def _canonical_tracking_display_name(index_name: str | None) -> str | None:
+    name = normalize_sector_label(index_name)
+    if name == "黄金999":
+        return "黄金9999"
+    return name or None
+
+
 def sector_display_label(holding: Holding) -> str | None:
-    """UI 展示用：优先关联板块短名，否则场内指数，否则从基金名推断。"""
+    """UI 展示用：合同跟踪指数简称优先，否则关联板块短名，否则场内指数。"""
+    from app.services.sector_registry_data import TRACKING_INDEX_DISPLAY_NAMES
+
+    index_name = _canonical_tracking_display_name(holding.intraday_index_name)
+    if index_name and index_name in TRACKING_INDEX_DISPLAY_NAMES:
+        return index_name
+    from_fund = _canonical_tracking_display_name(
+        infer_intraday_index_from_fund_name(holding.fund_name)
+    )
+    if from_fund and from_fund in TRACKING_INDEX_DISPLAY_NAMES:
+        return from_fund
     if _is_valid_sector_label(holding.sector_name):
         return holding.sector_name
     if holding.intraday_index_name:

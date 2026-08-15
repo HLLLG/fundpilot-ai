@@ -170,10 +170,9 @@ FUND_AI_JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars
 | `WEB_CONCURRENCY` | Uvicorn worker 进程数；4 核轻量服务器生产默认 2，本地开发仍为 1 |
 | `FUND_AI_RUNTIME_ROLE` | `all`（本地默认）/`api`/`worker`；生产 Compose 已将请求与长期后台任务分离 |
 | `FUND_AI_BACKGROUND_WORKER_*` | leader 锁等待/重试、心跳间隔及过期门槛；默认 `5/5/10/45` 秒 |
-| `FUND_AI_BACKGROUND_WORKER_HEARTBEAT_PATH` | 可选心跳文件路径；生产/Cloud Compose 已固定到 API/Worker 共享的数据卷 |
+| `FUND_AI_BACKGROUND_WORKER_HEARTBEAT_PATH` | 可选心跳文件路径；生产 Compose 已固定到 API/Worker 共享的数据卷 |
 | `FUND_AI_PORTFOLIO_MUTATION_LOCK_TIMEOUT_SECONDS` | 同账户持仓跨 worker 写锁等待秒数；默认 30，超时返回可重试的 503 |
 | `FUND_AI_HOLDINGS_MEMORY_CACHE_ENABLED` | 持仓响应进程内缓存；MySQL 默认关闭，避免不同 worker 返回不同版本 |
-| `FUND_AI_CLOUDBASE_ENV_ID` | 旧 CloudBase 域名兼容变量；Lighthouse 同源部署不需要 |
 
 `.env` 已被 `.gitignore` 忽略，不会提交到 Git。
 

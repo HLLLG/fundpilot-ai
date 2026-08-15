@@ -49,7 +49,7 @@ function legacyCacheKeysForUser(userId: CacheUserId): string[] {
 
 
 
-/** localStorage 仅缓存金额/名称等静态字段，板块涨跌由后端缓存提供。 */
+/** localStorage 持仓缓存已不再给页面读。打开仪表盘时清掉遗留条目，避免旧双缓存污染。 */
 
 function holdingsForCache(holdings: Holding[]): Holding[] {
 

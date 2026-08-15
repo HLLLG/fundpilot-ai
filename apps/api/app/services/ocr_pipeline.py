@@ -21,6 +21,7 @@ from app.services.fund_code_resolver import (
     UNRESOLVED_FUND_CODE_HINT,
     is_provisional_fund_code,
     lookup_fund_name_by_code,
+    lookup_similar_fund_by_name,
     resolve_holding_fund_code,
 )
 from app.services.fund_name_utils import sanitize_fund_name
@@ -186,11 +187,20 @@ def _resolve_fund_codes(
             holding.fund_name,
             existing_code=profile_code,
         )
+        if not code:
+            similar = lookup_similar_fund_by_name(holding.fund_name)
+            if similar:
+                code = similar[0]
+                source = "similar"
 
         if code and code != holding.fund_code:
             holding = holding.model_copy(update={"fund_code": code})
 
         resolved = holding.fund_code != "000000"
+        if source == "similar" or not resolved:
+            message = UNRESOLVED_FUND_CODE_HINT
+        else:
+            message = None
         resolved_holdings.append(holding)
         resolutions.append(
             {
@@ -198,7 +208,7 @@ def _resolve_fund_codes(
                 "fund_code": holding.fund_code if resolved else None,
                 "source": source,
                 "resolved": resolved,
-                "message": None if resolved else UNRESOLVED_FUND_CODE_HINT,
+                "message": message,
             }
         )
 
@@ -255,10 +265,13 @@ def _pin_confirmed_holding_settlements(
 def apply_confirmed_holdings(
     holdings: list,
 ) -> dict:
+    from app.services.official_nav_settlement import schedule_official_nav_settlement
     from app.services.portfolio_mutation_guard import portfolio_mutation_guard
 
     with portfolio_mutation_guard():
-        return _apply_confirmed_holdings_unlocked(holdings)
+        result = _apply_confirmed_holdings_unlocked(holdings)
+    schedule_official_nav_settlement()
+    return result
 
 
 def _apply_confirmed_holdings_unlocked(
@@ -268,7 +281,7 @@ def _apply_confirmed_holdings_unlocked(
 
     1. 跳过网络估值/净值拉取，仅用 OCR 金额写档案与快照；
     2. 用板块行情缓存即时补全 sector 涨跌与当日估算；
-    3. 返回完整 ``estimated_*`` 展示字段；OCR 确认后前端不再立即触发板块刷新。
+    3. 返回完整 ``estimated_*`` 展示字段；官方净值在写入完成后后台异步结算。
     """
     from app.services.holding_amount_sync import bootstrap_holding_baselines
     from app.services.holding_client import serialize_holdings_for_client

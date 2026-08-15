@@ -303,40 +303,23 @@ test("模拟登录态可进入响应式应用壳层", async ({ page }) => {
     "#main-content",
   );
 
-  const accountMenuTrigger = page.getByRole("button", { name: "打开账号菜单" });
-  await expect(accountMenuTrigger).toHaveAttribute("aria-haspopup", "menu");
-  await expectMinimumTapTarget(accountMenuTrigger);
-  await accountMenuTrigger.focus();
-  await page.keyboard.press("Enter");
-  await expect(page.getByRole("menu", { name: "账号菜单" })).toBeVisible();
-  const settingsMenuItem = page.getByRole("menuitem", { name: "账号设置" });
-  await expect(settingsMenuItem).toBeFocused();
-  await expectMinimumTapTarget(settingsMenuItem);
-  await page.keyboard.press("ArrowDown");
-  await expect(page.getByRole("menuitem", { name: "退出登录" })).toBeFocused();
-  await page.keyboard.press("Home");
-  await expect(settingsMenuItem).toBeFocused();
-  await page.keyboard.press("End");
-  await expect(page.getByRole("menuitem", { name: "退出登录" })).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("menu", { name: "账号菜单" })).toBeHidden();
-  await expect(accountMenuTrigger).toBeFocused();
+  const openMe = page.getByRole("button", { name: "打开我的" });
+  await expectMinimumTapTarget(openMe);
+  await expect(page.getByRole("menu", { name: "账号菜单" })).toHaveCount(0);
 
   if ((page.viewportSize()?.width ?? 1440) < 1024) {
-    // 底栏五个标签全部平铺（不再有「更多」弹层），每个都要是一次点击就能到，
+    // 底栏五个标签全部平铺（持仓 / 市场 / 发现 / 日报 / 我的），每个都要是一次点击就能到，
     // 且在最窄的 320px 屏上仍满足最小可点击区域。
     const bottomNav = page.getByRole("navigation", { name: "主导航" }).last();
     await expect(bottomNav).toBeVisible();
-    for (const tab of ["holdings", "dashboard", "market", "discovery", "report"]) {
+    for (const tab of ["holdings", "market", "discovery", "report", "me"]) {
       const button = page.getByTestId(`bottom-nav-${tab}`);
       await expect(button).toBeVisible();
       await expectMinimumTapTarget(button);
     }
     await expect(page.getByRole("button", { name: /更多导航/ })).toHaveCount(0);
     await expect(page.getByTestId("bottom-nav-holdings")).toHaveAttribute("aria-current", "page");
-    // 本用例只验壳层结构：这里刻意不切标签，否则会触发未登记的初始化请求而误伤
-    // 下面那条「无意外 API 调用」的断言。跳转本身由 history-workflows 的
-    // openPrimary() 覆盖。
+    // 其余标签跳转由 history-workflows 的 openPrimary() 覆盖。
     // 底栏必须整体位于视口内。
     const navBox = await bottomNav.boundingBox();
     const viewportHeight = page.viewportSize()?.height ?? 0;
@@ -378,6 +361,12 @@ test("模拟登录态可进入响应式应用壳层", async ({ page }) => {
     expect(geometry?.stackZ ?? 0, "浮层层级必须低于底栏").toBeLessThan(geometry?.navZ ?? 0);
   }
 
+  await openMe.click();
+  await expect(page.getByRole("heading", { level: 1, name: "我的" })).toBeAttached();
+  await expect(page.getByRole("button", { name: "账号设置" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "盈亏分析" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "退出登录" })).toBeVisible();
+
   await page.waitForTimeout(100);
   expect(apiAudit.unexpected, "出现了尚未登记的初始化 API 请求").toEqual([]);
   expect([...apiAudit.seen]).toEqual(
@@ -403,24 +392,30 @@ test("截图识别可校对写入并打开基金详情", async ({ page }, testIn
   const apiAudit = await installStableApiStubs(page, { enableCoreFlow: true });
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1, name: "账户持仓" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "账户持仓" })).toBeAttached();
   await page.getByRole("button", { name: "同步持仓" }).click();
 
-  const importDialog = page.getByRole("dialog", { name: "同步持仓" });
+  const importDialog = page.getByRole("dialog", { name: "同步持仓-支持批量导入" });
   await expect(importDialog).toBeVisible();
+  await expect(importDialog.getByRole("button", { name: "上传图片" })).toBeVisible();
   await importDialog.locator('input[type="file"]').setInputFiles({
     name: "holding.png",
     mimeType: "image/png",
     buffer: Buffer.from("stable-ui-ocr-fixture"),
   });
+  if (testInfo.project.name === "desktop-1440") {
+    await page.getByRole("dialog", { name: "上传图片" }).getByRole("button", { name: "开始识别（1）" }).click();
+  }
 
   const confirmDialog = page.getByRole("dialog", { name: "确认识别结果" });
   await expect(confirmDialog).toBeVisible();
-  const codeInput = confirmDialog.getByRole("textbox", { name: /基金代码/ });
+  const codeButton = confirmDialog.getByRole("button", { name: /基金代码/ });
+  await expect(codeButton).toContainText("110022");
+  await expect(confirmDialog.getByText("28,640.50")).toBeVisible();
+  await expectMinimumTapTarget(codeButton);
+  await confirmDialog.getByRole("button", { name: /修改持仓/ }).click();
   const amountInput = confirmDialog.getByRole("textbox", { name: /持有金额/ });
-  await expect(codeInput).toHaveValue("110022");
   await expect(amountInput).toHaveValue("28640.5");
-  await expectMinimumTapTarget(codeInput);
   await expectMinimumTapTarget(amountInput);
   await confirmDialog.getByRole("button", { name: "完成（1）" }).click();
 
