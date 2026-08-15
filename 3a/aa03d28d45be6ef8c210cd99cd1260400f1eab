@@ -1,0 +1,22 @@
+apps/web/src/components/AlipayOcrConfirmModal.tsx
+  s_c8634faf26357a::t_59a85d8260d1a4 403
+apps/web/src/components/ocrReviewFields.tsx
+  s_c8634faf26357a::t_38d872824543ca 21,28
+  s_c8634faf26357a::t_2c2594776f9564 53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "3aaa03d28d45be6ef8c210cd99cd1260400f1eab",
+  "prompts": {},
+  "sessions": {
+    "s_c8634faf26357a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3ab5443a-39c5-4e7e-b175-eb2bd384a5a7",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
