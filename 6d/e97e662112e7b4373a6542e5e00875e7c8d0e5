@@ -1,0 +1,23 @@
+apps/web/e2e-ui/authenticated-shell.spec.ts
+  s_c8634faf26357a::t_e17ae06a4989eb 77
+  s_c8634faf26357a::t_93b537020621e9 126-139
+  s_c8634faf26357a::t_8afe7fd85b668b 458
+apps/web/e2e-ui/history-workflows.spec.ts
+  s_c8634faf26357a::t_d65126dce88f97 83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "6de97e662112e7b4373a6542e5e00875e7c8d0e5",
+  "prompts": {},
+  "sessions": {
+    "s_c8634faf26357a": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "3ab5443a-39c5-4e7e-b175-eb2bd384a5a7",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
