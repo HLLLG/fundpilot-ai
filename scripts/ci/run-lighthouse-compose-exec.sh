@@ -10,6 +10,9 @@
 #    runner dies at banner exchange (run #37). docker exec kept the sshd
 #    session open via inherited fds. Double-fork, close extra fds, poll once
 #    per interval instead of hammering sshd.
+# 4. Handshake retries must snapshot the heredoc (run #38). `set -e` plus
+#    consuming stdin on the first 255 would skip retries or send an empty
+#    remote script. Snapshot stdin and keep looping on transport errors.
 #
 # Settlement is idempotent; the poll loop never relaunches a live job.
 set -euo pipefail
@@ -36,7 +39,7 @@ if [[ $# -lt 1 ]]; then
   exit 64
 fi
 
-CONNECT_ATTEMPTS="${LIGHTHOUSE_EXEC_CONNECT_ATTEMPTS:-4}"
+CONNECT_ATTEMPTS="${LIGHTHOUSE_EXEC_CONNECT_ATTEMPTS:-8}"
 POLL_SECONDS="${LIGHTHOUSE_EXEC_POLL_SECONDS:-30}"
 MAX_WAIT_SECONDS="${LIGHTHOUSE_EXEC_MAX_WAIT_SECONDS:-2400}"
 DEPLOY_LOCK_ATTEMPTS="${LIGHTHOUSE_EXEC_DEPLOY_LOCK_ATTEMPTS:-60}"
@@ -74,16 +77,25 @@ ssh_once() {
 }
 
 ssh_call() {
-  local attempt st=255
+  # Snapshot stdin once. The remote script is a heredoc; the first failed
+  # ssh would otherwise consume it and every retry would send an empty
+  # command. `|| st=$?` is required so `set -e` does not abort the loop.
+  local attempt st=255 stdin_file
+  stdin_file="$(mktemp "${TMPDIR:-/tmp}/lighthouse-ssh-stdin.XXXXXX")"
+  cat > "$stdin_file"
   for attempt in $(seq 1 "$CONNECT_ATTEMPTS"); do
     st=0
-    ssh_once "$@" || st=$?
+    ssh_once "$@" < "$stdin_file" || st=$?
     if [[ "$st" -ne 255 ]]; then
+      rm -f "$stdin_file"
       return "$st"
     fi
     echo "SSH transport failed with 255 (attempt ${attempt}/${CONNECT_ATTEMPTS})" >&2
-    sleep $((attempt * 2))
+    if [[ "$attempt" -lt "$CONNECT_ATTEMPTS" ]]; then
+      sleep $((attempt * 5))
+    fi
   done
+  rm -f "$stdin_file"
   return 255
 }
 

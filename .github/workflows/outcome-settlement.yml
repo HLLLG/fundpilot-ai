@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: decision-outcome-settlement-production
+  group: fundpilot-lighthouse-production
   cancel-in-progress: false
 
 jobs:
