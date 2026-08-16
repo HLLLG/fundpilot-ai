@@ -241,10 +241,10 @@ export function PortfolioDashboard({
   const alpha = footer?.alpha_percent;
   const portfolioLineColor =
     (footer?.portfolio_return_percent ?? 0) > 0
-      ? "#e11d48"
+      ? "#c81e3a"
       : (footer?.portfolio_return_percent ?? 0) < 0
-        ? "#059669"
-        : "#64748b";
+        ? "#047857"
+        : "#7a898f";
 
   return (
     <div className="analysis-workspace pl-page min-w-0 overflow-hidden rounded-[18px] border border-[var(--line-strong)] bg-[var(--panel)]">
@@ -264,6 +264,7 @@ export function PortfolioDashboard({
 
       <div className="analysis-hero">
         <div className="pl-hero !rounded-none !border-0 !bg-transparent text-left">
+          <p className="ink-label mb-2">P&amp;L Ledger · 盈亏分析</p>
           <div className="pl-hero-label">{hero.label}</div>
           <div className={`pl-hero-value ${profitClass(hero.value)}`}>
             {hero.valueFormat === "percent" ? formatPercent(hero.value) : formatMoney(hero.value)}
@@ -516,4 +517,4 @@ export function PortfolioDashboard({
   );
 }
 
-const INDEX_COLOR = "#5B8DEF";
+const INDEX_COLOR = "#7a898f";

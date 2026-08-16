@@ -300,9 +300,12 @@ export function FundReturnDistributionPanel() {
   const updatedAt = formatFundReturnDistributionUpdatedAt(data);
 
   return (
-    <section className="glass-panel min-w-0 max-w-full overflow-hidden rounded-[24px] p-5">
-      <div className="flex items-start justify-between gap-3">
-        <h3 className="text-lg font-black text-slate-950">基金涨跌分布</h3>
+    <section className="section-card min-w-0 max-w-full overflow-hidden p-0">
+      <div className="market-board-head flex items-start justify-between gap-3 px-5 pb-3 pt-5">
+        <div>
+          <p className="ink-label">Breadth</p>
+          <h3 className="mt-1 text-lg font-black text-[var(--brand-deep)]">基金涨跌分布</h3>
+        </div>
         <p className="inline-flex shrink-0 items-center gap-1.5 pt-1 text-right text-xs text-slate-400">
           {revalidating ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -311,24 +314,26 @@ export function FundReturnDistributionPanel() {
         </p>
       </div>
 
+      <div className="px-5 pb-5">
       {loading && !data ? (
-        <div className="mt-5 flex h-44 items-center justify-center rounded-xl bg-white/60 text-sm text-slate-500">
+        <div className="mt-5 flex h-44 items-center justify-center rounded-xl bg-[var(--surface-muted)] text-sm text-[var(--muted)]">
           <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
           正在读取最新基金涨跌分布…
         </div>
       ) : data?.available ? (
         <DistributionContent data={data} />
       ) : (
-        <p className="mt-4 rounded-xl bg-white/70 px-3 py-3 text-sm leading-6 text-slate-600" role="status">
+        <p className="mt-4 rounded-xl bg-[var(--surface-muted)] px-3 py-3 text-sm leading-6 text-[var(--muted)]" role="status">
           {data?.message ?? "基金官方净值分布暂不可用。"}
         </p>
       )}
 
       {error ? (
-        <p className="mt-3 text-xs font-semibold text-amber-700" role="status">
+        <p className="mt-3 text-xs font-semibold text-[var(--warn-fg)]" role="status">
           本次更新失败；如有历史结果仍会保留展示。
         </p>
       ) : null}
+      </div>
     </section>
   );
 }

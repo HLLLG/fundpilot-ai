@@ -64,8 +64,8 @@ const DECISION_STATUS_META: Record<
   },
   watch_only: {
     label: "研究观察",
-    badgeClass: "bg-slate-200 text-slate-800",
-    rowClass: "border-slate-200 bg-slate-50/80",
+    badgeClass: "bg-[var(--surface-muted)] text-[var(--muted)]",
+    rowClass: "border-[var(--line)] bg-[var(--surface-muted)]/80",
   },
 };
 
@@ -453,7 +453,7 @@ function CandidateResearchSummary({
 
   return (
     <div
-      className="rounded-xl border border-[var(--info-border)] bg-[linear-gradient(135deg,rgba(240,249,255,0.92),rgba(248,250,252,0.86))] px-3 py-2 text-[11px] leading-5"
+      className="rounded-xl border border-[var(--info-border)] bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5"
       aria-label="同类研究摘要"
     >
       <p className="flex flex-wrap items-center gap-1.5 font-black text-slate-800">
@@ -520,7 +520,7 @@ function qualityPresentation(
     gateBadgeClass: excluded
       ? "bg-[var(--danger-bg)] text-[var(--danger-fg)]"
       : degraded
-        ? "bg-slate-200 text-slate-800"
+        ? "bg-[var(--surface-muted)] text-[var(--muted)]"
         : "bg-[var(--success-bg)] text-[var(--success-fg)]",
     missingLabels,
     staleLabels,
@@ -713,7 +713,7 @@ export function DiscoveryCandidatePoolPanel({
   }
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+    <section className="rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)]">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}

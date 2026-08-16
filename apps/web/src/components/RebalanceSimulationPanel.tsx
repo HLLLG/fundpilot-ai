@@ -216,9 +216,9 @@ export function RebalanceSimulationPanel({
   }
 
   return (
-    <div className="mb-5 rounded-[24px] border border-emerald-100 bg-emerald-50/50 p-5">
-      <div className="mb-2 flex items-center gap-2 text-sm font-black text-slate-950">
-        <SlidersHorizontal size={18} className="text-emerald-700" />
+    <div className="section-card mb-5 p-5">
+      <div className="mb-2 flex items-center gap-2 text-sm font-black text-[var(--brand-deep)]">
+        <SlidersHorizontal size={18} className="text-[var(--accent-strong)]" />
         模拟调仓（按报告示意金额）
       </div>
       {inner}

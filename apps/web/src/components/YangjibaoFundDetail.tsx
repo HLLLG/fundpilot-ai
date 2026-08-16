@@ -127,9 +127,9 @@ function HeaderStat({
 }) {
   return (
     <div className="px-2 py-2.5 text-center">
-      <div className="text-[11px] text-slate-500">{label}</div>
+      <div className="text-[11px] text-[var(--muted)]">{label}</div>
       <div
-        className={`mt-1 text-lg font-black tabular-nums leading-none ${valueClass ?? "text-slate-900"}`}
+        className={`mt-1 font-display text-lg font-black tabular-nums leading-none ${valueClass ?? "text-[var(--brand-deep)]"}`}
       >
         {value}
       </div>
@@ -140,7 +140,7 @@ function HeaderStat({
 function GridStat({
   label,
   value,
-  valueClass = "text-slate-900",
+  valueClass = "text-[var(--brand-deep)]",
   onClick,
   clickable,
 }: {
@@ -168,7 +168,7 @@ function GridStat({
       <button
         type="button"
         onClick={onClick}
-        className="w-full px-2 py-3 text-center transition hover:bg-slate-100/70 active:bg-slate-100"
+        className="w-full px-2 py-3 text-center transition hover:bg-[var(--surface-muted)] active:bg-[var(--surface-muted)]"
         title="点击设置首次购入日期"
       >
         {content}
@@ -653,7 +653,7 @@ export function YangjibaoFundDetail({
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/50 p-0 sm:items-center sm:p-4"
+      className="modal-backdrop fixed inset-0 z-[70] flex items-end justify-center p-0 sm:items-center sm:p-4"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
@@ -667,13 +667,10 @@ export function YangjibaoFundDetail({
         role="dialog"
         aria-modal="true"
         aria-labelledby="fund-detail-title"
-        className="flex max-h-[min(100dvh,920px)] w-full max-w-lg flex-col overflow-y-auto overscroll-contain bg-white shadow-2xl sm:max-h-[min(92dvh,860px)] sm:rounded-2xl"
+        className="modal-sheet flex max-h-[min(100dvh,920px)] w-full max-w-lg flex-col overflow-y-auto overscroll-contain sm:max-h-[min(92dvh,860px)] sm:rounded-[var(--radius-card)]"
       >
         <div className="sticky top-0 z-10 shrink-0">
-          <header
-            className="px-3 pb-3 pt-3 text-white shadow-sm"
-            style={{ background: "linear-gradient(135deg, var(--brand) 0%, var(--brand-strong) 100%)" }}
-          >
+          <header className="dossier-head px-3 pb-3 pt-3">
             <div className="flex items-center justify-between gap-2">
               <button
                 ref={mainCloseButtonRef}
@@ -738,8 +735,8 @@ export function YangjibaoFundDetail({
             </div>
           </header>
 
-          <div className="border-b border-slate-100 bg-white">
-            <div className="grid grid-cols-3 divide-x divide-slate-100">
+          <div className="border-b border-[var(--line)] bg-[var(--panel)]">
+            <div className="ledger-metrics">
               <HeaderStat
                 label={
                   dailyReturnPending
@@ -776,10 +773,10 @@ export function YangjibaoFundDetail({
           </div>
         ) : null}
 
-        <div className="border-b border-slate-100 bg-slate-50">
+        <div className="border-b border-[var(--line)] bg-[var(--surface-muted)]">
           {holdingsExpanded ? (
-            <div className="divide-y divide-slate-100/80">
-              <div className="grid grid-cols-3 divide-x divide-slate-100">
+            <div className="divide-y divide-[var(--line)]">
+              <div className="grid grid-cols-3 divide-x divide-[var(--line)]">
                 <GridStat label="持有金额" value={formatPlainMoney(settledAmount)} />
                 <GridStat
                   label="持有份额"
@@ -790,7 +787,7 @@ export function YangjibaoFundDetail({
                   value={weight != null ? formatPlainPercent(weight) : "—"}
                 />
               </div>
-              <div className="grid grid-cols-3 divide-x divide-slate-100">
+              <div className="grid grid-cols-3 divide-x divide-[var(--line)]">
                 <GridStat
                   label="持有收益"
                   value={formatSignedMoney(holdingProfit)}
@@ -806,7 +803,7 @@ export function YangjibaoFundDetail({
                   value={unitCost != null ? unitCost.toFixed(4) : detailLoading ? "…" : "—"}
                 />
               </div>
-              <div className="grid grid-cols-3 divide-x divide-slate-100">
+              <div className="grid grid-cols-3 divide-x divide-[var(--line)]">
                 <GridStat
                   label={dailyProfitEstimated ? "估算当日收益" : "当日收益"}
                   value={`${dailyProfitEstimated && dailyProfit != null ? "≈" : ""}${formatSignedMoney(dailyProfit)}`}
@@ -838,14 +835,14 @@ export function YangjibaoFundDetail({
           <button
             type="button"
             onClick={() => setHoldingsExpanded((current) => !current)}
-            className="flex min-h-11 w-full items-center justify-center text-slate-500 transition hover:text-slate-700"
+            className="flex min-h-11 w-full items-center justify-center text-[var(--muted)] transition hover:text-[var(--foreground)]"
             aria-label={holdingsExpanded ? "收起持仓明细" : "展开持仓明细"}
           >
             {holdingsExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
           </button>
         </div>
 
-        <div className="border-b border-slate-100 bg-white px-4">
+        <div className="border-b border-[var(--line)] bg-[var(--panel)] px-4">
           <div className="flex gap-6 text-[15px] font-bold" role="tablist" aria-label="基金详情视图">
             {(
               [
@@ -865,7 +862,7 @@ export function YangjibaoFundDetail({
                 className={`border-b-[2.5px] py-3 transition ${
                   tab === id
                     ? "border-[var(--brand)] text-[var(--brand)]"
-                    : "border-transparent text-slate-500"
+                    : "border-transparent text-[var(--muted)]"
                 }`}
               >
                 {label}
@@ -994,9 +991,9 @@ export function YangjibaoFundDetail({
           ) : null}
         </div>
 
-        <footer className="sticky bottom-0 z-10 shrink-0 border-t border-slate-100 bg-white">
+        <footer className="sticky bottom-0 z-10 shrink-0 border-t border-[var(--line)] bg-[var(--panel)]">
           <div
-            className={`grid divide-x divide-slate-100 ${
+            className={`grid divide-x divide-[var(--line)] ${
               onAdjustHolding && onDeleteHolding
                 ? "grid-cols-3"
                 : onAdjustHolding || onDeleteHolding
@@ -1007,18 +1004,18 @@ export function YangjibaoFundDetail({
             <button
               type="button"
               onClick={onClose}
-              className="flex min-h-11 flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+              className="flex min-h-11 flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-[var(--muted)] hover:bg-[var(--surface-muted)]"
             >
-              <ChevronLeft size={18} className="text-slate-500" />
+              <ChevronLeft size={18} className="text-[var(--muted)]" />
               返回列表
             </button>
             {onAdjustHolding ? (
               <button
                 type="button"
                 onClick={() => setModifyOpen(true)}
-                className="flex min-h-11 flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-[#2356e0] hover:bg-blue-50"
+                className="flex min-h-11 flex-col items-center justify-center gap-1 py-3 text-[11px] font-semibold text-[var(--brand)] hover:bg-[var(--brand-soft)]"
               >
-                <Pencil size={18} className="text-[#2356e0]" />
+                <Pencil size={18} className="text-[var(--brand)]" />
                 修改持仓
               </button>
             ) : null}
@@ -1038,7 +1035,7 @@ export function YangjibaoFundDetail({
 
         {deleteConfirmOpen ? (
           <div
-            className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/40 p-4"
+            className="fixed inset-0 z-[90] flex items-center justify-center bg-[var(--brand-ink)]/48 p-4 backdrop-blur-[6px]"
             onMouseDown={(event) => {
               // 删除请求在飞时不允许点遮罩关闭：那会让用户以为已经取消了。
               if (event.target === event.currentTarget && !deleting) {
@@ -1051,15 +1048,15 @@ export function YangjibaoFundDetail({
             <div
               ref={deleteDialogRef}
               tabIndex={-1}
-              className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl"
+              className="modal-sheet w-full max-w-sm rounded-[var(--radius-card)] p-5"
               role="dialog"
               aria-modal="true"
               aria-labelledby="delete-holding-title"
             >
-              <h3 id="delete-holding-title" className="text-base font-bold text-slate-900">
+              <h3 id="delete-holding-title" className="text-base font-bold text-[var(--brand-deep)]">
                 删除该基金？
               </h3>
-              <p className="mt-2 text-sm leading-6 text-slate-600">
+              <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
                 将移除「{activeHolding.fund_name}」并删除该基金档案，重新添加时作为新持仓录入。
               </p>
               {deleteError ? (
@@ -1175,7 +1172,7 @@ export function YangjibaoFundDetail({
 function ProfitRow({
   label,
   value,
-  valueClass = "text-slate-900",
+  valueClass = "text-[var(--brand-deep)]",
   hint,
 }: {
   label: string;
@@ -1184,10 +1181,10 @@ function ProfitRow({
   hint?: string;
 }) {
   return (
-    <div className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2">
+    <div className="flex items-center justify-between rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-2">
       <div className="min-w-0">
-        <div className="text-[11px] text-slate-500">{label}</div>
-        {hint ? <div className="truncate text-[10px] text-slate-500">{hint}</div> : null}
+        <div className="text-[11px] text-[var(--muted)]">{label}</div>
+        {hint ? <div className="truncate text-[10px] text-[var(--muted)]">{hint}</div> : null}
       </div>
       <div className={`shrink-0 text-sm font-black tabular-nums ${valueClass}`}>{value}</div>
     </div>
@@ -1254,7 +1251,7 @@ function PurchaseDatePickerModal({
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/40 p-0 sm:items-center sm:p-4"
+      className="fixed inset-0 z-[80] flex items-end justify-center bg-[var(--brand-ink)]/48 p-0 backdrop-blur-[6px] sm:items-center sm:p-4"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           onClose();
@@ -1265,39 +1262,39 @@ function PurchaseDatePickerModal({
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="w-full max-w-sm rounded-t-3xl bg-white p-5 shadow-2xl sm:rounded-2xl"
+        className="modal-sheet w-full max-w-sm rounded-t-[var(--radius-card)] p-5 sm:rounded-[var(--radius-card)]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="purchase-date-title"
         aria-busy={saving}
       >
-        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-200 sm:hidden" />
+        <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-[var(--line-strong)] sm:hidden" />
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h3 id="purchase-date-title" className="text-base font-bold text-slate-900">
+            <h3 id="purchase-date-title" className="text-base font-bold text-[var(--brand-deep)]">
               选择首次购入日期
             </h3>
-            <p className="mt-1 text-xs text-slate-500">滑动选择年月日，保存后每天自动递增</p>
+            <p className="mt-1 text-xs text-[var(--muted)]">滑动选择年月日，保存后每天自动递增</p>
           </div>
           <button
             ref={closeButtonRef}
             type="button"
             onClick={onClose}
-            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-600"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[var(--muted)] hover:bg-[var(--surface-muted)] hover:text-[var(--foreground)]"
             aria-label="关闭"
           >
             <X size={18} />
           </button>
         </div>
 
-        <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-center">
-          <div className="text-[11px] text-slate-500">
+        <div className="mt-4 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] px-4 py-3 text-center">
+          <div className="text-[11px] text-[var(--muted)]">
             {previewDays != null ? "预计持有天数" : "当前持有天数"}
           </div>
-          <div className="mt-1 text-2xl font-black tabular-nums text-slate-900">
+          <div className="mt-1 font-display text-2xl font-black tabular-nums text-[var(--brand-deep)]">
             {(previewDays ?? holdingDays) != null ? `${previewDays ?? holdingDays} 天` : "—"}
           </div>
-          {hint && !previewDays ? <div className="mt-1 text-[10px] text-slate-500">{hint}</div> : null}
+          {hint && !previewDays ? <div className="mt-1 text-[10px] text-[var(--muted)]">{hint}</div> : null}
         </div>
 
         <div className="mt-4">
@@ -1321,7 +1318,7 @@ function PurchaseDatePickerModal({
               type="button"
               disabled={saving}
               onClick={() => onDateChange("")}
-              className="min-h-11 flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="min-h-11 flex-1 rounded-xl border border-[var(--line)] py-2.5 text-sm font-semibold text-[var(--muted)] hover:bg-[var(--surface-muted)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               清除日期
             </button>

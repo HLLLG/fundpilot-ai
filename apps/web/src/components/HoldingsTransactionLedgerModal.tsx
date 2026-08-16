@@ -40,23 +40,23 @@ export function HoldingsTransactionLedgerModal({ onClose }: { onClose: () => voi
   }, []);
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/40 p-0 sm:items-center sm:p-4">
+    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-[var(--brand-ink)]/48 p-0 backdrop-blur-[6px] sm:items-center sm:p-4">
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="holdings-tx-ledger-title"
-        className="flex max-h-[min(92dvh,720px)] w-full max-w-lg flex-col overflow-hidden bg-white shadow-2xl sm:rounded-2xl"
+        className="modal-sheet flex max-h-[min(92dvh,720px)] w-full max-w-lg flex-col overflow-hidden sm:rounded-[var(--radius-card)]"
       >
-        <header className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
-          <h2 id="holdings-tx-ledger-title" className="text-base font-black text-slate-950">
+        <header className="flex items-center justify-between gap-3 border-b border-[var(--line)] px-4 py-3">
+          <h2 id="holdings-tx-ledger-title" className="text-base font-black text-[var(--brand-deep)]">
             交易记录
           </h2>
           <button
             ref={closeButtonRef}
             type="button"
             onClick={onClose}
-            className="inline-flex h-11 w-11 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-full text-[var(--muted)] transition hover:bg-[var(--surface-muted)]"
             aria-label="关闭"
           >
             <X size={18} />

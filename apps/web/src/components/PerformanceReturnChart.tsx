@@ -8,8 +8,8 @@ import type { TradeMarker } from "@/lib/tradeMarkers";
 const Y_AXIS_HEADROOM_RATIO = 0.12;
 const FUND_COLOR = "#3d7eff";
 const BENCH_COLOR = "#f59e0b";
-const BUY_COLOR = "#e11d48";
-const SELL_COLOR = "#059669";
+const BUY_COLOR = "#c81e3a";
+const SELL_COLOR = "#047857";
 // formatter 提到模块作用域：交易标记浮层按成交笔数逐条渲染金额。输出格式不变。
 const TRADE_AMOUNT_FORMATTER = new Intl.NumberFormat("zh-CN", {
   minimumFractionDigits: 2,
@@ -327,7 +327,7 @@ function PerformanceReturnChartView({
               y1={chart.plotTop}
               x2={active.x}
               y2={chart.plotBottom}
-              stroke="#6366f1"
+              stroke="#7a898f"
               strokeWidth={1}
               strokeDasharray="4 3"
             />
@@ -336,7 +336,7 @@ function PerformanceReturnChartView({
               y1={active.fundY}
               x2={chart.plotRight}
               y2={active.fundY}
-              stroke="#0ea5e9"
+              stroke="#b58b45"
               strokeWidth={1}
               strokeDasharray="4 3"
             />
@@ -358,7 +358,7 @@ function PerformanceReturnChartView({
               y={active.fundY + 3}
               fontSize={8}
               className="font-semibold tabular-nums"
-              fill="#0ea5e9"
+              fill="#b58b45"
             >
               {formatSignedPercent(active.fundPercent)}
             </text>
@@ -377,7 +377,7 @@ function PerformanceReturnChartView({
               textAnchor="middle"
               fontSize={8}
               className="font-semibold tabular-nums"
-              fill="#6366f1"
+              fill="#7a898f"
             >
               {active.date.slice(5)}
             </text>

@@ -310,8 +310,8 @@ function DiscoveryRecommendationCard({
       (!currentDiscoveryAllocation && rec.suggested_amount_yuan != null),
   );
   return (
-    <article className={`rounded-2xl border bg-white shadow-sm ${
-      compact ? "border-slate-200/80 p-3.5" : "border-slate-200 p-4"
+    <article className={`rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)] ${
+      compact ? "p-3.5" : "p-4"
     }`}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <button
@@ -319,10 +319,10 @@ function DiscoveryRecommendationCard({
           onClick={() => onOpenFund?.(rec)}
           className="min-h-11 min-w-0 rounded-lg text-left transition hover:text-[var(--brand-strong)]"
         >
-          <div className="break-words text-sm font-bold text-slate-900">
+          <div className="break-words text-sm font-bold text-[var(--brand-deep)]">
             [{rec.fund_code}] {rec.fund_name}
           </div>
-          <div className="mt-1 break-words text-xs text-slate-500">
+          <div className="mt-1 break-words text-xs text-[var(--muted)]">
             {rec.sector_name}
             {rec.hold_horizon ? ` · 持有期 ${rec.hold_horizon}` : ""}
             {rec.confidence ? ` · 置信度 ${rec.confidence}` : ""}
@@ -349,12 +349,12 @@ function DiscoveryRecommendationCard({
         >
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <span className={`text-[11px] font-black tracking-wide ${
-              currentDiscoveryAllocation ? "text-[var(--success-fg)]" : "text-slate-600"
+              currentDiscoveryAllocation ? "text-[var(--success-fg)]" : "text-[var(--muted)]"
             }`}>
               {currentDiscoveryAllocation ? "本次参考金额" : "历史参考金额"}
             </span>
             <strong className={`font-mono text-lg tabular-nums ${
-              currentDiscoveryAllocation ? "text-[var(--success-fg)]" : "text-slate-900"
+              currentDiscoveryAllocation ? "text-[var(--success-fg)]" : "text-[var(--brand-deep)]"
             }`}>
               {formatYuan(rec.suggested_amount_yuan)}
             </strong>
@@ -474,7 +474,7 @@ function DiscoveryAllocationPlanPanel({ report }: { report: FundDiscoveryReport 
   return (
     <section
       aria-label="本次资金安排"
-      className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+      className="overflow-hidden rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)]"
     >
       <details className="group">
         <summary className="flex cursor-pointer list-none items-start justify-between gap-3 px-4 py-3.5 outline-none hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--brand)] [&::-webkit-details-marker]:hidden">
@@ -755,14 +755,14 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
     <div className="grid min-w-0 gap-5">
       <section
         data-testid="discovery-decision-summary"
-        className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+        className="overflow-hidden rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)]"
       >
-        <div className="bg-[linear-gradient(135deg,#071f29_0%,#123847_65%,#176b70_145%)] px-5 py-5 text-white sm:px-6">
+        <div className="dossier-head px-5 py-5 sm:px-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0 max-w-3xl">
-              <p className="text-[10px] font-black tracking-[0.2em] text-[var(--accent-soft)]/75">DISCOVERY BRIEF · 荐基决策简报</p>
-              <h2 className="font-display mt-2 text-xl font-extrabold leading-tight text-white sm:text-2xl">{report.title}</h2>
-              <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-200">{report.summary}</p>
+              <p className="ink-label">Discovery Brief · 荐基决策简报</p>
+              <h2 className="font-display mt-2 text-xl font-extrabold leading-tight sm:text-2xl">{report.title}</h2>
+              <p className="mt-2 line-clamp-3 text-sm leading-6 text-[#f4ead4]/78">{report.summary}</p>
               {strategySummary ? (
                 <p className="mt-3 inline-flex rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-black text-[var(--accent-soft)]">
                   {strategySummary}
@@ -794,12 +794,12 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                 {groupedRecommendations.actionable.length ? <ShieldCheck size={19} /> : <ShieldAlert size={19} />}
               </span>
               <div className="min-w-0">
-                <h3 className="text-base font-black text-slate-950">{decisionHeadline}</h3>
+                <h3 className="text-base font-black text-[var(--brand-deep)]">{decisionHeadline}</h3>
                 {/* 结论下面直接给动作。判断依据（哪几道校验过了/没过）移进口径披露：
                     它解释的是同一件事，而右侧的「建议买入 / 等条件 / 仅观察」三格
                     已经把结果量化过一遍了。 */}
-                <p className="mt-1 text-sm leading-6 text-slate-700">
-                  <span className="font-black text-slate-950">下一步：</span>{nextStep}
+                <p className="mt-1 text-sm leading-6 text-[var(--foreground)]">
+                  <span className="font-black text-[var(--brand-deep)]">下一步：</span>{nextStep}
                 </p>
                 <MethodologyNote label="判断依据" className="mt-1.5">
                   {decisionBasis}
@@ -808,14 +808,14 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
             </div>
           </div>
 
-          <dl className="grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-slate-200 ring-1 ring-slate-200 lg:min-w-[280px]">
+          <dl className="ledger-metrics overflow-hidden rounded-xl ring-1 ring-[var(--line)] lg:min-w-[280px]">
             {[
               ["建议买入", groupedRecommendations.decisionCounts.actionable, "text-[var(--success-fg)]"],
               ["等条件", groupedRecommendations.decisionCounts.conditional_wait, "text-[var(--warn-fg)]"],
-              ["仅观察", groupedRecommendations.decisionCounts.watch_only, "text-slate-700"],
+              ["仅观察", groupedRecommendations.decisionCounts.watch_only, "text-[var(--muted)]"],
             ].map(([label, value, className]) => (
-              <div key={String(label)} className="bg-white px-3 py-2.5 text-center">
-                <dt className="text-[10px] font-bold text-slate-500">{label}</dt>
+              <div key={String(label)} className="bg-[var(--panel)] px-3 py-2.5 text-center">
+                <dt className="text-[10px] font-bold text-[var(--muted)]">{label}</dt>
                 <dd className={`mt-1 font-mono text-lg font-black tabular-nums ${className}`}>{value}</dd>
               </div>
             ))}
@@ -823,14 +823,14 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
         </div>
 
         {report.market_view || report.target_sectors?.length ? (
-          <details className="group border-t border-slate-100">
-            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-5 text-xs font-black text-slate-600 hover:bg-slate-50 sm:px-6 [&::-webkit-details-marker]:hidden">
+          <details className="group border-t border-[var(--line)]">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-5 text-xs font-black text-[var(--muted)] hover:bg-[var(--surface-muted)] sm:px-6 [&::-webkit-details-marker]:hidden">
               展开市场判断与扫描范围
               <ChevronDown size={15} aria-hidden="true" className="transition group-open:rotate-180" />
             </summary>
-            <div className="space-y-2 border-t border-slate-100 bg-slate-50/60 px-5 py-3 text-sm leading-6 text-slate-700 sm:px-6">
-              {report.market_view ? <p><span className="font-black text-slate-900">市场判断：</span>{report.market_view}</p> : null}
-              {report.target_sectors?.length ? <p className="text-xs text-slate-500">扫描范围：{report.target_sectors.join("、")}</p> : null}
+            <div className="space-y-2 border-t border-[var(--line)] bg-[var(--surface-muted)] px-5 py-3 text-sm leading-6 text-[var(--foreground)] sm:px-6">
+              {report.market_view ? <p><span className="font-black text-[var(--brand-deep)]">市场判断：</span>{report.market_view}</p> : null}
+              {report.target_sectors?.length ? <p className="text-xs text-[var(--muted)]">扫描范围：{report.target_sectors.join("、")}</p> : null}
             </div>
           </details>
         ) : null}
@@ -856,8 +856,8 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
       />
 
       {hasEntryMaturity ? (
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-4 py-3.5">
+        <section className="overflow-hidden rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)]">
+          <div className="border-b border-[var(--line)] px-4 py-3.5">
             <div className="flex flex-wrap items-end justify-between gap-2">
               <div className="panel-header-main">
                 <h3 className="panel-header-title">今日可布局方向</h3>
@@ -866,7 +866,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                 </MethodologyNote>
               </div>
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                <span className="rounded-full bg-slate-950 px-2.5 py-1 text-[11px] font-black text-white">
+                <span className="rounded-full bg-[var(--brand-ink)] px-2.5 py-1 text-[11px] font-black text-[#f4ead4]">
                   {directionGroups.early.length
                     ? `${directionGroups.ready.length} 个成熟 · ${directionGroups.early.length} 个提前试仓`
                     : `${directionGroups.ready.length} 个通过入场线`}
@@ -877,7 +877,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
                   aria-expanded={directionsOpen}
                   aria-controls={directionsContentId}
                   aria-label={directionsOpen ? "收起今日可布局方向" : "展开今日可布局方向"}
-                  className="inline-flex size-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
+                  className="inline-flex size-9 items-center justify-center rounded-full text-[var(--muted)] transition hover:bg-[var(--surface-muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
                 >
                   <ChevronDown
                     size={18}
@@ -1006,9 +1006,9 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
           ) : null}
         </section>
       ) : sectorOpportunities.length ? (
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <section className="section-card p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-black text-slate-950">本次主方向</h3>
+            <h3 className="text-sm font-black text-[var(--brand-deep)]">本次主方向</h3>
             {/* 原来这里整句解释「默认展示前 2 个方向」——下面就摆着 2 张卡，
                 外加一个「查看另外 N 个研究方向」的展开器，不需要再讲一遍。 */}
             {mainlineSnapshot?.schema_version ? (
@@ -1064,7 +1064,7 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
           />
         ) : null}
 
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <section className="overflow-hidden rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)]">
           <button
             type="button"
             onClick={() => setOutcomesOpen((value) => !value)}
@@ -1073,14 +1073,14 @@ export function DiscoveryReportPanel({ report, onOpenFund }: DiscoveryReportPane
             aria-controls="discovery-outcomes-content"
           >
             <span className="min-w-0">
-              <span className="flex items-center gap-2 text-sm font-black text-slate-900">
+              <span className="flex items-center gap-2 text-sm font-black text-[var(--brand-deep)]">
                 <BarChart3 size={17} aria-hidden="true" className="text-[var(--brand)]" />
                 历史效果复盘
               </span>
               {/* 「展开后再加载」是实现细节，用户不需要知道。 */}
-              <span className="mt-0.5 block text-xs text-slate-500">T+5 / T+20 / T+60 表现</span>
+              <span className="mt-0.5 block text-xs text-[var(--muted)]">T+5 / T+20 / T+60 表现</span>
             </span>
-            <ChevronDown size={17} aria-hidden="true" className={`shrink-0 text-slate-500 transition ${outcomesOpen ? "rotate-180" : ""}`} />
+            <ChevronDown size={17} aria-hidden="true" className={`shrink-0 text-[var(--muted)] transition ${outcomesOpen ? "rotate-180" : ""}`} />
           </button>
           {outcomesOpen ? (
             <div id="discovery-outcomes-content" className="border-t border-slate-100 p-3">

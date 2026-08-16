@@ -75,6 +75,97 @@
   --app-masthead-gap: 0.75rem;
 }
 
+/*
+ * 把 Tailwind 默认 slate / blue / indigo / amber / orange 收进台账色。
+ * 类名不变（测试仍断言 bg-emerald-50 等字符串），颜色跟 token 走。
+ * 不改 --color-white。emerald / rose 对齐红涨绿跌，不当成品牌蓝。
+ */
+@theme {
+  --color-slate-50: #f6f4ee;
+  --color-slate-100: #eceae3;
+  --color-slate-200: #d8d6cd;
+  --color-slate-300: #b8b9b0;
+  --color-slate-400: #889298;
+  --color-slate-500: #52656d;
+  --color-slate-600: #3d5158;
+  --color-slate-700: #2a3d45;
+  --color-slate-800: #1a2e36;
+  --color-slate-900: #102631;
+  --color-slate-950: #061820;
+
+  --color-blue-50: #eaf1f4;
+  --color-blue-100: #dce7ea;
+  --color-blue-200: #c2d4da;
+  --color-blue-300: #8fb0bb;
+  --color-blue-400: #4d7d8d;
+  --color-blue-500: #1b4b5f;
+  --color-blue-600: #18485a;
+  --color-blue-700: #123847;
+  --color-blue-800: #071f2b;
+  --color-blue-900: #061820;
+  --color-blue-950: #041116;
+
+  --color-indigo-50: #eaf1f4;
+  --color-indigo-100: #dce7ea;
+  --color-indigo-200: #c2d4da;
+  --color-indigo-300: #8fb0bb;
+  --color-indigo-400: #4d7d8d;
+  --color-indigo-500: #1b4b5f;
+  --color-indigo-600: #18485a;
+  --color-indigo-700: #123847;
+  --color-indigo-800: #071f2b;
+  --color-indigo-900: #061820;
+  --color-indigo-950: #041116;
+
+  --color-amber-50: #f6ecd8;
+  --color-amber-100: #f1e8d7;
+  --color-amber-200: #e4d2a8;
+  --color-amber-300: #d4b56e;
+  --color-amber-400: #c19648;
+  --color-amber-500: #b58b45;
+  --color-amber-600: #8a6728;
+  --color-amber-700: #765622;
+  --color-amber-800: #5a3f10;
+  --color-amber-900: #3d2a0a;
+  --color-amber-950: #24190a;
+
+  --color-orange-50: #f6ecd8;
+  --color-orange-100: #f1e8d7;
+  --color-orange-200: #e4d2a8;
+  --color-orange-300: #d4b56e;
+  --color-orange-400: #c19648;
+  --color-orange-500: #b58b45;
+  --color-orange-600: #8a6728;
+  --color-orange-700: #765622;
+  --color-orange-800: #5a3f10;
+  --color-orange-900: #3d2a0a;
+  --color-orange-950: #24190a;
+
+  --color-emerald-50: #e6f2ec;
+  --color-emerald-100: #d4ebe0;
+  --color-emerald-200: #a8d4c0;
+  --color-emerald-300: #6bb89a;
+  --color-emerald-400: #2d9a72;
+  --color-emerald-500: #047857;
+  --color-emerald-600: #047857;
+  --color-emerald-700: #036347;
+  --color-emerald-800: #0f4a37;
+  --color-emerald-900: #0a3326;
+  --color-emerald-950: #06241b;
+
+  --color-rose-50: #f7e3e6;
+  --color-rose-100: #f0cdd3;
+  --color-rose-200: #e4a3ad;
+  --color-rose-300: #d46b7a;
+  --color-rose-400: #c81e3a;
+  --color-rose-500: #c81e3a;
+  --color-rose-600: #a01732;
+  --color-rose-700: #7d0f22;
+  --color-rose-800: #5c0b19;
+  --color-rose-900: #3d0711;
+  --color-rose-950: #2a050c;
+}
+
 /* 底栏的定位和桌面隐藏必须在首屏 CSS。
    `.dashboard-bottom-nav` 的视觉样式在按需加载的 dashboard.css 里；热更新
    会短暂卸掉那份文件。若定位也只写在那里，未定位的底栏会掉进顶栏左上角。 */
@@ -155,6 +246,10 @@ html {
 body {
   min-height: 100vh;
   margin: 0;
+  background:
+    radial-gradient(920px 420px at 6% -12%, rgba(181, 139, 69, 0.08), transparent 58%),
+    radial-gradient(760px 380px at 98% 0%, rgba(7, 31, 43, 0.05), transparent 56%),
+    var(--background);
   color: var(--foreground);
   font-family:
     var(--font-sans),
@@ -258,6 +353,89 @@ button:disabled {
   font-weight: 700;
   letter-spacing: 0.02em;
   color: var(--foreground);
+}
+
+.modal-backdrop {
+  background: color-mix(in srgb, var(--brand-ink) 48%, transparent);
+  backdrop-filter: blur(6px);
+}
+
+.modal-sheet {
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
+}
+
+.search-shell {
+  display: flex;
+  min-height: 3rem;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-muted);
+  padding: 0 0.875rem;
+  transition: border-color var(--motion-fast) ease, background var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+}
+
+.search-shell:focus-within {
+  border-color: var(--brand);
+  background: var(--panel-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 18%, transparent);
+}
+
+.dossier-head {
+  color: #f4ead4;
+  background:
+    linear-gradient(90deg, var(--accent) 0 3px, transparent 3px),
+    radial-gradient(480px 180px at 100% -30%, rgba(181, 139, 69, 0.2), transparent 62%),
+    var(--brand-ink);
+}
+
+.ledger-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  background: var(--panel);
+}
+
+.ledger-metrics > * {
+  border-left: 1px solid var(--line);
+}
+
+.ledger-metrics > :first-child {
+  border-left: 0;
+}
+
+.ink-label {
+  font-size: 0.625rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+}
+
+.market-board-head {
+  background:
+    linear-gradient(90deg, var(--accent) 0 3px, transparent 3px),
+    radial-gradient(420px 140px at 0% -30px, rgba(181, 139, 69, 0.16), transparent 70%),
+    var(--panel);
+}
+
+.gold-hairline {
+  position: relative;
+}
+
+.gold-hairline::after {
+  content: "";
+  position: absolute;
+  right: 42%;
+  bottom: -1px;
+  left: 0;
+  height: 1px;
+  background: linear-gradient(90deg, var(--accent), transparent);
+}
+
+.dossier-head .ink-label {
+  color: color-mix(in srgb, var(--accent-soft) 82%, transparent);
 }
 
 .tab-segment {
@@ -1143,10 +1321,21 @@ button:disabled {
 .btn-ghost:active { transform: scale(0.985); }
 
 .landing-masthead {
+  position: relative;
   height: 4.5rem;
   border-bottom: 1px solid var(--line);
   background: rgba(236, 238, 234, 0.92);
   backdrop-filter: blur(12px);
+}
+
+.landing-masthead::after {
+  content: "";
+  position: absolute;
+  right: 42%;
+  bottom: -1px;
+  left: 0;
+  height: 1px;
+  background: linear-gradient(90deg, var(--accent), transparent);
 }
 
 .landing-editorial-hero {
@@ -1194,7 +1383,18 @@ button:disabled {
   box-shadow: var(--shadow-lg);
 }
 
-.desk-window-head { display: grid; grid-template-columns: auto 1fr; gap: 0.8rem; align-items: center; min-height: 4rem; padding: 0 1.25rem; border-bottom: 1px solid rgba(255,255,255,.1); }
+.desk-window-head {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.8rem;
+  align-items: center;
+  min-height: 4rem;
+  padding: 0 1.25rem;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+  background:
+    linear-gradient(90deg, var(--accent) 0 3px, transparent 3px),
+    radial-gradient(360px 120px at 100% -20%, rgba(181, 139, 69, 0.2), transparent 62%);
+}
 .desk-window-head > span { font-size: 0.8125rem; font-weight: 700; }
 .desk-window .brand-seal { background: #f2ede0; color: var(--brand-deep); }
 .desk-window .brand-seal + span { display: none; }

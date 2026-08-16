@@ -19,7 +19,7 @@ const sentimentLabel = {
 const sentimentClass = {
   bullish: "bg-[var(--danger-bg)] text-[var(--danger-fg)] border-[var(--danger-border)]",
   bearish: "bg-[var(--success-bg)] text-[var(--success-fg)] border-[var(--success-border)]",
-  neutral: "bg-slate-50 text-slate-700 border-slate-100",
+  neutral: "bg-[var(--surface-muted)] text-[var(--foreground)] border-[var(--line)]",
 } as const;
 
 function buildTitleUrlMap(marketNews: MarketNewsItem[]): Map<string, string> {
@@ -48,7 +48,7 @@ function NewsSourceLink({ title, url }: { title: string; url: string }) {
       href={url}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-start gap-0.5 font-semibold underline decoration-[rgba(37,99,235,0.4)] underline-offset-2 transition hover:text-[var(--brand-strong)]"
+      className="inline-flex items-start gap-0.5 font-semibold underline decoration-[var(--accent)]/50 underline-offset-2 transition hover:text-[var(--brand-strong)]"
     >
       <span>{title}</span>
       <ExternalLink size={10} className="mt-0.5 shrink-0 opacity-60" />
@@ -121,25 +121,25 @@ export function ReportNewsBriefPanel({ briefs, marketNews = [] }: ReportNewsBrie
   const titleUrlMap = buildTitleUrlMap(marketNews);
 
   return (
-    <section className="rounded-[24px] border border-[rgba(37,99,235,0.18)] bg-gradient-to-br from-[var(--brand-soft)] via-white to-white p-5 shadow-sm">
-      <div className="mb-4 flex items-center gap-2 text-sm font-black text-slate-950">
+    <section className="section-card p-5">
+      <div className="mb-4 flex items-center gap-2 text-sm font-black text-[var(--brand-deep)]">
         <Newspaper size={18} className="text-[var(--brand)]" />
         主题要闻摘要
-        <span className="text-xs font-semibold text-slate-500">（点击要点或出处跳转原文）</span>
+        <span className="text-xs font-semibold text-[var(--muted)]">（点击要点或出处跳转原文）</span>
       </div>
       <div className="space-y-4">
         {briefs.map((brief) => (
           <article
             key={brief.topic}
-            className="rounded-2xl border border-white bg-white/90 px-4 py-3 shadow-sm"
+            className="rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel-strong)] px-4 py-3"
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-black text-slate-950">{brief.topic}</h3>
-              <span className="text-[10px] font-bold text-slate-500">
+              <h3 className="text-sm font-black text-[var(--brand-deep)]">{brief.topic}</h3>
+              <span className="text-[10px] font-bold text-[var(--muted)]">
                 {brief.news_count} 条 · {brief.provider}
               </span>
             </div>
-            <p className="mt-2 text-sm leading-6 text-slate-700">{brief.summary}</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--foreground)]">{brief.summary}</p>
             {brief.points.length > 0 ? (
               <ul className="mt-3 space-y-2">
                 {brief.points.map((point, index) => (

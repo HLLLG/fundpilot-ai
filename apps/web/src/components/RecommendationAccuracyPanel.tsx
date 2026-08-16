@@ -28,7 +28,7 @@ function HorizonCard({ label, stats }: { label: string; stats?: OutcomeHorizonSt
   const mature = stats?.mature_count ?? 0;
   const eligible = stats?.eligible_count ?? 0;
   return (
-    <div className="rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-sm">
+    <div className="rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-4">
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-black tracking-[0.12em] text-slate-500">{label}</span>
         <StatusPill tone={mature ? "green" : "amber"}>{mature ? "已成熟" : "待成熟"}</StatusPill>
@@ -91,14 +91,15 @@ export function RecommendationAccuracyPanel() {
   const primaryMetrics = data?.metrics ?? data?.by_horizon?.[primaryKey]?.metrics;
 
   return (
-    <section className="glass-panel rounded-[24px] p-5" aria-busy={loading}>
+    <section className="section-card p-5" aria-busy={loading}>
       <div className="mb-4 flex items-start gap-3">
-        <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-950 text-emerald-300 shadow-sm">
+        <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--brand-ink)] text-[var(--accent)]">
           <FlaskConical size={20} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-lg font-black text-slate-950">T+N 决策复盘</h3>
+          <p className="ink-label">Decision Review</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <h3 className="text-lg font-black text-[var(--brand-deep)]">T+N 决策复盘</h3>
             <StatusPill tone="amber">仅人工复盘</StatusPill>
           </div>
           {/* 带数字的那半句（份数、报告日）是真信息，留下；评价口径收进披露。 */}
@@ -154,17 +155,17 @@ export function RecommendationAccuracyPanel() {
       ) : null}
 
       {styles.length ? (
-        <div className="mt-4 rounded-2xl border border-slate-200/80 bg-slate-50/80 p-4">
-          <div className="mb-3 flex items-center gap-2 text-xs font-black tracking-[0.08em] text-slate-600">
-            <Activity size={14} className="text-emerald-700" />
+        <div className="mt-4 rounded-2xl border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+          <div className="mb-3 flex items-center gap-2 text-xs font-black tracking-[0.08em] text-[var(--muted)]">
+            <Activity size={14} className="text-[var(--accent-strong)]" />
             按决策风格 · {primaryKey}
           </div>
           <div className="grid gap-2 sm:grid-cols-3">
             {styles.map((bucket) => {
               const stats = bucket.by_horizon?.[primaryKey];
               return (
-                <div key={bucket.decision_style} className="rounded-xl bg-white px-3 py-3 shadow-sm">
-                  <div className="text-sm font-black text-slate-950">
+                <div key={bucket.decision_style} className="rounded-xl border border-[var(--line)] bg-[var(--panel)] px-3 py-3">
+                  <div className="text-sm font-black text-[var(--brand-deep)]">
                     {STYLE_LABELS[bucket.decision_style] ?? bucket.decision_style}
                   </div>
                   <p className="mt-1 text-xs leading-5 text-slate-600 tabular-nums">

@@ -28,6 +28,12 @@ export function LandingPage() {
               <h1 id="landing-title" className="font-display landing-title">
                 截个图，<span>就懂你的基金</span>
               </h1>
+              <p className="landing-deck">截图进台账，先校对持仓，再看当日判断。</p>
+              <div className="landing-compact-trust">
+                <span>截图识别</span>
+                <span>持仓台账</span>
+                <span>日报荐基</span>
+              </div>
               <div className="mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
                 <Link
                   href="/register"
@@ -89,6 +95,18 @@ function ResearchDeskPreview() {
           <span className="active"><FileCheck2 size={15} />校对</span>
           <i />
           <span>判断</span>
+        </div>
+        <div className="desk-list" aria-hidden="true">
+          <div>
+            <span>底仓</span>
+            <strong>沪深300ETF</strong>
+            <small>观察</small>
+          </div>
+          <div>
+            <span>弹性</span>
+            <strong>半导体方向</strong>
+            <small>等条件</small>
+          </div>
         </div>
       </div>
     </figure>

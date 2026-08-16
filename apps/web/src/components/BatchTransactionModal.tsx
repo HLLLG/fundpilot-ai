@@ -99,7 +99,7 @@ export function BatchTransactionModal({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-stretch justify-center overflow-hidden bg-[var(--panel)] sm:items-center sm:bg-slate-950/40 sm:p-4"
+      className="fixed inset-0 z-[60] flex items-stretch justify-center overflow-hidden bg-[var(--panel)] sm:items-center sm:bg-[color-mix(in_srgb,var(--brand-ink)_48%,transparent)] sm:p-4 sm:backdrop-blur-[6px]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           requestClose();
@@ -117,7 +117,7 @@ export function BatchTransactionModal({
         aria-labelledby="batch-transaction-modal-title"
       >
         <ScreenshotDropOverlay active={screenshotIntake.dragActive} />
-        <header className="relative flex items-center justify-center border-b border-slate-200/70 bg-white px-4 pb-3.5 pt-[max(0.875rem,env(safe-area-inset-top,0px))]">
+        <header className="relative flex items-center justify-center border-b border-[var(--line)] bg-[var(--panel)] px-4 pb-3.5 pt-[max(0.875rem,env(safe-area-inset-top,0px))]">
           <button
             ref={closeButtonRef}
             type="button"
@@ -128,7 +128,7 @@ export function BatchTransactionModal({
           >
             <ChevronLeft size={22} strokeWidth={2.25} />
           </button>
-          <h2 id="batch-transaction-modal-title" className="text-base font-bold text-slate-900">
+          <h2 id="batch-transaction-modal-title" className="text-base font-bold text-[var(--brand-deep)]">
             {dialogTitle}
           </h2>
         </header>

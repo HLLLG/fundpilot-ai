@@ -119,10 +119,10 @@ export function DiscoverySkeleton({ streaming, onCancel }: DiscoverySkeletonProp
         ) : null}
 
         {showTypewriter ? (
-          <div className="rounded-xl border border-slate-200 bg-slate-950/95 px-3 py-2.5">
-            <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-5 text-emerald-300">
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--brand-ink)] px-3 py-2.5">
+            <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-5 text-[#f4ead4]">
               {tokenBuffer}
-              <span className="animate-pulse text-emerald-400">▍</span>
+              <span className="animate-pulse text-[var(--accent)]">▍</span>
             </pre>
           </div>
         ) : null}

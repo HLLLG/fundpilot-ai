@@ -109,7 +109,7 @@ export function ReportChatDrawer({ reportId, reportTitle }: ReportChatDrawerProp
             <div
               key="backdrop"
               data-testid="report-chat-backdrop"
-              className="report-chat-backdrop pointer-events-auto fixed inset-0 bg-[var(--brand-ink)]/35 backdrop-blur-[2px]"
+              className="modal-backdrop report-chat-backdrop pointer-events-auto fixed inset-0"
               onMouseDown={() => setOpen(false)}
               onClick={() => setOpen(false)}
             />
@@ -122,7 +122,7 @@ export function ReportChatDrawer({ reportId, reportTitle }: ReportChatDrawerProp
             aria-modal={isDesktop ? undefined : true}
             aria-labelledby={titleId}
             tabIndex={-1}
-            className="report-chat-drawer pointer-events-auto relative z-[1] flex h-[min(82dvh,720px)] w-full flex-col overflow-hidden rounded-t-3xl bg-[var(--panel-strong)] shadow-2xl outline-none sm:h-[100dvh] sm:w-[420px] sm:rounded-none"
+            className="report-chat-drawer modal-sheet pointer-events-auto relative z-[1] flex h-[min(82dvh,720px)] w-full flex-col overflow-hidden rounded-t-[var(--radius-card)] outline-none sm:h-[100dvh] sm:w-[420px] sm:rounded-none"
           >
             <header className="flex min-h-14 shrink-0 items-center justify-between border-b border-[var(--line)] bg-[var(--panel-strong)] px-4">
               <h2 id={titleId} className="text-base font-black text-[var(--brand-deep)]">

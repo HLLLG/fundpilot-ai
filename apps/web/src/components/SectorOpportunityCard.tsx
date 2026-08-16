@@ -8,9 +8,9 @@ import { MethodologyNote } from "@/components/MethodologyNote";
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-lg bg-white px-2 py-1.5 ring-1 ring-slate-100">
-      <div className="text-[10px] font-bold text-slate-500">{label}</div>
-      <div className="mt-0.5 break-words font-semibold text-slate-800">{value}</div>
+    <div className="min-w-0 rounded-lg bg-[var(--panel-strong)] px-2 py-1.5 ring-1 ring-[var(--line)]">
+      <div className="text-[10px] font-bold text-[var(--muted)]">{label}</div>
+      <div className="mt-0.5 break-words font-semibold text-[var(--brand-deep)]">{value}</div>
     </div>
   );
 }

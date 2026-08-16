@@ -81,12 +81,15 @@ export function DiscoveryOutcomesPanel({ reportId }: DiscoveryOutcomesPanelProps
   }, [horizon, reportId, retrySequence]);
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-busy={pending}>
+    <section className="section-card p-5" aria-busy={pending}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
-          <BarChart3 size={16} className="text-[var(--success-icon)]" />
-          荐基 T+N 复盘
-        </h3>
+        <div>
+          <p className="ink-label">Discovery Review</p>
+          <h3 className="mt-1 flex items-center gap-2 text-sm font-bold text-[var(--brand-deep)]">
+            <BarChart3 size={16} className="text-[var(--accent-strong)]" />
+            荐基 T+N 复盘
+          </h3>
+        </div>
         <div className="inline-flex rounded-xl bg-slate-100 p-1" aria-label="选择复盘周期">
           {HORIZONS.map((days) => (
             <button

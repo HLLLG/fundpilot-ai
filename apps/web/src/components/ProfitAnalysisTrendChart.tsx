@@ -4,7 +4,7 @@ import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ProfitTrend } from "@/lib/api";
 import { clockToSessionRatio } from "@/lib/intradayChartTime";
 
-const INDEX_COLOR = "#5B8DEF";
+const INDEX_COLOR = "#7a898f";
 const AXIS_FONT_SIZE = 10;
 const AXIS_LABEL_CLASS = "fill-slate-400 tabular-nums";
 const DEFAULT_CHART_WIDTH = 720;
@@ -148,22 +148,22 @@ function leftPaddingForLabels(maxAbs: number) {
 function portfolioColors(latest: number) {
   if (latest > 0.005) {
     return {
-      line: "#e11d48",
-      fillStart: "rgba(225,29,72,0.18)",
-      fillEnd: "rgba(225,29,72,0.02)",
+      line: "#c81e3a",
+      fillStart: "rgba(200,30,58,0.18)",
+      fillEnd: "rgba(200,30,58,0.02)",
     };
   }
   if (latest < -0.005) {
     return {
-      line: "#059669",
-      fillStart: "rgba(5,150,105,0.16)",
-      fillEnd: "rgba(5,150,105,0.02)",
+      line: "#047857",
+      fillStart: "rgba(4,120,87,0.16)",
+      fillEnd: "rgba(4,120,87,0.02)",
     };
   }
   return {
-    line: "#64748b",
-    fillStart: "rgba(100,116,139,0.1)",
-    fillEnd: "rgba(100,116,139,0.01)",
+    line: "#7a898f",
+    fillStart: "rgba(122,137,143,0.1)",
+    fillEnd: "rgba(122,137,143,0.01)",
   };
 }
 

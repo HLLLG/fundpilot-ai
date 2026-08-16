@@ -1678,7 +1678,7 @@ export function Dashboard() {
             <button
               type="button"
               onClick={() => setFundSearchOpen(true)}
-              className="touch-target inline-flex items-center justify-center rounded-full text-slate-600 transition hover:bg-white hover:text-[var(--brand-strong)]"
+              className="touch-target inline-flex items-center justify-center rounded-full text-[var(--muted)] transition hover:bg-[var(--panel)] hover:text-[var(--brand-strong)]"
               aria-label="搜索基金"
               title="搜索基金"
             >

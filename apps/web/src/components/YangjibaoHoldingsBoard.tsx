@@ -135,7 +135,7 @@ function formatBalance(value: number | null | undefined, hidden: boolean) {
 }
 
 const SUMMARY_ICON_BTN =
-  "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]";
+  "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-[var(--muted)] transition hover:bg-[var(--surface-muted)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]";
 
 function holdingsSortValue(
   holding: Holding,
@@ -499,7 +499,7 @@ export function YangjibaoHoldingsBoard({
           <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
             <div className="min-w-0">
               <div className="flex min-h-11 items-center">
-                <div className="text-[13px] font-semibold text-slate-500">总资产</div>
+                <div className="text-[13px] font-semibold text-[var(--muted)]">总资产</div>
                 <button
                   type="button"
                   onClick={() => {
@@ -525,7 +525,7 @@ export function YangjibaoHoldingsBoard({
                   <Receipt size={16} />
                 </button>
               </div>
-              <div className="kpi-value mt-1 break-all text-[clamp(1.85rem,10vw,2.15rem)] leading-none text-slate-950">
+              <div className="kpi-value mt-1 break-all text-[clamp(1.85rem,10vw,2.15rem)] leading-none">
                 {formatBalance(totalAssets, amountsHidden)}
               </div>
               {refreshError ? (
@@ -563,7 +563,7 @@ export function YangjibaoHoldingsBoard({
                     : "查看盈亏分析"
                 }
               >
-                <div className="flex h-11 items-center justify-end gap-0.5 text-[13px] font-semibold text-slate-500">
+                <div className="flex h-11 items-center justify-end gap-0.5 text-[13px] font-semibold text-[var(--muted)]">
                   <span className="whitespace-nowrap">
                     当日收益
                     {quoteTradeDate ? ` ${quoteTradeDate}` : ""}

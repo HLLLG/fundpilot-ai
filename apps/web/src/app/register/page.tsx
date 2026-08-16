@@ -54,7 +54,7 @@ export default function RegisterPage() {
             <h1 className="font-display mt-2 text-3xl font-bold text-[var(--brand-deep)]">创建账号</h1>
           </div>
           <form className="space-y-4" onSubmit={onSubmit} aria-describedby={error ? "register-error" : undefined}>
-            <label className="block text-sm font-semibold text-slate-700">
+            <label className="block text-sm font-semibold text-[var(--foreground)]">
               昵称（可选）
               <input
                 type="text"
@@ -66,7 +66,7 @@ export default function RegisterPage() {
                 placeholder="投研用户"
               />
             </label>
-            <label className="block text-sm font-semibold text-slate-700">
+            <label className="block text-sm font-semibold text-[var(--foreground)]">
               邮箱
               <input
                 type="email"
@@ -81,7 +81,7 @@ export default function RegisterPage() {
                 placeholder="you@example.com"
               />
             </label>
-            <label className="block text-sm font-semibold text-slate-700">
+            <label className="block text-sm font-semibold text-[var(--foreground)]">
               密码
               <input
                 type="password"
@@ -97,7 +97,7 @@ export default function RegisterPage() {
                 placeholder="至少 8 位"
               />
             </label>
-            <label className="block text-sm font-semibold text-slate-700">
+            <label className="block text-sm font-semibold text-[var(--foreground)]">
               确认密码
               <input
                 type="password"

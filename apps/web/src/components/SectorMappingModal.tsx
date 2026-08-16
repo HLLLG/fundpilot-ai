@@ -48,7 +48,7 @@ export function SectorMappingModal({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/40 p-4"
+      className="modal-backdrop fixed inset-0 z-[60] flex items-center justify-center p-4"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           onClose();
@@ -63,13 +63,13 @@ export function SectorMappingModal({
         aria-modal="true"
         aria-labelledby="sector-mapping-title"
         aria-describedby="sector-mapping-description"
-        className="max-h-[80vh] w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl"
+        className="modal-sheet max-h-[80vh] w-full max-w-lg overflow-hidden rounded-[var(--radius-card)]"
       >
-        <div className="border-b border-slate-100 px-5 py-4">
-          <h2 id="sector-mapping-title" className="text-lg font-black text-slate-950">
+        <div className="border-b border-[var(--line)] px-5 py-4">
+          <h2 id="sector-mapping-title" className="text-lg font-black text-[var(--brand-deep)]">
             选择板块映射
           </h2>
-          <p id="sector-mapping-description" className="mt-1 text-sm text-slate-600">
+          <p id="sector-mapping-description" className="mt-1 text-sm text-[var(--muted)]">
             {fundName} · OCR 板块「{sectorName || "—"}」对应多个东财行情项，请选择与养基宝一致的一项。
           </p>
         </div>

@@ -20,20 +20,20 @@ export function MePage({ onOpenAnalysis }: MePageProps) {
       <button
         type="button"
         onClick={() => router.push("/settings")}
-        className="flex min-h-11 w-full items-center gap-3 rounded-2xl bg-[var(--panel)] px-4 py-4 text-left shadow-[0_2px_12px_rgba(15,23,42,0.06)] transition hover:bg-white"
+        className="me-identity flex min-h-11 w-full items-center gap-3 rounded-[var(--radius-card)] px-4 py-4 text-left transition hover:bg-[var(--panel-strong)]"
         aria-label="账号设置"
       >
         <UserAvatar name={displayName} avatarUrl={user?.avatarUrl} size="lg" />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-lg font-bold text-slate-900">{displayName}</p>
+          <p className="truncate text-lg font-bold text-[var(--brand-deep)]">{displayName}</p>
           {user?.userAccount ? (
-            <p className="mt-0.5 truncate text-sm text-slate-500">{user.userAccount}</p>
+            <p className="mt-0.5 truncate text-sm text-[var(--muted)]">{user.userAccount}</p>
           ) : null}
         </div>
         <ChevronRight size={18} className="shrink-0 text-slate-400" />
       </button>
 
-      <div className="mt-3 overflow-hidden rounded-2xl bg-[var(--panel)] shadow-[0_2px_12px_rgba(15,23,42,0.06)]">
+      <div className="me-list mt-3 overflow-hidden rounded-[var(--radius-card)]">
         <MeRow icon={PieChart} label="盈亏分析" onClick={onOpenAnalysis} />
         {isAdmin ? (
           <>
@@ -51,7 +51,7 @@ export function MePage({ onOpenAnalysis }: MePageProps) {
         ) : null}
       </div>
 
-      <div className="mt-3 overflow-hidden rounded-2xl bg-[var(--panel)] shadow-[0_2px_12px_rgba(15,23,42,0.06)]">
+      <div className="me-list mt-3 overflow-hidden rounded-[var(--radius-card)]">
         <MeRow
           icon={LogOut}
           label="退出登录"
@@ -80,12 +80,12 @@ function MeRow({
     <button
       type="button"
       onClick={onClick}
-      className="flex min-h-11 w-full items-center gap-3 px-4 py-3.5 text-left transition hover:bg-slate-50 [&:not(:first-child)]:border-t [&:not(:first-child)]:border-slate-100"
+      className="me-row flex min-h-11 w-full items-center gap-3 px-4 py-3.5 text-left"
     >
       <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-strong)]">
         <Icon size={18} strokeWidth={2.25} />
       </span>
-      <span className="min-w-0 flex-1 text-[15px] font-medium text-slate-900">{label}</span>
+      <span className="min-w-0 flex-1 text-[15px] font-medium text-[var(--brand-deep)]">{label}</span>
       {showChevron ? <ChevronRight size={18} className="shrink-0 text-slate-400" /> : null}
     </button>
   );

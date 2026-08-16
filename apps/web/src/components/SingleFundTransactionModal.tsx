@@ -126,7 +126,7 @@ export function SingleFundTransactionModal({
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/40 sm:items-center sm:p-4"
+      className="modal-backdrop fixed inset-0 z-[80] flex items-end justify-center sm:items-center sm:p-4"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           requestClose();
@@ -137,12 +137,12 @@ export function SingleFundTransactionModal({
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="flex max-h-[94vh] w-full max-w-md flex-col overflow-hidden rounded-t-[28px] bg-[#f5f7fa] shadow-2xl sm:rounded-[28px]"
+        className="modal-sheet flex max-h-[94vh] w-full max-w-md flex-col overflow-hidden rounded-t-[var(--radius-card)] bg-[var(--surface-muted)] sm:rounded-[var(--radius-card)]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="single-fund-transaction-title"
       >
-        <header className="relative flex items-center justify-center border-b border-slate-200/70 bg-white px-4 py-3.5">
+        <header className="relative flex items-center justify-center border-b border-[var(--line)] bg-[var(--panel)] px-4 py-3.5">
           <button
             ref={closeButtonRef}
             type="button"
@@ -153,7 +153,7 @@ export function SingleFundTransactionModal({
           >
             <ChevronLeft size={22} />
           </button>
-          <h2 id="single-fund-transaction-title" className="text-base font-bold text-slate-900">
+          <h2 id="single-fund-transaction-title" className="text-base font-bold text-[var(--brand-deep)]">
             {title}
           </h2>
         </header>

@@ -26,7 +26,7 @@ export function UserAvatar({ name, avatarUrl, size = "md" }: UserAvatarProps) {
   }
   return (
     <span
-      className={`inline-flex ${SIZE_CLASS[size]} items-center justify-center rounded-full bg-gradient-to-br from-[var(--brand)] to-[var(--brand-strong)] font-black text-white shadow-[0_6px_16px_rgba(35,86,224,0.30)] ring-2 ring-white`}
+      className={`inline-flex ${SIZE_CLASS[size]} items-center justify-center rounded-full bg-gradient-to-br from-[var(--brand)] to-[var(--brand-strong)] font-black text-white shadow-[var(--shadow-brand)] ring-2 ring-[var(--panel)]`}
     >
       {initial}
     </span>

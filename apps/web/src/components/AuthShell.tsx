@@ -15,7 +15,7 @@ export function AuthShell({
       <section className="auth-atmosphere" aria-label="产品说明">
         <Link href="/" className="auth-brand-link"><BrandMark size="lg" showEnglish /></Link>
         <div className="auth-editorial-copy">
-          <p className="research-kicker">DEEP-SEA RESEARCH DESK</p>
+          <p className="research-kicker">RESEARCH LEDGER</p>
           <h2 className="font-display">把持仓放回清晰的判断轨道</h2>
           <div className="auth-product-slice" aria-hidden="true">
             <div><span>01</span><strong>截图进入</strong><Check size={15} /></div>

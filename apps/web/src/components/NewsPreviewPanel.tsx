@@ -60,13 +60,14 @@ export function NewsPreviewPanel({ holdings, profile }: NewsPreviewPanelProps) {
       : "blue";
 
   return (
-    <section className="glass-panel rounded-[24px] p-5">
+    <section className="section-card p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <div className="mb-2 inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--brand)] text-white">
+          <p className="ink-label">News Freshness</p>
+          <div className="mb-2 mt-2 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--brand-ink)] text-[var(--accent)]">
             <Newspaper size={20} />
           </div>
-          <h3 className="text-lg font-black text-slate-950">要闻时效自检</h3>
+          <h3 className="text-lg font-black text-[var(--brand-deep)]">要闻时效自检</h3>
           <p className="mt-1 text-xs leading-5 text-slate-600">
             生成日报前预览将喂给 DeepSeek 的东财要闻（不消耗模型额度）。
           </p>
@@ -75,7 +76,7 @@ export function NewsPreviewPanel({ holdings, profile }: NewsPreviewPanelProps) {
           type="button"
           onClick={() => void load()}
           disabled={loading}
-          className="inline-flex min-h-11 items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:border-blue-300 disabled:opacity-50"
+          className="inline-flex min-h-11 items-center gap-1 rounded-full border border-[var(--line)] bg-[var(--panel)] px-3 py-2 text-xs font-bold text-[var(--brand-deep)] hover:border-[var(--brand)] disabled:opacity-50"
         >
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
           刷新

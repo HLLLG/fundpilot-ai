@@ -238,15 +238,15 @@ export function ReportChatPanel({
             onClick={() => handleModeChange("deep")}
             className={`flex min-h-11 min-w-11 items-center gap-1.5 rounded-xl px-2 py-1.5 text-left text-[11px] font-bold transition ${
               chatMode === "deep"
-                ? "bg-blue-600 text-white"
-                : "bg-white text-slate-600 hover:bg-[var(--info-bg)]"
+                ? "bg-[var(--brand)] text-white"
+                : "bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--info-bg)]"
             }`}
           >
             <Gauge size={12} />
             <span>
               深度
               <span
-                className={`block text-[9px] font-semibold ${chatMode === "deep" ? "text-blue-100" : "text-slate-500"}`}
+                className={`block text-[9px] font-semibold ${chatMode === "deep" ? "text-[#f4ead4]/80" : "text-[var(--muted)]"}`}
               >
                 Pro · 可拉新闻
               </span>
@@ -278,7 +278,7 @@ export function ReportChatPanel({
           message.role === "user" ? (
             <div
               key={message.id}
-              className="ml-4 whitespace-pre-wrap rounded-2xl bg-blue-600 px-3.5 py-3.5 text-sm leading-7 text-white"
+              className="ml-4 whitespace-pre-wrap rounded-2xl bg-[var(--brand-ink)] px-3.5 py-3.5 text-sm leading-7 text-[#f4ead4]"
             >
               {message.content}
             </div>
@@ -305,7 +305,7 @@ export function ReportChatPanel({
           <button
             type="button"
             onClick={() => scrollToBottom("smooth")}
-            className="absolute bottom-2 right-2 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200/80 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:border-blue-300 hover:text-[var(--info-fg)]"
+            className="absolute bottom-2 right-2 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--panel)] text-[var(--muted)] transition hover:border-[var(--brand)] hover:text-[var(--brand-deep)]"
             aria-label="回到底部"
           >
             <ArrowDown size={14} />

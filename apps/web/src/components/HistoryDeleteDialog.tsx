@@ -40,7 +40,7 @@ export function HistoryDeleteDialog<T extends HistoryRailItem>({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/45 p-4"
+      className="modal-backdrop fixed inset-0 z-[100] flex items-center justify-center p-4"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           onClose();
@@ -55,7 +55,7 @@ export function HistoryDeleteDialog<T extends HistoryRailItem>({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
-        className="w-full max-w-sm rounded-[24px] bg-white p-5 shadow-2xl"
+        className="modal-sheet w-full max-w-sm rounded-[var(--radius-card)] p-5"
       >
         <div className="flex items-start gap-3">
           <span
@@ -65,10 +65,10 @@ export function HistoryDeleteDialog<T extends HistoryRailItem>({
             <AlertTriangle size={20} />
           </span>
           <div className="min-w-0">
-            <h2 id={titleId} className="text-base font-black text-slate-950">
+            <h2 id={titleId} className="text-base font-black text-[var(--brand-deep)]">
               {intent.kind === "batch" ? copy.batchTitle(deleteCount) : copy.singleTitle}
             </h2>
-            <p id={descriptionId} className="mt-1 text-sm leading-6 text-slate-600">
+            <p id={descriptionId} className="mt-1 text-sm leading-6 text-[var(--muted)]">
               {copy.description}
             </p>
           </div>

@@ -644,7 +644,7 @@ export function FundRecommendationCard({
   );
 
   const cardBody = (
-    <div className={`min-w-0 overflow-hidden rounded-2xl border border-l-4 border-slate-200 bg-white ${actionAccentClass}`}>
+    <div className={`min-w-0 overflow-hidden rounded-[var(--radius-card)] border border-l-4 border-[var(--line)] bg-[var(--panel)] ${actionAccentClass}`}>
       {cardHeader}
       {summaryOpen ? (
         <div id={`${stableIdentity}-summary`} className="min-w-0 border-t border-slate-100 px-4 pb-4">

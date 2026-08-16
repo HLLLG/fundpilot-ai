@@ -69,14 +69,14 @@ export function ReportPanel({
 
   if (!report) {
     return (
-      <section className="glass-panel signal-grid min-w-0 rounded-[28px] p-6">
-        <div className="flex min-h-80 flex-col justify-between rounded-[24px] bg-white/75 p-6">
+      <section className="section-card signal-grid min-w-0 p-6">
+        <div className="flex min-h-80 flex-col justify-between rounded-[var(--radius-card)] bg-[var(--panel-strong)] p-6">
           <div>
             <StatusPill tone="blue">等待生成</StatusPill>
-            <h2 className="font-display mt-5 text-2xl font-extrabold text-slate-950">
+            <h2 className="font-display mt-5 text-2xl font-extrabold text-[var(--brand-deep)]">
               你的日报会出现在这里
             </h2>
-            <p className="mt-3 max-w-lg text-sm leading-6 text-slate-600">
+            <p className="mt-3 max-w-lg text-sm leading-6 text-[var(--muted)]">
               上传截图并确认持仓后，系统会先跑硬风控，再让 DeepSeek
               生成带风险边界的操作日报。
             </p>
@@ -85,7 +85,7 @@ export function ReportPanel({
             {["规则先行", "模型辅助", "百分比建议"].map((item) => (
               <div
                 key={item}
-                className="rounded-2xl border border-slate-100 bg-white px-4 py-3 text-sm font-bold text-slate-700"
+                className="rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] px-4 py-3 text-sm font-bold text-[var(--brand-deep)]"
               >
                 {item}
               </div>

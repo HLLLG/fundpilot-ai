@@ -10,7 +10,7 @@ export default function SettingsPage() {
 
   return (
     <main className="settings-shell">
-      <header className="settings-masthead">
+      <header className="settings-masthead gold-hairline">
         <div className="mx-auto flex h-full max-w-[1120px] items-center justify-between px-4 sm:px-6">
           <span className="sm:hidden"><BrandMark size="sm" /></span>
           <span className="hidden sm:inline-flex"><BrandMark size="sm" showEnglish /></span>

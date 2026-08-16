@@ -183,7 +183,7 @@ export function FundSearchDialog({ open, onClose, onSelect }: FundSearchDialogPr
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-stretch justify-center bg-[var(--panel)] sm:items-start sm:bg-slate-950/35 sm:px-6 sm:pt-[9vh] sm:backdrop-blur-[1px]"
+      className="fixed inset-0 z-[70] flex items-stretch justify-center bg-[var(--panel)] sm:items-start sm:bg-[color-mix(in_srgb,var(--brand-ink)_48%,transparent)] sm:px-6 sm:pt-[9vh] sm:backdrop-blur-[6px]"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -195,16 +195,16 @@ export function FundSearchDialog({ open, onClose, onSelect }: FundSearchDialogPr
         role="dialog"
         aria-modal="true"
         aria-labelledby="fund-search-title"
-        className="flex h-full min-h-0 w-full max-w-xl flex-col overflow-hidden bg-white sm:h-auto sm:max-h-[88dvh] sm:rounded-[24px] sm:border sm:border-white/70 sm:shadow-[0_24px_70px_rgba(15,23,42,0.22)]"
+        className="modal-sheet flex h-full min-h-0 w-full max-w-xl flex-col overflow-hidden sm:h-auto sm:max-h-[88dvh] sm:rounded-[var(--radius-card)]"
       >
         <header className="flex items-center justify-between px-5 pb-2 pt-[max(1rem,env(safe-area-inset-top))] sm:px-6 sm:pt-4">
-          <h2 id="fund-search-title" className="text-lg font-bold text-slate-950">
+          <h2 id="fund-search-title" className="text-lg font-bold text-[var(--brand-deep)]">
             搜索基金
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="touch-target inline-flex items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100"
+            className="touch-target inline-flex items-center justify-center rounded-full text-[var(--muted)] transition hover:bg-[var(--surface-muted)]"
             aria-label="关闭基金搜索"
           >
             <X size={20} />
@@ -215,7 +215,7 @@ export function FundSearchDialog({ open, onClose, onSelect }: FundSearchDialogPr
           <label htmlFor="global-fund-search" className="sr-only">
             输入基金名称或代码
           </label>
-          <div className="flex min-h-12 items-center gap-3 rounded-xl border border-slate-200 bg-slate-100/80 px-3.5 transition focus-within:border-blue-300 focus-within:bg-white focus-within:ring-2 focus-within:ring-blue-100">
+          <div className="search-shell">
             {loading ? (
               <Loader2 size={19} className="shrink-0 animate-spin text-[var(--brand)]" />
             ) : (

@@ -46,8 +46,8 @@ export function ShadowEscalationDigestCard() {
 
   if (loading && !data) {
     return (
-      <section className="glass-panel rounded-[24px] p-5">
-        <h3 className="text-lg font-black text-slate-950">灰度复盘摘要</h3>
+      <section className="section-card p-5">
+        <h3 className="text-lg font-black text-[var(--brand-deep)]">灰度复盘摘要</h3>
         <div className="mt-2 flex items-center gap-2 text-sm text-slate-500">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
           正在汇总近 7 天的灰度触发记录…
@@ -58,8 +58,8 @@ export function ShadowEscalationDigestCard() {
 
   if (error && !data) {
     return (
-      <section className="glass-panel rounded-[24px] p-5">
-        <h3 className="text-lg font-black text-slate-950">灰度复盘摘要</h3>
+      <section className="section-card p-5">
+        <h3 className="text-lg font-black text-[var(--brand-deep)]">灰度复盘摘要</h3>
         <InlineNotice
           tone="error"
           message={`灰度复盘加载失败：${error}`}
@@ -80,8 +80,8 @@ export function ShadowEscalationDigestCard() {
 
   if (!data.available) {
     return (
-      <section className="glass-panel rounded-[24px] p-5">
-        <h3 className="text-lg font-black text-slate-950">灰度复盘摘要</h3>
+      <section className="section-card p-5">
+        <h3 className="text-lg font-black text-[var(--brand-deep)]">灰度复盘摘要</h3>
         <InlineNotice
           tone="info"
           message={data.summary ?? "当前暂无可汇总的灰度复盘记录。"}
@@ -97,17 +97,18 @@ export function ShadowEscalationDigestCard() {
 
   return (
     <section
-      className="glass-panel rounded-[24px] p-5"
+      className="section-card p-5"
       data-testid="shadow-escalation-digest"
       aria-busy={loading}
     >
       <div className="flex items-start gap-3">
-        <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--brand)] text-white">
+        <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--brand-ink)] text-[var(--accent)]">
           <History size={20} />
         </div>
         <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-lg font-black text-slate-950">灰度复盘摘要</h3>
+          <p className="ink-label">Shadow Review</p>
+          <div className="mt-1 flex items-center gap-2">
+            <h3 className="text-lg font-black text-[var(--brand-deep)]">灰度复盘摘要</h3>
             <StatusPill tone="amber">shadow 观察期</StatusPill>
           </div>
           <p className="mt-1 text-xs text-slate-600">

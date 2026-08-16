@@ -173,7 +173,7 @@ export function FundCodeEditModal({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/50 p-4 sm:items-center"
+      className="modal-backdrop fixed inset-0 z-[60] flex items-end justify-center p-4 sm:items-center"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           requestClose();
@@ -188,14 +188,14 @@ export function FundCodeEditModal({
         aria-modal="true"
         aria-labelledby="fund-code-edit-title"
         aria-describedby="fund-code-edit-description"
-        className="w-full max-w-md rounded-[24px] bg-white p-5 shadow-2xl"
+        className="modal-sheet w-full max-w-md rounded-[var(--radius-card)] p-5"
       >
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <h2 id="fund-code-edit-title" className="text-base font-black text-slate-950">
+            <h2 id="fund-code-edit-title" className="text-base font-black text-[var(--brand-deep)]">
               修正基金代码
             </h2>
-            <p id="fund-code-edit-description" className="mt-1 text-xs leading-5 text-slate-500">
+            <p id="fund-code-edit-description" className="mt-1 text-xs leading-5 text-[var(--muted)]">
               OCR 或名称匹配错误时可手动改码，将从东财档案迁移到正确代码。
             </p>
           </div>
@@ -273,7 +273,7 @@ export function FundCodeEditModal({
           type="button"
           disabled={!canSave}
           onClick={() => void onSave(normalizedCode, name.trim())}
-          className="mt-5 min-h-11 w-full rounded-2xl bg-blue-600 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="btn-primary mt-5 w-full rounded-2xl disabled:cursor-not-allowed disabled:opacity-50"
         >
           {saving ? "保存中..." : "保存并更新持仓"}
         </button>

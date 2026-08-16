@@ -100,26 +100,26 @@ export function NavHistoryListModal({ fundCode, fundName, onClose }: NavHistoryL
 
   return (
     <div
-      className="fixed inset-0 z-[85] flex items-end justify-center bg-slate-950/45 p-0 sm:items-center sm:p-4"
+      className="modal-backdrop fixed inset-0 z-[85] flex items-end justify-center p-0 sm:items-center sm:p-4"
       onClick={onClose}
       role="presentation"
     >
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-2xl"
+        className="modal-sheet flex max-h-[88vh] w-full max-w-lg flex-col overflow-hidden rounded-t-[var(--radius-card)] sm:rounded-[var(--radius-card)]"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="nav-history-title"
         aria-describedby="nav-history-fund-name"
       >
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+        <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3">
           <div className="min-w-0">
-            <h2 id="nav-history-title" className="truncate text-base font-bold text-slate-900">
+            <h2 id="nav-history-title" className="truncate text-base font-bold text-[var(--brand-deep)]">
               历史净值
             </h2>
-            <p id="nav-history-fund-name" className="truncate text-xs text-slate-500">
+            <p id="nav-history-fund-name" className="truncate text-xs text-[var(--muted)]">
               {fundName}
             </p>
           </div>

@@ -137,14 +137,14 @@ export function DiscoveryChatPanel({
     <section
       className={
         variant === "drawer"
-          ? "flex h-full min-h-0 flex-col bg-white p-4 sm:p-5"
-          : "flex h-[min(62vh,560px)] min-h-[400px] flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+          ? "flex h-full min-h-0 flex-col bg-[var(--panel)] p-4 sm:p-5"
+          : "section-card flex h-[min(62vh,560px)] min-h-[400px] flex-col p-4"
       }
     >
       {variant === "card" ? (
         <div className="mb-3 flex items-center gap-2">
           <MessageCircle size={18} className="text-[var(--brand)]" />
-          <h3 className="text-sm font-bold text-slate-900">追问推荐报告</h3>
+          <h3 className="text-sm font-bold text-[var(--brand-deep)]">追问推荐报告</h3>
           {reportTitle ? (
             <span className="truncate text-xs text-slate-500">{reportTitle}</span>
           ) : null}
@@ -202,7 +202,7 @@ export function DiscoveryChatPanel({
           <button
             type="button"
             onClick={() => scrollToBottom("smooth")}
-            className="absolute bottom-2 right-2 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200/80 bg-white/90 text-slate-600 shadow-sm backdrop-blur transition hover:border-[rgba(37,99,235,0.4)] hover:text-[var(--brand-strong)]"
+            className="absolute bottom-2 right-2 z-10 inline-flex h-11 w-11 items-center justify-center rounded-full border border-[var(--line)] bg-[var(--panel)]/90 text-[var(--muted)] shadow-sm backdrop-blur transition hover:border-[var(--brand)] hover:text-[var(--brand-strong)]"
             aria-label="回到底部"
           >
             <ArrowDown size={14} />

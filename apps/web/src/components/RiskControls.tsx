@@ -83,8 +83,8 @@ export function RiskControls({
       <section className="report-control-card section-card min-w-0 overflow-hidden">
         <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <div className="text-sm font-black text-slate-950">本次生成设置</div>
-            <p className="mt-1 text-xs text-slate-500">
+            <div className="text-sm font-black text-[var(--brand-deep)]">本次生成设置</div>
+            <p className="mt-1 text-xs text-[var(--muted)]">
               深度分析 · {profileSummary(profile)}
             </p>
             {hasBlockingErrors && blockingMessage ? (
@@ -128,8 +128,9 @@ export function RiskControls({
             <ShieldCheck size={20} strokeWidth={2.3} />
           </span>
           <div>
-            <h2 className="font-display text-lg font-extrabold text-slate-950">生成投研日报</h2>
-            <p className="mt-0.5 text-xs text-slate-500">AI 结合你的持仓与风险偏好，给出说人话的操作建议</p>
+            <p className="ink-label">Daily Desk</p>
+            <h2 className="font-display text-lg font-extrabold text-[var(--brand-deep)]">生成投研日报</h2>
+            <p className="mt-0.5 text-xs text-[var(--muted)]">AI 结合你的持仓与风险偏好，给出说人话的操作建议</p>
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2">

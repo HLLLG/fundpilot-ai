@@ -13,18 +13,18 @@ export function DiscoveryStrategySelector() {
       <legend className="sr-only">荐基决策策略</legend>
       <div
         data-testid="discovery-strategy-opportunity_first"
-        className="min-h-[92px] rounded-xl border border-[var(--brand)] bg-[var(--brand-soft)] px-3.5 py-3 text-left shadow-[inset_3px_0_0_var(--brand)]"
+        className="min-h-[92px] rounded-xl border border-[var(--line)] bg-[var(--panel)] px-3.5 py-3 text-left shadow-[inset_3px_0_0_var(--accent)]"
       >
         <span className="flex items-center justify-between gap-3">
-          <span className="flex items-center gap-2 text-sm font-black text-slate-950">
+          <span className="flex items-center gap-2 text-sm font-black text-[var(--brand-deep)]">
             <Crosshair size={17} aria-hidden="true" className="text-[var(--brand-strong)]" />
             机会优先
           </span>
-          <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-black text-[var(--brand-strong)] ring-1 ring-[var(--brand)]/20">
+          <span className="rounded-full bg-[var(--accent-soft)] px-2 py-0.5 text-[10px] font-black text-[var(--accent-strong)]">
             高弹性
           </span>
         </span>
-        <span className="mt-2 block text-[11px] font-semibold leading-5 text-slate-600">
+        <span className="mt-2 block text-[11px] font-semibold leading-5 text-[var(--muted)]">
           优先高波动、高动量与回撤修复机会；质量只作准入，不奖励低波动。
         </span>
       </div>

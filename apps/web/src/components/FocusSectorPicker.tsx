@@ -150,7 +150,7 @@ export function FocusSectorPicker({
       )}
 
       <div className="relative">
-        <div className="flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3">
+        <div className="search-shell">
           <Search className="h-4 w-4 shrink-0 text-slate-500" />
           <input
             type="text"

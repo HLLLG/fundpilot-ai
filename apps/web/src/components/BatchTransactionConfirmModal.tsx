@@ -423,7 +423,7 @@ export function BatchTransactionConfirmModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 p-4 sm:items-center"
+      className="modal-backdrop fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           requestClose();
@@ -434,14 +434,14 @@ export function BatchTransactionConfirmModal({
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-[28px] bg-white shadow-2xl"
+        className="modal-sheet flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-[var(--radius-card)]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="batch-confirm-modal-title"
         aria-busy={locked}
       >
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <h2 id="batch-confirm-modal-title" className="text-lg font-black text-slate-950">
+        <div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4">
+          <h2 id="batch-confirm-modal-title" className="text-lg font-black text-[var(--brand-deep)]">
             确认识别结果
           </h2>
           <button
@@ -462,7 +462,7 @@ export function BatchTransactionConfirmModal({
           </div>
         ) : null}
 
-        <div className="min-h-0 flex-1 overflow-y-auto bg-[#f5f7fa] px-4 py-3">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--surface-muted)] px-4 py-3">
           {transactions.length === 0 ? (
             <p className="py-10 text-center text-sm text-slate-500">未解析到交易记录。</p>
           ) : null}
@@ -634,7 +634,7 @@ export function BatchTransactionConfirmModal({
               type="button"
               onClick={handleContinueUpload}
               disabled={locked}
-              className="mb-2 mt-3 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-2xl border border-dashed border-[var(--info-border)] bg-white py-3 text-sm font-bold text-blue-600 transition hover:bg-[var(--info-bg)] disabled:opacity-50"
+              className="mb-2 mt-3 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-2xl border border-dashed border-[var(--info-border)] bg-[var(--panel)] py-3 text-sm font-bold text-[var(--brand)] transition hover:bg-[var(--info-bg)] disabled:opacity-50"
             >
               <Plus size={15} />
               继续上传
@@ -684,7 +684,7 @@ export function BatchTransactionConfirmModal({
               }
               setPlanOpen(true);
             }}
-            className="w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="btn-primary w-full rounded-2xl disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isUploading
               ? ocrProgressLabel(true, uploadProgress, "识别中...")
@@ -750,7 +750,7 @@ function TransactionSyncPlanDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-6"
+      className="modal-backdrop fixed inset-0 z-[60] flex items-center justify-center p-6"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !busy) {
           onCancel();
@@ -761,14 +761,14 @@ function TransactionSyncPlanDialog({
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="w-full max-w-sm overflow-hidden rounded-[24px] bg-white px-5 pb-5 pt-6 shadow-2xl"
+        className="modal-sheet w-full max-w-sm overflow-hidden rounded-[var(--radius-card)] px-5 pb-5 pt-6"
         role="dialog"
         aria-modal="true"
         aria-labelledby="transaction-sync-plan-title"
       >
         <h3
           id="transaction-sync-plan-title"
-          className="text-center text-base font-black text-slate-950"
+          className="text-center text-base font-black text-[var(--brand-deep)]"
         >
           请选择同步方案
         </h3>
@@ -815,7 +815,7 @@ function TransactionSyncPlanDialog({
           type="button"
           disabled={busy}
           onClick={onConfirm}
-          className="mt-5 w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-black text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="btn-primary mt-5 w-full rounded-2xl disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? "正在应用..." : "确定"}
         </button>

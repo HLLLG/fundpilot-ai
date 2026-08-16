@@ -145,6 +145,7 @@ export function ReportSummaryHero({
         data-testid="report-summary-layout"
       >
         <div className="min-w-0">
+          <p className="ink-label mb-2">Daily Brief · 持仓日报</p>
           <div className="mb-2 flex flex-wrap gap-2">
             <StatusPill tone={riskTone[report.risk.level]}>
               风险 {riskLabel[report.risk.level]}
@@ -153,11 +154,11 @@ export function ReportSummaryHero({
           </div>
           <h2
             id={headingId}
-            className="font-display text-2xl font-extrabold tracking-tight text-slate-950"
+            className="font-display text-2xl font-extrabold tracking-tight text-[var(--brand-deep)]"
           >
             {report.title}
           </h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{report.summary}</p>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--muted)]">{report.summary}</p>
           <RiskAlertList alerts={report.risk.alerts} />
         </div>
 
@@ -183,7 +184,7 @@ export function ReportSummaryHero({
           剩下两格更彻底 —— 05「支撑证据 / 按需展开」和 06「后续追问 / 保持上下文」
           不是信息，是在向用户解释这个界面怎么用。整条删除。 */}
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] pt-3">
         <div className="flex flex-wrap gap-1">
           {portfolioLines.length ? (
             <button

@@ -28,13 +28,13 @@ type JobProgressCardProps = {
 const TONE_RING: Record<JobProgressTone, string> = {
   info: "border-[var(--info-border)]",
   success: "border-[var(--success-border)]",
-  neutral: "border-slate-200",
+  neutral: "border-[var(--line)]",
   danger: "border-[var(--danger-border)]",
 };
 
 const TONE_BUTTON: Record<JobProgressTone, string> = {
-  info: "bg-blue-600 hover:bg-blue-700",
-  success: "bg-emerald-700 hover:bg-emerald-800",
+  info: "bg-[var(--brand)] hover:bg-[var(--brand-strong)]",
+  success: "bg-[var(--success-icon)] hover:bg-[var(--success-fg)]",
   neutral: "bg-[var(--brand)] hover:bg-[var(--brand-strong)]",
   danger: "bg-[var(--brand)] hover:bg-[var(--brand-strong)]",
 };
@@ -63,18 +63,18 @@ export function JobProgressCard({
 }: JobProgressCardProps) {
   return (
     <div
-      className={`w-full rounded-xl border bg-white/97 px-3 py-2 shadow-lg backdrop-blur lg:rounded-2xl lg:px-4 lg:py-4 lg:shadow-[0_8px_32px_rgba(7,31,43,0.14)] ${TONE_RING[tone]}`}
+      className={`w-full rounded-xl border bg-[var(--panel)]/97 px-3 py-2 shadow-lg backdrop-blur lg:rounded-2xl lg:px-4 lg:py-4 lg:shadow-[var(--shadow-md)] ${TONE_RING[tone]}`}
       data-testid={testId}
     >
       <div className="flex items-center gap-2 lg:items-start lg:gap-3">
         <span className="flex shrink-0 items-center lg:mt-0.5">{icon}</span>
 
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[0.8125rem] font-bold text-slate-900 lg:whitespace-normal lg:text-sm">
+          <div className="truncate text-[0.8125rem] font-bold text-[var(--brand-deep)] lg:whitespace-normal lg:text-sm">
             {title}
           </div>
           {detail ? (
-            <div className="mt-0.5 hidden text-xs text-slate-500 lg:block">{detail}</div>
+            <div className="mt-0.5 hidden text-xs text-[var(--muted)] lg:block">{detail}</div>
           ) : null}
         </div>
 
@@ -94,7 +94,7 @@ export function JobProgressCard({
           <button
             type="button"
             onClick={secondaryAction.onClick}
-            className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 px-2.5 text-xs font-bold text-slate-600 hover:bg-slate-50 lg:hidden"
+            className="inline-flex min-h-9 shrink-0 items-center justify-center rounded-lg border border-[var(--line)] px-2.5 text-xs font-bold text-[var(--muted)] hover:bg-[var(--surface-muted)] lg:hidden"
           >
             {secondaryAction.label}
           </button>
@@ -104,7 +104,7 @@ export function JobProgressCard({
           <button
             type="button"
             onClick={onDismiss}
-            className="inline-flex min-h-9 min-w-9 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 lg:min-h-11 lg:min-w-11"
+            className="inline-flex min-h-9 min-w-9 shrink-0 items-center justify-center rounded-full text-[var(--muted)] hover:bg-[var(--surface-muted)] lg:min-h-11 lg:min-w-11"
             aria-label={dismissLabel}
           >
             <X size={16} />
@@ -128,7 +128,7 @@ export function JobProgressCard({
             <button
               type="button"
               onClick={secondaryAction.onClick}
-              className="min-h-11 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50"
+              className="min-h-11 rounded-xl border border-[var(--line)] px-3 py-2 text-xs font-bold text-[var(--muted)] hover:bg-[var(--surface-muted)]"
             >
               {secondaryAction.label}
             </button>

@@ -4,12 +4,12 @@ import { memo, useMemo } from "react";
 import type { PortfolioAllocationRow } from "@/lib/api";
 
 const SLICE_COLORS = [
-  "#2356e0",
-  "#3d7eff",
-  "#6b9af5",
-  "#0f766e",
-  "#d39a21",
-  "#64748b",
+  "#1b4b5f",
+  "#3d6a78",
+  "#7a898f",
+  "#047857",
+  "#b58b45",
+  "#52656d",
 ];
 
 const MAX_VISIBLE_SLICES = 6;

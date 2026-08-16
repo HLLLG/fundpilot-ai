@@ -90,7 +90,7 @@ export function DiscoveryHistoryRail({
                 type="button"
                 onClick={history.toggleSelectAll}
                 disabled={history.batchDeleting || reports.length === 0}
-                className="min-h-11 rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 transition hover:border-[rgba(37,99,235,0.4)] hover:text-[var(--brand-strong)] disabled:opacity-50"
+                className="min-h-11 rounded-full border border-[var(--line)] bg-[var(--panel)] px-3 text-xs font-bold text-[var(--muted)] transition hover:border-[var(--brand)] hover:text-[var(--brand-strong)] disabled:opacity-50"
               >
                 {history.allSelected ? "取消全选" : "全选"}
               </button>
@@ -182,8 +182,8 @@ export function DiscoveryHistoryRail({
                     ? "ring-2 ring-rose-200"
                     : "bg-white"
                   : active
-                    ? "bg-[var(--brand-soft)] ring-1 ring-[rgba(37,99,235,0.25)]"
-                    : "bg-white hover:-translate-y-0.5 hover:shadow-md"
+                    ? "bg-[var(--brand-soft)] ring-1 ring-[var(--brand)]/25"
+                    : "bg-[var(--panel)] hover:-translate-y-0.5 hover:shadow-md"
               }`}
             >
               {history.batchMode ? (

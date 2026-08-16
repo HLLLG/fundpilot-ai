@@ -53,7 +53,7 @@ export function TradingSessionBar() {
 
   if (loadState === "error" || !session) {
     return (
-      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-600">
+      <div className="section-card px-4 py-3 text-[var(--muted)]">
         <div className="flex items-center gap-2 text-sm font-bold">
           <AlertCircle size={16} className="text-slate-500" />
           <span>交易日历暂不可用</span>

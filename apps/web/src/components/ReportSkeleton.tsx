@@ -40,9 +40,9 @@ export function ReportSkeleton({ streaming, onCancel, onFollowup }: ReportSkelet
     !caveats?.length;
 
   return (
-    <section className="glass-panel signal-grid min-w-0 rounded-[28px] p-6" data-testid="report-streaming">
+    <section className="section-card signal-grid min-w-0 p-6" data-testid="report-streaming">
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px]">
-        <div className="space-y-4 rounded-[24px] bg-white/75 p-6">
+        <div className="space-y-4 rounded-[var(--radius-card)] bg-[var(--panel-strong)] p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm text-slate-600">
               <Loader2 className="h-4 w-4 animate-spin text-[var(--brand-strong)]" />

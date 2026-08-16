@@ -256,11 +256,11 @@ export function PerformanceTrendPanel({
         {tradeMarkers.length > 0 ? (
           <div className="inline-flex items-center gap-3 text-slate-500">
             <span className="inline-flex items-center gap-1">
-              <span className="h-2 w-2 rounded-sm bg-[#e11d48]" />
+              <span className="h-2 w-2 rounded-sm bg-[#c81e3a]" />
               买入
             </span>
             <span className="inline-flex items-center gap-1">
-              <span className="h-2 w-2 rounded-sm bg-[#059669]" />
+              <span className="h-2 w-2 rounded-sm bg-[#047857]" />
               卖出
             </span>
           </div>

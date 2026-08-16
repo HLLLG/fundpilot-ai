@@ -64,16 +64,17 @@ export default function RouteError({
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12">
-      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_16px_40px_rgba(15,23,42,0.08)]">
-        <h1 className="text-lg font-bold text-slate-900">这个页面出错了</h1>
-        <p className="mt-1 text-sm text-slate-600">
+    <main className="flex min-h-screen items-center justify-center bg-[var(--background)] px-4 py-12">
+      <div className="section-card w-full max-w-lg p-6">
+        <p className="ink-label">Desk Fault</p>
+        <h1 className="mt-2 text-lg font-bold text-[var(--brand-deep)]">这个页面出错了</h1>
+        <p className="mt-1 text-sm text-[var(--muted)]">
           错误详情已自动上报，无需截图。可以先重试，或返回首页继续操作。
         </p>
 
         {reference ? (
-          <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs font-bold text-slate-500">报障编号</p>
+          <div className="mt-5 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-3">
+            <p className="text-xs font-bold text-[var(--muted)]">报障编号</p>
             <div className="mt-1 flex items-center gap-2">
               <code className="min-w-0 flex-1 truncate font-mono text-sm text-slate-800">
                 {reference}
@@ -102,7 +103,7 @@ export default function RouteError({
           </button>
           <Link
             href="/"
-            className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+            className="min-h-11 rounded-xl border border-[var(--line)] bg-[var(--panel)] px-4 py-2.5 text-sm font-bold text-[var(--brand-deep)] transition hover:bg-[var(--surface-muted)]"
           >
             返回首页
           </Link>

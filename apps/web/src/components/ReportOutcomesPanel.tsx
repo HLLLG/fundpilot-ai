@@ -216,8 +216,8 @@ export function ReportOutcomesPanel({ reportId, embedded = false }: ReportOutcom
 
   if (embedded) return body;
   return (
-    <div className="mb-5 rounded-[24px] border border-slate-200 bg-slate-50/80 p-5">
-      <div className="mb-3 flex items-center gap-2 text-sm font-black text-slate-950">
+    <div className="section-card mb-5 p-5">
+      <div className="mb-3 flex items-center gap-2 text-sm font-black text-[var(--brand-deep)]">
         <History size={18} className="text-[var(--success-icon)]" />
         建议 T+N 复盘
         <TimerReset size={14} className="text-slate-400" />

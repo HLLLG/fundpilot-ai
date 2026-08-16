@@ -50,11 +50,11 @@ export function ReportThinkingSidebar({ streaming, onFollowup }: ReportThinkingS
 
   return (
     <aside
-      className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4"
+      className="section-card p-4"
       data-testid="report-thinking-sidebar"
     >
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h3 className="text-xs font-black uppercase tracking-wide text-slate-500">分析过程</h3>
+        <h3 className="text-xs font-black tracking-[0.08em] text-[var(--accent-strong)]">分析过程</h3>
         <span className="text-xs font-bold text-slate-500">{elapsedSeconds(streaming.startedAt)}</span>
       </div>
 
@@ -66,7 +66,7 @@ export function ReportThinkingSidebar({ streaming, onFollowup }: ReportThinkingS
             <li
               key={stageId}
               className={`flex items-start gap-2 rounded-xl px-2 py-1.5 text-sm ${
-                status === "active" ? "bg-white shadow-sm" : ""
+                status === "active" ? "bg-[var(--panel-strong)]" : ""
               }`}
               data-testid={`stage-card-${stageId}`}
               data-status={status}

@@ -72,7 +72,7 @@ export function PortfolioStressTestPanel({ enabled }: { enabled: boolean }) {
       ) : null}
 
       {stress.data ? (
-        <section className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3">
+        <section className="section-card bg-[var(--surface-muted)] p-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
               <h3 className="text-sm font-black text-slate-900">当前权重历史压力重放</h3>
@@ -97,7 +97,7 @@ export function PortfolioStressTestPanel({ enabled }: { enabled: boolean }) {
             <>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 {stress.data.scenarios.map((scenario) => (
-                  <div key={scenario.scenario_id} className="rounded-xl bg-white p-3 shadow-sm">
+                  <div key={scenario.scenario_id} className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-3">
                     <div className="text-xs font-bold text-slate-600">{scenario.label}</div>
                     <div className="mt-1 text-lg font-black tabular-nums text-rose-700">
                       {scenario.return_percent.toFixed(2)}%
@@ -121,7 +121,7 @@ export function PortfolioStressTestPanel({ enabled }: { enabled: boolean }) {
       ) : null}
 
       {fees.data ? (
-        <section className="rounded-2xl border border-slate-200 bg-white p-3">
+        <section className="section-card p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-black text-slate-900">逐笔实际手续费证据</h3>
             <span className="text-xs font-bold text-slate-600">

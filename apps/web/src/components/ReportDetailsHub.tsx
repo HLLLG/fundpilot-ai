@@ -111,8 +111,9 @@ export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps)
 
   return (
     <section className="report-panel min-w-0 p-4 sm:p-5">
-      <h3 className="text-base font-black text-slate-950">更多内容与工具</h3>
-      <p className="mt-1 text-xs leading-5 text-slate-500">
+      <p className="ink-label">Desk Tools</p>
+      <h3 className="mt-1 text-base font-black text-[var(--brand-deep)]">更多内容与工具</h3>
+      <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
         按需打开单项工具，阅读主线保持轻量。
       </p>
 
@@ -137,7 +138,7 @@ export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps)
               className={`flex min-h-11 min-w-0 items-center gap-3 rounded-xl border px-3 py-3 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] ${
                 isOpen
                   ? "border-[var(--info-border)] bg-[var(--info-bg)]/80"
-                  : "border-slate-200 bg-white hover:border-[var(--info-border)] hover:bg-[var(--info-bg)]/80"
+                  : "border-[var(--line)] bg-[var(--panel)] hover:border-[var(--info-border)] hover:bg-[var(--info-bg)]/80"
               }`}
             >
               <span
@@ -151,8 +152,8 @@ export function ReportDetailsHub({ report, diagnostics }: ReportDetailsHubProps)
                 <Icon size={17} />
               </span>
               <span className="min-w-0 flex-1">
-                <strong className="block truncate text-sm text-slate-900">{tool.title}</strong>
-                <span className="block truncate text-xs text-slate-500">{tool.hint}</span>
+                <strong className="block truncate text-sm text-[var(--brand-deep)]">{tool.title}</strong>
+                <span className="block truncate text-xs text-[var(--muted)]">{tool.hint}</span>
               </span>
               <ChevronDown
                 aria-hidden="true"

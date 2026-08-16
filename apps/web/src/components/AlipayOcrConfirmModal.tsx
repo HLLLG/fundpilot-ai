@@ -249,7 +249,7 @@ export function AlipayOcrConfirmModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 p-4 sm:items-center"
+      className="modal-backdrop fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           requestClose();
@@ -266,9 +266,9 @@ export function AlipayOcrConfirmModal({
         aria-labelledby="ocr-confirm-modal-title"
         aria-busy={locked}
       >
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+        <div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4">
           <div>
-            <h2 id="ocr-confirm-modal-title" className="text-lg font-black text-slate-950">
+            <h2 id="ocr-confirm-modal-title" className="text-lg font-black text-[var(--brand-deep)]">
               确认识别结果
             </h2>
           </div>
@@ -290,7 +290,7 @@ export function AlipayOcrConfirmModal({
           </div>
         ) : null}
 
-        <div className="ocr-review-list min-h-0 flex-1 overflow-y-auto bg-[#f5f7fa] px-4 py-3">
+        <div className="ocr-review-list min-h-0 flex-1 overflow-y-auto bg-[var(--surface-muted)] px-4 py-3">
           <div className="space-y-2">
           {holdings.map((holding, index) => {
             const resolution = resolutionByName.get(holding.fund_name);
@@ -437,7 +437,7 @@ export function AlipayOcrConfirmModal({
               type="button"
               onClick={handleContinueUpload}
               disabled={locked}
-              className="mb-2 mt-3 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-2xl border border-dashed border-[var(--info-border)] bg-white py-3 text-sm font-bold text-blue-600 transition hover:bg-[var(--info-bg)] disabled:opacity-50"
+              className="mb-2 mt-3 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-2xl border border-dashed border-[var(--info-border)] bg-[var(--panel)] py-3 text-sm font-bold text-[var(--brand)] transition hover:bg-[var(--info-bg)] disabled:opacity-50"
             >
               <Plus size={15} />
               继续上传

@@ -66,8 +66,8 @@ export default function GlobalError({
           alignItems: "center",
           justifyContent: "center",
           padding: "24px",
-          background: "#f8fafc",
-          color: "#0f172a",
+          background: "#eceeea",
+          color: "#102631",
           fontFamily:
             'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
         }}
@@ -76,16 +76,16 @@ export default function GlobalError({
           style={{
             width: "100%",
             maxWidth: "480px",
-            background: "#ffffff",
-            border: "1px solid #e2e8f0",
-            borderRadius: "16px",
+            background: "#fbfaf6",
+            border: "1px solid rgba(16, 38, 49, 0.12)",
+            borderRadius: "18px",
             padding: "24px",
           }}
         >
           <h1 style={{ margin: 0, fontSize: "18px", fontWeight: 700 }}>
             应用加载失败
           </h1>
-          <p style={{ marginTop: "8px", fontSize: "14px", color: "#475569" }}>
+          <p style={{ marginTop: "8px", fontSize: "14px", color: "#52656d" }}>
             错误详情已自动上报。请刷新页面重试；如果反复出现，把下面的报障编号发给我们即可。
           </p>
           {reference ? (
@@ -93,8 +93,8 @@ export default function GlobalError({
               style={{
                 marginTop: "16px",
                 padding: "12px",
-                background: "#f1f5f9",
-                borderRadius: "12px",
+                background: "#f1f1ec",
+                borderRadius: "10px",
                 fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
                 fontSize: "13px",
                 wordBreak: "break-all",
@@ -111,8 +111,8 @@ export default function GlobalError({
               minHeight: "44px",
               padding: "10px 20px",
               border: "none",
-              borderRadius: "12px",
-              background: "#2356e0",
+              borderRadius: "10px",
+              background: "#1b4b5f",
               color: "#ffffff",
               fontSize: "14px",
               fontWeight: 700,

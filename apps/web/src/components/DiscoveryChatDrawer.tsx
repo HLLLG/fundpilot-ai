@@ -40,7 +40,7 @@ export function DiscoveryChatDrawer({
 
   return (
     <div
-      className="report-chat-backdrop fixed inset-0 z-[80] bg-slate-950/40 backdrop-blur-[2px]"
+      className="modal-backdrop report-chat-backdrop fixed inset-0 z-[80]"
       data-testid="discovery-chat-backdrop"
       onClick={handleBackdropClick}
     >
@@ -51,15 +51,15 @@ export function DiscoveryChatDrawer({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="report-chat-drawer fixed inset-0 flex min-h-0 w-full flex-col bg-white shadow-2xl outline-none sm:inset-y-0 sm:left-auto sm:right-0 sm:w-full sm:max-w-md sm:border-l sm:border-slate-200"
+        className="report-chat-drawer modal-sheet fixed inset-0 flex min-h-0 w-full flex-col outline-none sm:inset-y-0 sm:left-auto sm:right-0 sm:w-full sm:max-w-md sm:border-l sm:border-[var(--line)]"
         data-testid="discovery-chat-drawer"
       >
-        <header className="flex min-h-[72px] shrink-0 items-center gap-3 border-b border-slate-200 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-5">
+        <header className="flex min-h-[72px] shrink-0 items-center gap-3 border-b border-[var(--line)] px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-5">
           <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--info-bg)] text-[var(--brand-strong)]">
             <MessageCircle size={19} aria-hidden />
           </span>
           <div className="min-w-0 flex-1">
-            <h2 id={titleId} className="text-base font-black text-slate-950">
+            <h2 id={titleId} className="text-base font-black text-[var(--brand-deep)]">
               追问本次推荐
             </h2>
             {reportTitle ? (

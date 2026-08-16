@@ -29,8 +29,8 @@ const METRIC_CARDS: Array<{
     badge: "基础口径",
     description: "只判断上涨/下跌方向，不扣交易费用。",
     icon: Target,
-    accent: "bg-slate-900",
-    iconClass: "bg-slate-950 text-emerald-300",
+    accent: "bg-[var(--brand-ink)]",
+    iconClass: "bg-[var(--brand-ink)] text-[var(--accent)]",
   },
   {
     key: "positive_net_return",
@@ -79,7 +79,7 @@ function MetricCard({
 
   return (
     <article
-      className="relative overflow-hidden rounded-2xl border border-slate-200/80 bg-white px-3.5 py-3.5 shadow-[0_8px_28px_rgba(15,23,42,0.05)]"
+      className="relative overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--panel)] px-3.5 py-3.5"
       aria-label={`${config.label}：命中率 ${percent(stats?.hit_rate_percent)}，覆盖率 ${percent(stats?.coverage_percent)}`}
     >
       <div className={`absolute inset-y-0 left-0 w-1 ${config.accent}`} aria-hidden="true" />
@@ -139,7 +139,7 @@ export function FeeBenchmarkMethodNote({ feePercent }: { feePercent?: number | n
   return (
     // 结论先给一行：这个费率是"你的假设"而不是"平台实收"。剩下两句解释
     // （管理费为何不重复扣、什么样的基准才算正式）收进口径披露。
-    <div className="rounded-2xl border border-[var(--warn-border)] bg-[linear-gradient(135deg,#fffbeb_0%,#ffffff_58%,#eff6ff_100%)] px-4 py-2.5 text-[11px] leading-5 text-slate-600">
+    <div className="rounded-2xl border border-[var(--warn-border)] bg-[var(--warn-bg)] px-4 py-2.5 text-[11px] leading-5 text-slate-600">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <ReceiptText size={15} className="shrink-0 text-[var(--warn-icon)]" aria-hidden="true" />
         <p>

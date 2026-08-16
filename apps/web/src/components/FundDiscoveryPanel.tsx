@@ -687,7 +687,8 @@ export function FundDiscoveryPanel({
                   <Target size={20} strokeWidth={2.3} />
                 </span>
                 <div className="min-w-0">
-                  <h2 className="font-display text-lg font-extrabold text-slate-950">发现基金机会</h2>
+                  <p className="ink-label">Discovery Desk</p>
+                  <h2 className="font-display text-lg font-extrabold text-[var(--brand-deep)]">发现基金机会</h2>
                 </div>
               </div>
               <button

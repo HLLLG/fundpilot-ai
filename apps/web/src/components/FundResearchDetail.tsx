@@ -166,7 +166,7 @@ export function FundResearchDetail({ fund, holding, onClose }: FundResearchDetai
 
   return (
     <div
-      className="fixed inset-0 z-[65] flex items-end justify-center bg-slate-950/45 sm:items-center sm:p-4"
+      className="modal-backdrop fixed inset-0 z-[65] flex items-end justify-center sm:items-center sm:p-4"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -178,9 +178,9 @@ export function FundResearchDetail({ fund, holding, onClose }: FundResearchDetai
         role="dialog"
         aria-modal="true"
         aria-labelledby="fund-research-title"
-        className="flex max-h-[100dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-[22px] bg-white shadow-2xl sm:max-h-[min(92dvh,760px)] sm:rounded-[22px]"
+        className="modal-sheet flex max-h-[100dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-[var(--radius-card)] sm:max-h-[min(92dvh,760px)] sm:rounded-[var(--radius-card)]"
       >
-        <header className="relative shrink-0 bg-[var(--brand-strong)] px-4 pb-3 pt-3 text-white sm:px-5">
+        <header className="dossier-head relative shrink-0 px-4 pb-3 pt-3 sm:px-5">
           <button
             ref={closeButtonRef}
             type="button"

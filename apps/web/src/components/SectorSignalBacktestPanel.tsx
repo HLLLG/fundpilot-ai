@@ -142,8 +142,8 @@ export function SectorSignalBacktestPanel({
 
   if (pending && !data) {
     return (
-      <section className="glass-panel rounded-[24px] p-5" aria-busy="true">
-        <h3 className="text-lg font-black text-slate-950">{title}</h3>
+      <section className="section-card p-5" aria-busy="true">
+        <h3 className="text-lg font-black text-[var(--brand-deep)]">{title}</h3>
         <p className="mt-2 text-sm text-slate-600">正在拉取板块日线并计算 T→T+1 命中率…</p>
       </section>
     );
@@ -151,8 +151,8 @@ export function SectorSignalBacktestPanel({
 
   if (!data) {
     return (
-      <section className="glass-panel rounded-[24px] p-5">
-        <h3 className="text-lg font-black text-slate-950">{title}</h3>
+      <section className="section-card p-5">
+        <h3 className="text-lg font-black text-[var(--brand-deep)]">{title}</h3>
         {updateNotice ?? (
           <InlineNotice
             tone="error"
@@ -167,8 +167,8 @@ export function SectorSignalBacktestPanel({
 
   if (data.enabled === false) {
     return (
-      <section className="glass-panel rounded-[24px] p-5">
-        <h3 className="text-lg font-black text-slate-950">{title}</h3>
+      <section className="section-card p-5">
+        <h3 className="text-lg font-black text-[var(--brand-deep)]">{title}</h3>
         {updateNotice}
         <InlineNotice
           tone="info"
@@ -181,8 +181,8 @@ export function SectorSignalBacktestPanel({
 
   if (!data.has_data) {
     return (
-      <section className="glass-panel rounded-[24px] p-5">
-        <h3 className="text-lg font-black text-slate-950">{title}</h3>
+      <section className="section-card p-5">
+        <h3 className="text-lg font-black text-[var(--brand-deep)]">{title}</h3>
         {updateNotice}
         <InlineNotice
           tone="info"
@@ -196,13 +196,14 @@ export function SectorSignalBacktestPanel({
   const rules = Object.values(data.by_rule ?? {});
 
   return (
-    <section className="glass-panel rounded-[24px] p-5" aria-busy={pending}>
+    <section className="section-card p-5" aria-busy={pending}>
       <div className="mb-4 flex items-start gap-3">
-        <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-[var(--brand)] text-white">
+        <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--brand-ink)] text-[var(--accent)]">
           <LineChart size={20} />
         </div>
         <div>
-          <h3 className="text-lg font-black text-slate-950">{title}</h3>
+          <p className="ink-label">Signal Review</p>
+          <h3 className="mt-1 text-lg font-black text-[var(--brand-deep)]">{title}</h3>
           <p className="mt-1 text-xs text-slate-600">
             近 {data.lookback_days ?? lookbackDays} 交易日 · canonical 板块 {data.sector_count ?? 0} 个
             {sectorLabels?.length ? `（已按持仓板块筛选）` : "（全部硬编码板块）"}

@@ -41,7 +41,7 @@ export default function LoginPage() {
           <h1 className="font-display mt-2 text-3xl font-bold text-[var(--brand-deep)]">欢迎回来</h1>
         </div>
         <form className="space-y-5" onSubmit={onSubmit} aria-describedby={error ? "login-error" : undefined}>
-          <label className="block text-sm font-semibold text-slate-700">
+          <label className="block text-sm font-semibold text-[var(--foreground)]">
             邮箱
             <input
               type="email"
@@ -55,7 +55,7 @@ export default function LoginPage() {
               placeholder="you@example.com"
             />
           </label>
-          <label className="block text-sm font-semibold text-slate-700">
+          <label className="block text-sm font-semibold text-[var(--foreground)]">
             密码
             <input
               type="password"

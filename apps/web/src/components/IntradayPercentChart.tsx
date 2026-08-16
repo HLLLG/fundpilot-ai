@@ -52,8 +52,8 @@ function computeSymmetricSpan(points: IntradayPoint[]): number {
 }
 
 const CROSSHAIR = {
-  vertical: "#6366f1",
-  horizontal: "#0ea5e9",
+  vertical: "#7a898f",
+  horizontal: "#b58b45",
 };
 
 function IntradayPercentChartView({ points, height = 200, flat = false }: IntradayPercentChartProps) {
@@ -100,8 +100,8 @@ function IntradayPercentChartView({ points, height = 200, flat = false }: Intrad
     const trend = latest.percent >= 0 ? "up" : "down";
     const colors =
       trend === "up"
-        ? { line: "#e11d48", fillStart: "rgba(225,29,72,0.22)", fillEnd: "rgba(225,29,72,0.03)" }
-        : { line: "#059669", fillStart: "rgba(5,150,105,0.2)", fillEnd: "rgba(5,150,105,0.03)" };
+        ? { line: "#c81e3a", fillStart: "rgba(200,30,58,0.2)", fillEnd: "rgba(200,30,58,0.03)" }
+        : { line: "#047857", fillStart: "rgba(4,120,87,0.2)", fillEnd: "rgba(4,120,87,0.03)" };
 
     return {
       width,
@@ -193,7 +193,7 @@ function IntradayPercentChartView({ points, height = 200, flat = false }: Intrad
           width={chart.chartWidth}
           height={chart.chartHeight}
           fill="none"
-          stroke="#e2e8f0"
+          stroke="#d8d6cd"
           strokeWidth={1}
         />
         {chart.verticalGridXs.map((x) => (
@@ -203,7 +203,7 @@ function IntradayPercentChartView({ points, height = 200, flat = false }: Intrad
             y1={chart.plotTop}
             x2={x}
             y2={chart.plotBottom}
-            stroke="#e2e8f0"
+            stroke="#d8d6cd"
             strokeWidth={1}
           />
         ))}
@@ -212,7 +212,7 @@ function IntradayPercentChartView({ points, height = 200, flat = false }: Intrad
           y1={chart.baselineY}
           x2={chart.plotRight}
           y2={chart.baselineY}
-          stroke="#cbd5e1"
+          stroke="#b8b9b0"
           strokeWidth={1}
           strokeDasharray="4 4"
         />

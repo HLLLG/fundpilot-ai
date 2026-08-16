@@ -70,9 +70,9 @@
 }
 
 .pl-toggle-btn[aria-pressed="true"] {
-  background: #fff;
-  color: var(--foreground);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  background: var(--panel-strong);
+  color: var(--brand-deep);
+  box-shadow: var(--shadow-sm);
 }
 
 .pl-range-bar {
@@ -195,15 +195,15 @@
 }
 
 .risk-tone-good .risk-card-value {
-  color: #059669;
+  color: var(--profit-down);
 }
 
 .risk-tone-warn .risk-card-value {
-  color: #d97706;
+  color: var(--warn-icon);
 }
 
 .risk-tone-danger .risk-card-value {
-  color: #e11d48;
+  color: var(--profit-up);
 }
 
 .risk-card-locked .risk-card-value,
@@ -349,16 +349,16 @@
 }
 
 .factor-grade-badge.factor-tone-good {
-  background: #059669;
+  background: var(--profit-down);
 }
 .factor-grade-badge.factor-tone-neutral {
-  background: var(--brand, #2356e0);
+  background: var(--brand);
 }
 .factor-grade-badge.factor-tone-warn {
-  background: #d97706;
+  background: var(--warn-icon);
 }
 .factor-grade-badge.factor-tone-danger {
-  background: #e11d48;
+  background: var(--profit-up);
 }
 
 .factor-fund-meta {
@@ -464,16 +464,16 @@
 }
 
 .factor-tone-good .factor-bar-fill {
-  background: #059669;
+  background: var(--profit-down);
 }
 .factor-tone-neutral .factor-bar-fill {
-  background: var(--brand, #2356e0);
+  background: var(--brand);
 }
 .factor-tone-warn .factor-bar-fill {
-  background: #d97706;
+  background: var(--warn-icon);
 }
 .factor-tone-danger .factor-bar-fill {
-  background: #e11d48;
+  background: var(--profit-up);
 }
 
 .factor-bar-hint {
@@ -688,9 +688,9 @@
   min-height: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px));
   padding: 0.35rem 0.5rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.94);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
   backdrop-filter: blur(12px);
-  box-shadow: 0 -8px 24px rgba(7, 31, 43, 0.06);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 .dashboard-bottom-nav-btn {
@@ -780,8 +780,9 @@
 /* ── 日报生成区 ── */
 .report-control-hero {
   background:
-    radial-gradient(420px 140px at 0% -20%, var(--brand-soft) 0%, transparent 70%),
-    linear-gradient(180deg, var(--panel-strong) 0%, var(--panel) 100%);
+    linear-gradient(90deg, var(--accent) 0 3px, transparent 3px),
+    radial-gradient(420px 140px at 0% -20px, rgba(181, 139, 69, 0.12), transparent 70%),
+    var(--panel);
 }
 
 /* ── 选项 Chip（发现基金等）── */
@@ -815,8 +816,43 @@
 }
 
 .app-masthead {
+  position: relative;
   min-height: var(--app-masthead-h, 4.25rem);
   background: var(--background);
+}
+
+.app-masthead::after {
+  content: "";
+  position: absolute;
+  right: 42%;
+  bottom: -1px;
+  left: 0;
+  height: 1px;
+  background: linear-gradient(90deg, var(--accent), transparent);
+}
+
+.me-identity,
+.me-list {
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.me-identity {
+  background:
+    linear-gradient(90deg, var(--accent) 0 3px, transparent 3px),
+    var(--panel);
+}
+
+.me-row {
+  transition: background var(--motion-fast) ease;
+}
+
+.me-row:hover {
+  background: var(--surface-muted);
+}
+
+.me-row:not(:first-child) {
+  border-top: 1px solid var(--line);
 }
 .workflow-rail { display:grid; grid-template-columns:repeat(3,1fr); padding:0 1.25rem; border-bottom:1px solid var(--line); background:var(--surface-muted); }
 .workflow-rail li { position:relative; display:flex; gap:.5rem; align-items:center; min-height:3.25rem; color:var(--muted); font-size:.6875rem; }
@@ -833,8 +869,12 @@
   background: var(--panel);
 }
 
+.holdings-hero,
 .holdings-summary {
-  background: var(--panel);
+  background:
+    linear-gradient(90deg, var(--accent) 0 3px, transparent 3px),
+    radial-gradient(420px 140px at 0% -20px, rgba(181, 139, 69, 0.12), transparent 70%),
+    var(--panel);
 }
 
 .holdings-summary .kpi-value { font-family: var(--font-display); color: var(--brand-deep); font-weight: 650; }
@@ -863,10 +903,10 @@
   align-items: center;
   min-height: 2.75rem;
   padding: 0.25rem 0.75rem;
-  background: color-mix(in srgb, var(--panel) 80%, #f8fafc);
+  background: var(--surface-muted);
   font-size: 10px;
   font-weight: 700;
-  color: #64748b;
+  color: var(--muted);
 }
 .holdings-fund-cell {
   padding: 0.5rem 0.75rem;
@@ -881,7 +921,7 @@
 }
 .holdings-metrics-scroll--header {
   scrollbar-width: none;
-  background: color-mix(in srgb, var(--panel) 80%, #f8fafc);
+  background: var(--surface-muted);
 }
 .holdings-metrics-scroll--header::-webkit-scrollbar {
   height: 6px;
@@ -907,12 +947,12 @@
   width: 2.75rem;
   align-items: center;
   justify-content: center;
-  color: #94a3b8;
-  background: linear-gradient(to left, rgb(248 250 252), rgb(248 250 252 / 0));
+  color: var(--muted-soft);
+  background: linear-gradient(to left, var(--panel), color-mix(in srgb, var(--panel) 0%, transparent));
 }
 .holdings-metrics-nudge--left {
   left: 0;
-  background: linear-gradient(to right, rgb(248 250 252), rgb(248 250 252 / 0));
+  background: linear-gradient(to right, var(--panel), color-mix(in srgb, var(--panel) 0%, transparent));
 }
 .holdings-metrics-nudge--right {
   right: 0;
@@ -955,6 +995,7 @@
 }
 .holding-ledger-row:hover {
   background: var(--brand-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .holding-ledger-row:hover .holdings-fund-cell,
 .holding-ledger-row:hover .holdings-metrics-scroll {
@@ -983,7 +1024,10 @@
 }
 
 .analysis-hero {
-  background: var(--panel);
+  background:
+    linear-gradient(90deg, var(--accent) 0 3px, transparent 3px),
+    radial-gradient(420px 140px at 0% -20px, rgba(181, 139, 69, 0.12), transparent 70%),
+    var(--panel);
 }
 
 .analysis-hero .pl-hero {
@@ -1041,8 +1085,10 @@
 }
 
 .market-index-kicker {
-  font-weight: 700;
-  color: var(--foreground);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
 }
 
 .market-index-strip {
@@ -1062,7 +1108,7 @@
 .market-index-card {
   flex: 0 0 7.15rem;
   scroll-snap-align: start;
-  border-radius: 0.85rem;
+  border-radius: var(--radius-control);
   padding: 0.7rem 0.45rem 0.65rem;
   text-align: center;
   border: 1px solid transparent;
@@ -1158,7 +1204,14 @@
 .discovery-workspace .chip-btn { border-radius:var(--radius-control); }
 .discovery-workspace .chip-btn-active { background:var(--brand-deep); box-shadow:none; }
 
-.report-editorial-hero { border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:var(--radius-card); background:var(--panel); }
+.report-editorial-hero {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-card);
+  background:
+    radial-gradient(420px 160px at 100% 0%, rgba(181, 139, 69, 0.1), transparent 62%),
+    var(--panel);
+}
 .report-metric { border-left:1px solid var(--line); }
 .report-metric:first-child { border-left:0; }
 .report-metric.is-emphasis { color:var(--brand-deep); background:var(--accent-soft); }

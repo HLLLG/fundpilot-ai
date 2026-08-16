@@ -185,7 +185,7 @@ function SortColumnHeader({
       type="button"
       onClick={() => onSort(column)}
       className={`inline-flex min-h-11 min-w-11 w-full items-center justify-end gap-0.5 font-medium transition-colors ${
-        active ? "text-slate-700" : "text-slate-500 hover:text-slate-600"
+        active ? "text-[var(--brand-deep)]" : "text-[var(--muted)] hover:text-[var(--foreground)]"
       }`}
       aria-label={`按${label}${active ? (direction === "desc" ? "从大到小" : "从小到大") : "从大到小"}排序`}
     >
@@ -446,11 +446,12 @@ export function ThemeSectorOverview({
   };
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--panel)] shadow-sm">
-      <div className="bg-gradient-to-b from-amber-50/90 via-amber-50/30 to-white px-4 pb-3 pt-4">
+    <section className="overflow-hidden rounded-[var(--radius-card)] border border-[var(--line)] bg-[var(--panel)]">
+      <div className="market-board-head px-4 pb-3 pt-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-lg font-bold tracking-tight text-slate-900 sm:text-xl">{themeBoardHeading()}</h2>
+            <p className="ink-label">Market Board</p>
+            <h2 className="mt-1 font-display text-lg font-bold tracking-tight text-[var(--brand-deep)] sm:text-xl">{themeBoardHeading()}</h2>
             {/*
               `stale` 与 `available` 是两件事，此前这里把前者写成了后者的文案。
               后端 `available = bool(items)`，取不到行情时才把「行情暂不可用，请稍后重试」
@@ -477,14 +478,14 @@ export function ThemeSectorOverview({
       <div className="px-4 pb-4 pt-1">
         {showData ? (
           <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-start">
-            <label className="relative flex min-h-11 w-full min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 focus-within:border-[var(--brand)] focus-within:bg-white sm:w-72">
-              <Search className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+            <label className="search-shell relative w-full min-w-0 sm:w-72">
+              <Search className="h-4 w-4 shrink-0 text-[var(--muted)]" aria-hidden />
               <input
                 type="search"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder="搜索板块，如 半导体"
-                className="min-h-11 min-w-0 flex-1 bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-500"
+                className="min-h-11 min-w-0 flex-1 bg-transparent text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--muted)]"
                 aria-label="按名称搜索主题板块"
                 autoComplete="off"
               />
