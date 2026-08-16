@@ -173,13 +173,16 @@ echo \$? > $(printf '%q' "$FUNDPILOT_EXIT")
 RUN
 chmod 700 "$FUNDPILOT_JOB_DIR/run.sh" "$FUNDPILOT_JOB_DIR/cmd.sh"
 setsid --fork /bin/bash "$FUNDPILOT_JOB_DIR/run.sh"
-for i in \$(seq 1 10); do
+# Quoted REMOTE heredoc already blocks runner-side expansion. Do not
+# backslash-escape command substitution here: the server would fail at parse
+# time with "syntax error near unexpected token '('" (deploy run 136).
+for i in $(seq 1 10); do
   if [[ -s "$FUNDPILOT_PID" ]]; then
     break
   fi
   sleep 0.2
 done
-echo "started pid=\$(tr -d '[:space:]' < \"\$FUNDPILOT_PID\")"
+echo "started pid=$(tr -d '[:space:]' < "$FUNDPILOT_PID")"
 REMOTE
 }
 
