@@ -100,7 +100,7 @@ def test_outcome_settlement_workflow_keeps_long_ssh_sessions_alive() -> None:
     assert "IPQoS=none" in helper_text
     assert "TCPKeepAlive=yes" in helper_text
     assert "ServerAliveCountMax=10" in helper_text
-    assert "nohup setsid" in helper_text
+    assert "setsid --fork" in helper_text
     assert "PYTHONUNBUFFERED=1" in helper_text
     assert "/srv/fundpilot/deploy.lock" in helper_text
 

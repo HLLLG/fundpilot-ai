@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Run `docker compose exec` on Lighthouse without keeping one long SSH session.
 #
-# Two production failure modes on GitHub → Lighthouse:
-# 1. Handshake hang / RST (`kex_exchange_identification`, Decision Outcome
-#    Settlement #36). TCP connects but the SSH banner never arrives. Time out
+# Production failure modes on GitHub → Lighthouse:
+# 1. Handshake hang / RST (`kex_exchange_identification`, run #36). Time out
 #    the handshake, disable DSCP (IPQoS=none), and reopen the session.
-# 2. Idle session drop after the remote command has started (`Broken pipe` /
-#    `Timeout, server not responding`, runs #31–#35). docker exec is killed by
-#    SIGHUP and pending T+N rows pile up. Spawn the command in a new session,
-#    then poll the log with short SSH calls.
+# 2. Idle session drop after the remote command has started (`Broken pipe`,
+#    runs #31–#35). docker exec is killed by SIGHUP. Spawn off the SSH session.
+# 3. Start SSH returns `started pid=…` then every later SSH from the same
+#    runner dies at banner exchange (run #37). docker exec kept the sshd
+#    session open via inherited fds. Double-fork, close extra fds, poll once
+#    per interval instead of hammering sshd.
 #
 # Settlement is idempotent; the poll loop never relaunches a live job.
 set -euo pipefail
@@ -36,7 +37,7 @@ if [[ $# -lt 1 ]]; then
 fi
 
 CONNECT_ATTEMPTS="${LIGHTHOUSE_EXEC_CONNECT_ATTEMPTS:-4}"
-POLL_SECONDS="${LIGHTHOUSE_EXEC_POLL_SECONDS:-20}"
+POLL_SECONDS="${LIGHTHOUSE_EXEC_POLL_SECONDS:-30}"
 MAX_WAIT_SECONDS="${LIGHTHOUSE_EXEC_MAX_WAIT_SECONDS:-2400}"
 DEPLOY_LOCK_ATTEMPTS="${LIGHTHOUSE_EXEC_DEPLOY_LOCK_ATTEMPTS:-60}"
 target="${LIGHTHOUSE_USER}@${LIGHTHOUSE_HOST}"
@@ -64,15 +65,19 @@ ssh_options=(
   -o ServerAliveCountMax=10
   -o TCPKeepAlive=yes
   -o IPQoS=none
+  -o ControlMaster=no
   -T
 )
+
+ssh_once() {
+  ssh "${ssh_options[@]}" "$target" "$@"
+}
 
 ssh_call() {
   local attempt st=255
   for attempt in $(seq 1 "$CONNECT_ATTEMPTS"); do
-    ssh "${ssh_options[@]}" "$target" "$@"
+    ssh_once "$@"
     st=$?
-    # OpenSSH returns 255 for client/transport errors (hung kex, RST, timeout).
     if [[ "$st" -ne 255 ]]; then
       return "$st"
     fi
@@ -120,16 +125,38 @@ fi
 rm -f "$FUNDPILOT_EXIT" "$FUNDPILOT_PID"
 : > "$FUNDPILOT_LOG"
 inner="$(printf '%s' "$FUNDPILOT_INNER_B64" | base64 -d)"
-nohup setsid bash -c "$inner; echo \$? > \"$FUNDPILOT_EXIT\"" \
-  </dev/null >>"$FUNDPILOT_LOG" 2>&1 &
-echo $! > "$FUNDPILOT_PID"
-echo "started pid=$(tr -d '[:space:]' < "$FUNDPILOT_PID")"
+printf '%s\n' "$inner" > "$FUNDPILOT_JOB_DIR/cmd.sh"
+cat > "$FUNDPILOT_JOB_DIR/run.sh" <<RUN
+#!/bin/bash
+echo \$\$ > $(printf '%q' "$FUNDPILOT_PID")
+exec </dev/null >>$(printf '%q' "$FUNDPILOT_LOG") 2>&1
+if [[ -d /proc/self/fd ]]; then
+  for fd in /proc/self/fd/*; do
+    fdnum="\${fd##*/}"
+    case "\$fdnum" in
+      0|1|2) continue ;;
+      *) eval "exec \${fdnum}>&-" 2>/dev/null || true ;;
+    esac
+  done
+fi
+bash $(printf '%q' "$FUNDPILOT_JOB_DIR/cmd.sh")
+echo \$? > $(printf '%q' "$FUNDPILOT_EXIT")
+RUN
+chmod 700 "$FUNDPILOT_JOB_DIR/run.sh" "$FUNDPILOT_JOB_DIR/cmd.sh"
+setsid --fork /bin/bash "$FUNDPILOT_JOB_DIR/run.sh"
+for i in \$(seq 1 10); do
+  if [[ -s "$FUNDPILOT_PID" ]]; then
+    break
+  fi
+  sleep 0.2
+done
+echo "started pid=\$(tr -d '[:space:]' < \"\$FUNDPILOT_PID\")"
 REMOTE
 }
 
 poll_remote_job() {
   local skip_lines="$1"
-  ssh_call env \
+  ssh_once env \
     FUNDPILOT_LOG="$remote_log" \
     FUNDPILOT_EXIT="$remote_exit" \
     FUNDPILOT_PID="$remote_pid" \
@@ -156,6 +183,7 @@ REMOTE
 }
 
 start_remote_job
+sleep 2
 
 deadline=$((SECONDS + MAX_WAIT_SECONDS))
 next_line=1
