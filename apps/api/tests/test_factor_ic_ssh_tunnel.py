@@ -16,6 +16,7 @@ def test_lighthouse_tunnel_helper_times_out_and_retries_hung_handshakes() -> Non
     assert "ConnectTimeout=15" in text
     assert "TCPKeepAlive=yes" in text
     assert "ServerAliveCountMax=10" in text
+    assert "IPQoS=none" in text
     assert "CONNECT_ATTEMPTS" in text
     assert 'HEALTH_URL="http://127.0.0.1:${LOCAL_PORT}/health"' in text
 

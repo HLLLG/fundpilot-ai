@@ -3,10 +3,11 @@
 # Prints the tunnel PID on stdout. All diagnostics go to stderr so callers can
 # capture the PID with command substitution.
 #
-# GitHub → Lighthouse TCP sometimes hangs before the local forward is bound
-# (Factor IC Refresh #14: ssh stayed alive, curl never connected to :18000).
-# One hung ssh with a 30s health loop is not a retry. Time out the handshake
-# and reopen the session.
+# GitHub → Lighthouse TCP can connect on :22 and still never deliver the SSH
+# banner (`Connection timed out during banner exchange`, Factor IC Refresh
+# #14/#15, same as Decision Outcome Settlement #36). OpenSSH's default DSCP
+# markings get dropped on that path; IPQoS=none matches the compose-exec
+# helper. Also time out the handshake and reopen the session.
 set -euo pipefail
 
 : "${SSH_KEY_PATH:?SSH_KEY_PATH is empty}"
@@ -34,6 +35,7 @@ ssh_options=(
   -o ServerAliveInterval=30
   -o ServerAliveCountMax=10
   -o TCPKeepAlive=yes
+  -o IPQoS=none
 )
 
 tunnel_pid=""
