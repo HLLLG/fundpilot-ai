@@ -71,8 +71,6 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "$FACTOR_IC_PUBLISH_TOKEN" ]] || { echo "::error::FACTOR_IC_PUBLISH_TOKEN is empty"; exit 1; }
-          target="${LIGHTHOUSE_USER}@${LIGHTHOUSE_HOST}"
-          ssh_options=(-i "$SSH_KEY_PATH" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH")
           tunnel_pid=""
           cleanup() {
             if [[ -n "$tunnel_pid" ]] && kill -0 "$tunnel_pid" 2>/dev/null; then
@@ -81,27 +79,7 @@ jobs:
             fi
           }
           trap cleanup EXIT
-          ssh "${ssh_options[@]}" \
-            -o ExitOnForwardFailure=yes \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=3 \
-            -T -N -L 127.0.0.1:18000:127.0.0.1:8000 \
-            "$target" &
-          tunnel_pid=$!
-          tunnel_ready=false
-          for attempt in {1..15}; do
-            if ! kill -0 "$tunnel_pid" 2>/dev/null; then
-              wait "$tunnel_pid"
-              exit 1
-            fi
-            if curl -fsS --max-time 2 http://127.0.0.1:18000/health >/dev/null; then
-              tunnel_ready=true
-              break
-            fi
-            echo "waiting for PIT history SSH tunnel ($attempt/15)"
-            sleep 2
-          done
-          [[ "$tunnel_ready" == true ]] || { echo "::error::Lighthouse API is unavailable through the SSH tunnel"; exit 1; }
+          tunnel_pid="$(bash "$GITHUB_WORKSPACE/scripts/ci/open-lighthouse-api-tunnel.sh")"
           python scripts/fetch_factor_ic_universe.py \
             --out "$RUNNER_TEMP/factor-ic-pit.json" \
             --days 1600 \
@@ -139,8 +117,6 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "$FACTOR_IC_PUBLISH_TOKEN" ]] || { echo "::error::FACTOR_IC_PUBLISH_TOKEN is empty"; exit 1; }
-          target="${LIGHTHOUSE_USER}@${LIGHTHOUSE_HOST}"
-          ssh_options=(-i "$SSH_KEY_PATH" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH")
           tunnel_pid=""
           cleanup() {
             if [[ -n "$tunnel_pid" ]] && kill -0 "$tunnel_pid" 2>/dev/null; then
@@ -149,25 +125,5 @@ jobs:
             fi
           }
           trap cleanup EXIT
-          ssh "${ssh_options[@]}" \
-            -o ExitOnForwardFailure=yes \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=3 \
-            -T -N -L 127.0.0.1:18000:127.0.0.1:8000 \
-            "$target" &
-          tunnel_pid=$!
-          tunnel_ready=false
-          for attempt in {1..15}; do
-            if ! kill -0 "$tunnel_pid" 2>/dev/null; then
-              wait "$tunnel_pid"
-              exit 1
-            fi
-            if curl -fsS --max-time 2 http://127.0.0.1:18000/health >/dev/null; then
-              tunnel_ready=true
-              break
-            fi
-            echo "waiting for Factor IC SSH tunnel ($attempt/15)"
-            sleep 2
-          done
-          [[ "$tunnel_ready" == true ]] || { echo "::error::Lighthouse API is unavailable through the SSH tunnel"; exit 1; }
+          tunnel_pid="$(bash "$GITHUB_WORKSPACE/scripts/ci/open-lighthouse-api-tunnel.sh")"
           python scripts/publish_factor_ic.py "$RUNNER_TEMP/factor-ic/summary.json"
