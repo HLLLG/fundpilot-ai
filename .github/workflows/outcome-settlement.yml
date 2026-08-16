@@ -20,6 +20,9 @@ jobs:
     timeout-minutes: 45
     environment: production
     steps:
+      - name: Checkout remote-exec helper
+        uses: actions/checkout@v7
+
       - name: Configure Lighthouse SSH identity
         env:
           LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
@@ -49,23 +52,8 @@ jobs:
           LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
         run: |
           set -euo pipefail
-          target="${LIGHTHOUSE_USER}@${LIGHTHOUSE_HOST}"
-          # docker exec stays silent until Python prints the final JSON. GitHub →
-          # Lighthouse NAT drops idle TCP in ~5 minutes (Broken pipe / "Timeout,
-          # server not responding"), which aborts the in-container process and
-          # leaves pending T+N rows to pile up. Keepalive matches Factor IC tunnels.
-          ssh_options=(
-            -i "$SSH_KEY_PATH"
-            -o BatchMode=yes
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH"
-            -o ServerAliveInterval=30
-            -o ServerAliveCountMax=10
-            -o TCPKeepAlive=yes
-          )
-          ssh "${ssh_options[@]}" "$target" \
-            "cd /srv/fundpilot/repo && docker compose --env-file .env.production -f docker-compose.production.yml exec -T -e PYTHONUNBUFFERED=1 api python -u scripts/settle_pending_outcomes.py"
+          bash scripts/ci/run-lighthouse-compose-exec.sh outcome-settlement \
+            python -u scripts/settle_pending_outcomes.py
 
       - name: Persist point-in-time decision-quality snapshots
         id: quality-snapshot
@@ -76,20 +64,13 @@ jobs:
           LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
         run: |
           set -euo pipefail
-          target="${LIGHTHOUSE_USER}@${LIGHTHOUSE_HOST}"
           evaluation_as_of="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          ssh_options=(
-            -i "$SSH_KEY_PATH"
-            -o BatchMode=yes
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH"
-            -o ServerAliveInterval=30
-            -o ServerAliveCountMax=10
-            -o TCPKeepAlive=yes
-          )
-          ssh "${ssh_options[@]}" "$target" \
-            "cd /srv/fundpilot/repo && docker compose --env-file .env.production -f docker-compose.production.yml exec -T -e PYTHONUNBUFFERED=1 api python -u scripts/evaluate_decision_quality.py --all-users --evaluation-as-of '$evaluation_as_of' --window-days 365 --format summary"
+          bash scripts/ci/run-lighthouse-compose-exec.sh decision-quality \
+            python -u scripts/evaluate_decision_quality.py \
+            --all-users \
+            --evaluation-as-of "$evaluation_as_of" \
+            --window-days 365 \
+            --format summary
 
       - name: Record settlement contract
         if: always()

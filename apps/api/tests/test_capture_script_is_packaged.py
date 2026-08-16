@@ -84,18 +84,25 @@ def test_capture_workflow_invokes_the_packaged_path() -> None:
 
 
 def test_outcome_settlement_workflow_keeps_long_ssh_sessions_alive() -> None:
-    """结算脚本结束前几乎不打日志；无 SSH keepalive 时 GitHub→Lighthouse 的空闲
-    TCP 会被 NAT 掐掉（Broken pipe），docker exec 中途退出、pending 越积越多。"""
+    """结算必须走脱离 SSH 的 compose exec helper：握手 RST 要重试，空闲 NAT
+    掐线也不能带走 docker exec。"""
+    helper = "scripts/ci/run-lighthouse-compose-exec.sh"
     workflow = (
         REPO_ROOT / ".github" / "workflows" / "outcome-settlement.yml"
     ).read_text(encoding="utf-8")
+    helper_text = (REPO_ROOT / helper).read_text(encoding="utf-8")
+    assert helper in workflow
+    assert workflow.count(helper) == 2
     assert "python -u scripts/settle_pending_outcomes.py" in workflow
     assert "python -u scripts/evaluate_decision_quality.py" in workflow
     assert "apps/api/scripts/settle_pending_outcomes.py" not in workflow
-    assert "ServerAliveInterval=30" in workflow
-    assert "ServerAliveCountMax=10" in workflow
-    assert "TCPKeepAlive=yes" in workflow
-    assert "PYTHONUNBUFFERED=1" in workflow
+    assert "ConnectTimeout=15" in helper_text
+    assert "IPQoS=none" in helper_text
+    assert "TCPKeepAlive=yes" in helper_text
+    assert "ServerAliveCountMax=10" in helper_text
+    assert "nohup setsid" in helper_text
+    assert "PYTHONUNBUFFERED=1" in helper_text
+    assert "/srv/fundpilot/deploy.lock" in helper_text
 
 
 # ---------------------------------------------------------------------------

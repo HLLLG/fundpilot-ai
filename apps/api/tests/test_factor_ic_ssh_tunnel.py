@@ -20,6 +20,16 @@ def test_lighthouse_tunnel_helper_times_out_and_retries_hung_handshakes() -> Non
     assert 'HEALTH_URL="http://127.0.0.1:${LOCAL_PORT}/health"' in text
 
 
+def test_lighthouse_compose_exec_helper_detaches_and_retries_transport_errors() -> None:
+    script = REPO_ROOT / "scripts" / "ci" / "run-lighthouse-compose-exec.sh"
+    text = script.read_text(encoding="utf-8")
+    assert "ConnectTimeout=15" in text
+    assert "IPQoS=none" in text
+    assert "st -ne 255" in text or '"$st" -ne 255' in text
+    assert "nohup setsid" in text
+    assert "deploy.lock" in text
+
+
 def test_factor_ic_workflows_open_the_tunnel_through_the_retry_helper() -> None:
     helper = "scripts/ci/open-lighthouse-api-tunnel.sh"
     refresh = REFRESH_WORKFLOW.read_text(encoding="utf-8")
