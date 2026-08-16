@@ -30,6 +30,16 @@ def test_lighthouse_compose_exec_helper_detaches_and_retries_transport_errors() 
     assert "setsid --fork" in text
     assert 'ssh_once "$@" < "$stdin_file" || st=$?' in text
     assert "deploy.lock" in text
+    assert '"${1:-}" == "--host"' in text
+
+
+def test_lighthouse_deploy_detaches_the_long_remote_script() -> None:
+    workflow = (
+        REPO_ROOT / ".github" / "workflows" / "deploy-lighthouse.yml"
+    ).read_text(encoding="utf-8")
+    assert "run-lighthouse-compose-exec.sh --host lighthouse-deploy" in workflow
+    assert "IPQoS=none" in workflow
+    assert "chmod 700 '$remote_script' && { '$remote_script'" not in workflow
 
 
 def test_factor_ic_workflows_open_the_tunnel_through_the_retry_helper() -> None:

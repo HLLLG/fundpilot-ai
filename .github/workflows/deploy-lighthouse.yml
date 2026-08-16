@@ -80,16 +80,48 @@ jobs:
         env:
           LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
           LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
+          LIGHTHOUSE_EXEC_MAX_WAIT_SECONDS: "3300"
         run: |
           set -euo pipefail
           target="${LIGHTHOUSE_USER}@${LIGHTHOUSE_HOST}"
           release_web="/srv/fundpilot/releases/${DEPLOY_SHA}/web"
           remote_script="/tmp/fundpilot-deploy-${DEPLOY_SHA}.sh"
-          ssh_options=(-i "$SSH_KEY_PATH" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH")
-          ssh "${ssh_options[@]}" "$target" "mkdir -p '$release_web'"
-          rsync -az --delete -e "ssh -i $SSH_KEY_PATH -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH" apps/web/out/ "$target:$release_web/"
+          ssh_options=(
+            -i "$SSH_KEY_PATH"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH"
+            -o ConnectTimeout=15
+            -o ConnectionAttempts=1
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=10
+            -o TCPKeepAlive=yes
+            -o IPQoS=none
+            -o ControlMaster=no
+          )
+          ssh_opt_str="${ssh_options[*]}"
+          stage_ssh() {
+            local attempt st=255
+            for attempt in $(seq 1 8); do
+              st=0
+              ssh "${ssh_options[@]}" "$target" "$@" || st=$?
+              if [[ "$st" -ne 255 ]]; then
+                return "$st"
+              fi
+              echo "SSH transport failed with 255 (attempt ${attempt}/8)" >&2
+              if [[ "$attempt" -lt 8 ]]; then
+                sleep $((attempt * 5))
+              fi
+            done
+            return 255
+          }
+          stage_ssh "mkdir -p '$release_web'"
+          rsync -az --delete -e "ssh $ssh_opt_str" apps/web/out/ "$target:$release_web/"
           scp "${ssh_options[@]}" deploy/lighthouse/deploy.sh "$target:$remote_script"
-          ssh "${ssh_options[@]}" "$target" "chmod 700 '$remote_script' && { '$remote_script' '$DEPLOY_SHA'; status=\$?; rm -f '$remote_script'; exit \$status; }"
+          stage_ssh "chmod 700 '$remote_script'"
+          bash scripts/ci/run-lighthouse-compose-exec.sh --host lighthouse-deploy \
+            "$remote_script" "$DEPLOY_SHA"
 
       - name: Record deployed commit
         run: echo "Deployed Lighthouse commit \`$DEPLOY_SHA\`" >> "$GITHUB_STEP_SUMMARY"

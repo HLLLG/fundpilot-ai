@@ -13,6 +13,9 @@
 # 4. Handshake retries must snapshot the heredoc (run #38). `set -e` plus
 #    consuming stdin on the first 255 would skip retries or send an empty
 #    remote script. Snapshot stdin and keep looping on transport errors.
+# 5. A live `deploy.sh` attached to SSH (build + 365-day quality dry-run)
+#    blocks later banner exchange (settlement #40). `--host` detaches that
+#    script the same way compose exec is detached.
 #
 # Settlement is idempotent; the poll loop never relaunches a live job.
 set -euo pipefail
@@ -22,9 +25,16 @@ set -euo pipefail
 : "${LIGHTHOUSE_USER:?LIGHTHOUSE_USER is empty}"
 : "${LIGHTHOUSE_HOST:?LIGHTHOUSE_HOST is empty}"
 
+host_cmd=0
+if [[ "${1:-}" == "--host" ]]; then
+  host_cmd=1
+  shift
+fi
+
 if [[ $# -lt 2 ]]; then
-  echo "usage: $0 <job-name> <remote-argv...>" >&2
+  echo "usage: $0 [--host] <job-name> <remote-argv...>" >&2
   echo "example: $0 outcome-settlement python -u scripts/settle_pending_outcomes.py" >&2
+  echo "example: $0 --host lighthouse-deploy /tmp/fundpilot-deploy.sh <sha>" >&2
   exit 64
 fi
 
@@ -50,10 +60,18 @@ remote_exit="${remote_dir}/job.exit"
 remote_pid="${remote_dir}/job.pid"
 deploy_lock="/srv/fundpilot/deploy.lock"
 
-inner_cmd="cd /srv/fundpilot/repo && docker compose --env-file .env.production -f docker-compose.production.yml exec -T -e PYTHONUNBUFFERED=1 api"
-for arg in "$@"; do
-  inner_cmd+=" $(printf '%q' "$arg")"
-done
+if [[ "$host_cmd" -eq 1 ]]; then
+  inner_cmd=""
+  for arg in "$@"; do
+    inner_cmd+=" $(printf '%q' "$arg")"
+  done
+  inner_cmd="${inner_cmd# }"
+else
+  inner_cmd="cd /srv/fundpilot/repo && docker compose --env-file .env.production -f docker-compose.production.yml exec -T -e PYTHONUNBUFFERED=1 api"
+  for arg in "$@"; do
+    inner_cmd+=" $(printf '%q' "$arg")"
+  done
+fi
 inner_b64="$(printf '%s' "$inner_cmd" | base64 -w0)"
 
 ssh_options=(
