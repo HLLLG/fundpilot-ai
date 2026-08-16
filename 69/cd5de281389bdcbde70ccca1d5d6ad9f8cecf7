@@ -1,0 +1,34 @@
+scripts/ci/open-lighthouse-api-tunnel.sh
+  s_8318f6c8d1f5e9::t_5bb3d50e62ab7d 1-84
+.github/workflows/factor-ic-universe-capture.yml
+  s_8318f6c8d1f5e9::t_8e1b05ce174fee 83
+.github/workflows/factor-ic-refresh.yml
+  s_8318f6c8d1f5e9::t_3107dd13ab76a0 128
+  s_62a0d05f0b36c2::t_1a03475cd26473 82
+apps/api/tests/test_factor_ic_ssh_tunnel.py
+  s_8318f6c8d1f5e9::t_566722ad5b7a9d 20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "69cd5de281389bdcbde70ccca1d5d6ad9f8cecf7",
+  "prompts": {},
+  "sessions": {
+    "s_62a0d05f0b36c2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "40423201-7334-4118-9f3b-c2969ddc664c",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_8318f6c8d1f5e9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c77ff2e6-543d-41fb-ab5b-cbe7235ea92a",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
