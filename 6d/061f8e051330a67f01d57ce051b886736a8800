@@ -1,0 +1,22 @@
+apps/api/scripts/fetch_factor_ic_nav_observations.py
+  s_8318f6c8d1f5e9::t_d2464f7e48b72e 20-21
+  s_8318f6c8d1f5e9::t_d687288162ddba 22
+apps/api/tests/test_fetch_factor_ic_nav_observations.py
+  s_8318f6c8d1f5e9::t_e6348353f858c6 1-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "6d061f8e051330a67f01d57ce051b886736a8800",
+  "prompts": {},
+  "sessions": {
+    "s_8318f6c8d1f5e9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c77ff2e6-543d-41fb-ab5b-cbe7235ea92a",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
