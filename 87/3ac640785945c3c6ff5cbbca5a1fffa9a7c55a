@@ -1,0 +1,177 @@
+apps/api/app/services/graphs/daily_report.py
+  s_2a8ac14658cbfe::t_d703251b6f6674 13
+  s_2a8ac14658cbfe::t_cce87094aa8a88 118
+  s_2a8ac14658cbfe::t_f6d6b2f934c58e 1-12,14-117,119-167
+apps/web/src/components/ReportChatPanel.tsx
+  s_2a8ac14658cbfe::t_062066d163631e 134
+  s_2a8ac14658cbfe::t_87dec4d582bc10 7
+  s_2a8ac14658cbfe::t_48bd033cb76bad 253
+apps/api/requirements.txt
+  s_2a8ac14658cbfe::t_56a6ce4564ba4c 13
+apps/api/app/services/chat_aggregate.py
+  s_2a8ac14658cbfe::t_5faca115d49699 17
+  s_2a8ac14658cbfe::t_cbadde3b1715da 149
+apps/api/app/services/discovery_chat.py
+  s_2a8ac14658cbfe::t_4806648b4e6f9f 61-79
+  s_2a8ac14658cbfe::t_a9363fc420102f 155
+  s_2a8ac14658cbfe::t_3aa0c3a35bba95 134-135,137-145,160,162-165,168-186,189-212
+  s_2a8ac14658cbfe::t_a48b3aedb5a765 187-188
+  s_2a8ac14658cbfe::t_194d5060de9c55 17-18
+  s_2a8ac14658cbfe::t_84388eab2322d8 35-41
+  s_2a8ac14658cbfe::t_ca70ff61306824 52
+  s_2a8ac14658cbfe::t_daf848e93f9286 234-242
+apps/api/app/database.py
+  s_2a8ac14658cbfe::t_d7b910b85e338b 407-409
+  s_2a8ac14658cbfe::t_dc15f892e038a0 2272-2274
+apps/web/src/lib/api/marketDiagnostics.ts
+  s_2a8ac14658cbfe::t_3462521f7a814a 210-259
+apps/api/tests/test_decision_data_evidence.py
+  s_2a8ac14658cbfe::t_61fd4cc5a6d6ae 975-982
+apps/web/src/components/Dashboard.tsx
+  s_2a8ac14658cbfe::t_e9ee538fb50736 118
+  s_2a8ac14658cbfe::t_f89265991d27bb 432-441
+apps/api/app/services/graphs/discovery_scan.py
+  s_2a8ac14658cbfe::t_e27aae2bc2d409 1-17,19-92
+  s_2a8ac14658cbfe::t_6c122eb8d832bf 18
+apps/web/src/lib/reportChatStream.test.ts
+  s_2a8ac14658cbfe::t_ba4319723b81ba 53-73
+  s_2a8ac14658cbfe::t_d2950f3d64c6a4 31-52
+apps/api/app/services/analyze_streaming.py
+  s_2a8ac14658cbfe::t_91b7ad7d70400c 457-459
+  s_2a8ac14658cbfe::t_29d7847454914f 444
+  s_2a8ac14658cbfe::t_7fa8ce0924fa2e 100-101
+  s_2a8ac14658cbfe::t_b0ce5e55a82c1a 624-626
+  s_2a8ac14658cbfe::t_76d8dbff459bee 64-68
+apps/web/src/components/DiscoveryChatPanel.tsx
+  s_2a8ac14658cbfe::t_479ee1f4fd4735 7
+  s_2a8ac14658cbfe::t_a9041d13e1cff4 90
+  s_2a8ac14658cbfe::t_7d8543dc4eb002 130
+  s_2a8ac14658cbfe::t_9b1c94806284f3 37
+  s_2a8ac14658cbfe::t_83325d4bd990a7 210-212
+  s_2a8ac14658cbfe::t_d7c3509cce7298 115-120,122
+apps/api/app/services/report_chat.py
+  s_2a8ac14658cbfe::t_e42040d364c8a8 283-284
+  s_2a8ac14658cbfe::t_6d673a457ed841 270
+  s_2a8ac14658cbfe::t_b11768face7e32 305-313
+  s_2a8ac14658cbfe::t_3c95a161339a6a 255,257-260,272,277,282,285-287
+  s_2a8ac14658cbfe::t_2a7598fb90dd2b 71-82
+  s_2a8ac14658cbfe::t_4ddebc8ba2f6ae 18-19
+  s_2a8ac14658cbfe::t_693800db69be12 40
+  s_2a8ac14658cbfe::t_8bc7e089d67ee3 105,114
+  s_2a8ac14658cbfe::t_053172deaf5c05 154,160,164,172,177,184-204,208-228
+apps/api/tests/test_chat_agent_tools.py
+  s_2a8ac14658cbfe::t_4ac7ba3094a995 45
+  s_2a8ac14658cbfe::t_6c61d32b317240 36
+  s_2a8ac14658cbfe::t_e43bfb115a7292 1-35,37-44,46-243
+apps/api/app/services/discovery_pipeline.py
+  s_2a8ac14658cbfe::t_af9b39b34993e6 114-122
+  s_2a8ac14658cbfe::t_16a7baed8e01d7 113
+  s_2a8ac14658cbfe::t_c07be06e453503 427-429
+apps/api/app/config.py
+  s_2a8ac14658cbfe::t_50863f0439937e 105-109
+apps/api/app/routes/market_diagnostics.py
+  s_2a8ac14658cbfe::t_6e11bf9b371851 65-84
+  s_2a8ac14658cbfe::t_a6a9effde8b4b4 11
+  s_2a8ac14658cbfe::t_7cdd77573fec53 5
+apps/api/app/services/langgraph_runner.py
+  s_2a8ac14658cbfe::t_9f7ba15333e429 16
+  s_2a8ac14658cbfe::t_9db0c1086f1c0c 44-55,116
+  s_2a8ac14658cbfe::t_9aeb8a164bb98c 117-118
+  s_2a8ac14658cbfe::t_f31888e9b6b272 1-15,17-20,22-40,42-43,56-114,119-155
+  s_2a8ac14658cbfe::t_4ade74127d020e 41
+  s_2a8ac14658cbfe::t_9c9418db9a08eb 115
+  s_2a8ac14658cbfe::t_91920c703b705d 21
+apps/api/tests/test_langgraph_trace.py
+  s_2a8ac14658cbfe::t_6b5c3142a046ec 1-69
+apps/api/tests/test_langgraph_graphs.py
+  s_2a8ac14658cbfe::t_a9b48d386f2b16 1-146
+  s_2a8ac14658cbfe::t_c36474dd872e8f 147-156
+apps/api/app/services/langgraph_trace.py
+  s_2a8ac14658cbfe::t_dfa5f62c25745b 1-98,103-193,213-457,459-489,491,496-524,526-537,542-551,553-555,558-564,566-568
+  s_2a8ac14658cbfe::t_28d5bcd65865d9 490
+  s_2a8ac14658cbfe::t_a555348694aea4 492-495
+  s_2a8ac14658cbfe::t_d3c19d1d3a8783 458
+  s_2a8ac14658cbfe::t_7a538180cbb321 525
+  s_2a8ac14658cbfe::t_3edc7376af2bf1 565
+  s_2a8ac14658cbfe::t_89b7712b72c7ae 99-102
+  s_2a8ac14658cbfe::t_02667fabdd439a 538
+  s_2a8ac14658cbfe::t_a209dc0e684cb1 194-197,202-212
+  s_2a8ac14658cbfe::t_914e04ea168e10 539-541
+  s_2a8ac14658cbfe::t_ced7a1aff6fad8 552,556-557
+  s_2a8ac14658cbfe::t_f3a29a96fdb226 198-201
+README.md
+  s_2a8ac14658cbfe::t_88450554e73dfb 61
+apps/api/app/mysql_bootstrap.py
+  s_2a8ac14658cbfe::t_bdfdf4ab409b17 1808-1835
+apps/api/app/services/chat_agent_tools.py
+  s_2a8ac14658cbfe::t_6dcff9ab30bfe4 1-511,523-642
+  s_2a8ac14658cbfe::t_51782a2e8b8c0c 512-522
+apps/web/src/lib/agentJobEvents.ts
+  s_2a8ac14658cbfe::t_a7f26c6b11cb89 1-30
+apps/web/src/lib/api.ts
+  s_2a8ac14658cbfe::t_faa38abc11e70d 3052-3055
+  s_2a8ac14658cbfe::t_b3c5c4175dfb3c 3056-3059
+  s_2a8ac14658cbfe::t_640f1d82cf6cf3 2048
+  s_2a8ac14658cbfe::t_aec7a2e9566cbb 91-92
+  s_2a8ac14658cbfe::t_30541d6f0154dd 2716
+  s_2a8ac14658cbfe::t_b49782da072088 69-70
+  s_2a8ac14658cbfe::t_4bd217e3e6a7a3 2717-2732
+  s_2a8ac14658cbfe::t_6662de867e9cc9 2049-2064
+  s_2a8ac14658cbfe::t_7eb89b5a2f750c 3009
+apps/api/app/services/graphs/chat_followup.py
+  s_2a8ac14658cbfe::t_02bd727946c518 1-246
+docs/PROJECT_CONTEXT.md
+  s_2a8ac14658cbfe::t_72b724fecaa424 1355
+  s_2a8ac14658cbfe::t_e51dcbdab3508a 794-796,806
+  s_2a8ac14658cbfe::t_cf73c118bee1cd 799-801
+  s_2a8ac14658cbfe::t_137f870eae02be 848-849
+  s_2a8ac14658cbfe::t_9875cc9a608f5e 348
+  s_2a8ac14658cbfe::t_f67fc3991b9733 626-628
+apps/api/app/services/report_chat_runtime.py
+  s_2a8ac14658cbfe::t_25e0906e0f9e44 7,15,27,34
+apps/api/tests/test_chat_agent_loop.py
+  s_2a8ac14658cbfe::t_a7b200e7136a09 79-82
+  s_2a8ac14658cbfe::t_2aee7681973d35 1-78
+apps/api/app/services/graphs/__init__.py
+  s_2a8ac14658cbfe::t_fedbd4f1ba98a6 1
+apps/web/src/components/GraphRunsPanel.tsx
+  s_2a8ac14658cbfe::t_431742c524ce6a 1-197
+apps/api/app/services/discovery_streaming.py
+  s_2a8ac14658cbfe::t_436e36cb9124ea 195
+  s_2a8ac14658cbfe::t_9eeec2c4ff8001 60-64
+  s_2a8ac14658cbfe::t_835ca337843f90 973-975
+  s_2a8ac14658cbfe::t_14aefe7186187e 914-916
+  s_2a8ac14658cbfe::t_334847b7eacadd 880
+apps/web/src/lib/agentJobEvents.test.ts
+  s_2a8ac14658cbfe::t_65a1b335c142a0 1-17
+apps/api/app/db_migrations.py
+  s_2a8ac14658cbfe::t_3b8ecf7c10a1e1 2224
+  s_2a8ac14658cbfe::t_64b7a4420b816f 2153-2198
+  s_2a8ac14658cbfe::t_3d6fd8727843a2 2302
+apps/api/app/services/chat_agent_loop.py
+  s_2a8ac14658cbfe::t_57668af83174e7 1-38,40,56-121
+  s_2a8ac14658cbfe::t_26a237fcba3902 39,41,43-55
+  s_2a8ac14658cbfe::t_f9125a3b376e58 42
+apps/api/app/services/analyze_pipeline.py
+  s_2a8ac14658cbfe::t_4dc4145e5c34d2 21-22,24-32
+  s_2a8ac14658cbfe::t_3e61d804ddb3e9 23
+apps/web/src/components/ReportDiagnostics.tsx
+  s_2a8ac14658cbfe::t_bfdb4f6b16c9ce 5
+  s_2a8ac14658cbfe::t_5ed51629fba98b 31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "873ac640785945c3c6ff5cbbca5a1fffa9a7c55a",
+  "prompts": {},
+  "sessions": {
+    "s_2a8ac14658cbfe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1ed6533b-172c-4f53-a632-23c4cbc5a715",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
