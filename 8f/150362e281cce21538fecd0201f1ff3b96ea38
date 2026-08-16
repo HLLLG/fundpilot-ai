@@ -1,0 +1,27 @@
+apps/api/app/services/outcome_settlement.py
+  s_8318f6c8d1f5e9::t_ef5f9894e3dd6e 54,77-81,100,106-109
+.github/workflows/outcome-settlement.yml
+  s_8318f6c8d1f5e9::t_ef5f9894e3dd6e 20,53-66,68,81-90,92
+apps/api/tests/test_capture_script_is_packaged.py
+  s_8318f6c8d1f5e9::t_ef5f9894e3dd6e 86-100
+apps/api/scripts/evaluate_decision_quality.py
+  s_8318f6c8d1f5e9::t_ef5f9894e3dd6e 98-104
+apps/api/scripts/settle_pending_outcomes.py
+  s_8318f6c8d1f5e9::t_ef5f9894e3dd6e 77-80,98,109,114,122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "8f150362e281cce21538fecd0201f1ff3b96ea38",
+  "prompts": {},
+  "sessions": {
+    "s_8318f6c8d1f5e9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c77ff2e6-543d-41fb-ab5b-cbe7235ea92a",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
