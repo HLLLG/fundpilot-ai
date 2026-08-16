@@ -1,0 +1,320 @@
+apps/web/src/components/ReportOutcomesPanel.tsx
+  s_2ffe6075cd8388::t_98cd01c0864b48 219-220
+apps/web/src/components/ProfitAnalysisTrendChart.tsx
+  s_2ffe6075cd8388::t_f30fe870b2e73c 158-160
+  s_2ffe6075cd8388::t_f882fba2c62ac1 151-153
+  s_2ffe6075cd8388::t_40cc0656908fc2 164-166
+  s_2ffe6075cd8388::t_3df79fc2ac3979 7
+apps/web/src/components/YangjibaoFundDetail.tsx
+  s_2ffe6075cd8388::t_adae1770129bc5 673
+  s_2ffe6075cd8388::t_09a445dd92d5d1 143
+  s_2ffe6075cd8388::t_70dd1cebad2724 806
+  s_2ffe6075cd8388::t_9e9acd9ddfaec7 865
+  s_2ffe6075cd8388::t_4279d5bc67c84d 1175,1184,1186-1187
+  s_2ffe6075cd8388::t_fb8d191f191f5b 790
+  s_2ffe6075cd8388::t_d5e6791f68466a 1007,1009,1016,1018
+  s_2ffe6075cd8388::t_5ec04756c77d74 845
+  s_2ffe6075cd8388::t_e9c24357963334 1038
+  s_2ffe6075cd8388::t_a9ad7c686ca59d 1051,1056,1059
+  s_2ffe6075cd8388::t_e8cd6ba36293b6 1290-1291,1294,1297
+  s_2ffe6075cd8388::t_03d07803285661 130,132
+  s_2ffe6075cd8388::t_c97bf3aa225f95 670
+  s_2ffe6075cd8388::t_166bc4945a0dca 838
+  s_2ffe6075cd8388::t_5e88a12626d93c 994,996
+  s_2ffe6075cd8388::t_7583411f322027 1254
+  s_2ffe6075cd8388::t_6f6f4ee7ee34de 776,778-779
+  s_2ffe6075cd8388::t_9839d5ac10ed0e 171
+  s_2ffe6075cd8388::t_8a313c69b37c92 1271,1274,1277,1283
+  s_2ffe6075cd8388::t_834a03645e1afe 738-739
+  s_2ffe6075cd8388::t_59f451c5ea25dd 1321
+  s_2ffe6075cd8388::t_649dc13c814926 1265
+  s_2ffe6075cd8388::t_6e53fcc5c9f1e7 656
+apps/web/src/components/BatchTransactionModal.tsx
+  s_2ffe6075cd8388::t_17853e5aee69e2 131
+  s_2ffe6075cd8388::t_441391bba7aed0 102
+  s_2ffe6075cd8388::t_ea4f67c6dec193 120
+apps/web/src/components/DiscoveryReportPanel.tsx
+  s_2ffe6075cd8388::t_fd967b0f32d9cc 859-860
+  s_2ffe6075cd8388::t_8f460eaa962482 869
+  s_2ffe6075cd8388::t_e060f53ce0ecdf 1067,1076,1081,1083
+  s_2ffe6075cd8388::t_3824b8cbf46b88 313-314,322,325
+  s_2ffe6075cd8388::t_5322c100da3233 826-827,831-833
+  s_2ffe6075cd8388::t_638601d67fe347 797,801-802
+  s_2ffe6075cd8388::t_66dbb5c0c86d46 352,357
+  s_2ffe6075cd8388::t_4a2d734073d93c 811,815,817-818
+  s_2ffe6075cd8388::t_7404386326ac96 880
+  s_2ffe6075cd8388::t_577c8e0a8eb710 477
+  s_2ffe6075cd8388::t_918f5a5b619208 1009,1011
+  s_2ffe6075cd8388::t_5aff3e9e349954 758,760,763-765
+apps/web/src/app/login/page.tsx
+  s_2ffe6075cd8388::t_430fb7d7c2107c 58
+  s_2ffe6075cd8388::t_179d3d630b5444 44
+apps/web/src/components/DiscoveryStrategySelector.tsx
+  s_2ffe6075cd8388::t_6b81cb2e97069c 16,19,23,27
+apps/web/src/components/ReportPanel.tsx
+  s_2ffe6075cd8388::t_b342acd8ea5285 72-73,76,79,88
+apps/web/src/app/dashboard.css
+  s_2ffe6075cd8388::t_cdf97a17c94885 1207-1214
+  s_2ffe6075cd8388::t_2aef6bfe11ba83 206
+  s_2ffe6075cd8388::t_7e7f4d92f309bc 691,693
+  s_2ffe6075cd8388::t_274e82783610b6 198
+  s_62a0d05f0b36c2::t_63b4af871fa86b 832
+  s_2ffe6075cd8388::t_0d8dc0739b83f1 355,470
+  s_2ffe6075cd8388::t_11be70b909372a 783-785
+  s_2ffe6075cd8388::t_125955bcdd73bc 924
+  s_2ffe6075cd8388::t_5bceb02440a02f 361,476
+  s_2ffe6075cd8388::t_9114eeff97b792 73-75
+  s_2ffe6075cd8388::t_5f003424c55edc 819,823-831
+  s_2ffe6075cd8388::t_9b7817862fb2f8 202
+  s_2ffe6075cd8388::t_c23c0009247f78 352,467
+  s_2ffe6075cd8388::t_c98a93ec917b78 358,473
+  s_2ffe6075cd8388::t_ed94a9a7516a3e 833-856
+  s_2ffe6075cd8388::t_662913635d7ff6 906,909
+  s_2ffe6075cd8388::t_f267a07ae62b99 998
+  s_2ffe6075cd8388::t_40e21a1f7a458e 1027-1030
+  s_2ffe6075cd8388::t_dda0a33615cc3c 1088-1091
+  s_2ffe6075cd8388::t_02b375e30f3937 874-877
+apps/web/src/components/PortfolioStressTestPanel.tsx
+  s_2ffe6075cd8388::t_7d81466dc23356 124
+  s_2ffe6075cd8388::t_db7dd8f1537aa6 75
+  s_2ffe6075cd8388::t_81635d9248f1a7 100
+apps/web/src/components/JobProgressCard.tsx
+  s_2ffe6075cd8388::t_83a1a0ccbd40bb 97
+  s_2ffe6075cd8388::t_00699a3dbd8a52 107
+  s_2ffe6075cd8388::t_90c8159bf5b661 66
+  s_2ffe6075cd8388::t_729f9a0fa302a0 31,36-37
+  s_2ffe6075cd8388::t_140ff3c440c88f 131
+  s_2ffe6075cd8388::t_01d22c1b1846fb 73,77
+apps/web/src/components/BatchTransactionConfirmModal.tsx
+  s_2ffe6075cd8388::t_2a9246ce294726 437
+  s_2ffe6075cd8388::t_2cd18cb7bebaa2 753
+  s_2ffe6075cd8388::t_af035a1779447e 818
+  s_2ffe6075cd8388::t_2bc5eefb5d35e7 426
+  s_2ffe6075cd8388::t_a9efe64f016290 687
+  s_2ffe6075cd8388::t_456a3eab6e2f0b 771
+  s_2ffe6075cd8388::t_2475923a320b26 764
+  s_2ffe6075cd8388::t_fa8a1e996bdc0a 637
+  s_2ffe6075cd8388::t_b931f0adc205b8 443-444
+  s_2ffe6075cd8388::t_07dfade7640d9d 465
+apps/web/src/components/AuthShell.tsx
+  s_2ffe6075cd8388::t_271c76c98ced01 18
+apps/web/src/components/AlipayOcrConfirmModal.tsx
+  s_2ffe6075cd8388::t_5631b0102ec332 293
+  s_2ffe6075cd8388::t_dc878f71b0dd1b 252
+  s_2ffe6075cd8388::t_21b2d79849bd83 440
+  s_2ffe6075cd8388::t_9657b5c35fdda3 269,271
+apps/web/src/components/ThemeSectorOverview.tsx
+  s_2ffe6075cd8388::t_96ff8ad0536c13 449-450,453-454
+  s_2ffe6075cd8388::t_8672cfd32a0c94 188
+apps/web/src/components/RiskControls.tsx
+  s_2ffe6075cd8388::t_2b4690913a5588 86-87
+  s_2ffe6075cd8388::t_ae37002682cb4a 131-133
+apps/web/src/components/SectorSignalBacktestPanel.tsx
+  s_2ffe6075cd8388::t_3e3cc6c096518c 146,155,171,185
+  s_2ffe6075cd8388::t_7b7909939c41cc 201,205-206
+  s_2ffe6075cd8388::t_587fdc0636adb6 145,154,170,184,199
+apps/web/src/components/ReportNewsBriefPanel.tsx
+  s_2ffe6075cd8388::t_4c783745cf1bf4 51
+  s_2ffe6075cd8388::t_3db1b79a48e9b5 22
+  s_2ffe6075cd8388::t_e8cc914d0e1c77 124-125,128,134,137-138,142
+apps/web/src/components/LandingPage.tsx
+  s_2ffe6075cd8388::t_8a8efe266a80d2 99-110
+  s_2ffe6075cd8388::t_c6d5e1666765ed 31-36
+apps/web/src/components/DiscoveryCandidatePoolPanel.tsx
+  s_2ffe6075cd8388::t_cc92f999c6ea76 523
+  s_2ffe6075cd8388::t_f9dd89eda8eb01 716
+  s_2ffe6075cd8388::t_632c4a35539cd5 67-68
+  s_2ffe6075cd8388::t_8349aa78ac4380 456
+apps/web/src/components/ShadowEscalationDigestCard.tsx
+  s_2ffe6075cd8388::t_ac329cd82a864e 49,61,83,100
+  s_2ffe6075cd8388::t_93a32f010fe850 50,62,84,111
+  s_2ffe6075cd8388::t_fe07115b219c0c 105,109-110
+apps/web/src/components/HoldingsTransactionLedgerModal.tsx
+  s_2ffe6075cd8388::t_fdcd072c43580a 43,49,51-52,59
+apps/web/src/components/FundRecommendationCard.tsx
+  s_2ffe6075cd8388::t_84381bfb63a3d6 647
+apps/web/src/components/HoldingModifyModal.tsx
+  s_2ffe6075cd8388::t_97eedc462ac2b3 103
+  s_2ffe6075cd8388::t_4dac49eeba3871 114
+  s_2ffe6075cd8388::t_a43761e5751c42 130
+  s_2ffe6075cd8388::t_77f0a8e4765b48 119
+apps/web/src/components/DiscoverySkeleton.tsx
+  s_2ffe6075cd8388::t_52a3b28fed4c95 122-123,125
+apps/web/src/app/register/page.tsx
+  s_2ffe6075cd8388::t_9b172b6e8285fe 57,69,84,100
+apps/web/src/components/DiscoveryChatDrawer.tsx
+  s_2ffe6075cd8388::t_5d20270fd20df2 54
+  s_2ffe6075cd8388::t_de783c0785375b 57
+  s_2ffe6075cd8388::t_6d0e7ea86687a0 43
+  s_2ffe6075cd8388::t_be70e015604811 62
+apps/web/src/components/NewsPreviewPanel.tsx
+  s_2ffe6075cd8388::t_21fa056424100d 63,66-67,70,79
+apps/web/src/components/HoldingDonutChart.tsx
+  s_2ffe6075cd8388::t_50c1c432ed1f6a 7-12
+apps/web/src/components/ReportChatDrawer.tsx
+  s_2ffe6075cd8388::t_d56e302da0ed2a 125
+  s_2ffe6075cd8388::t_b4a076cffeac05 112
+apps/web/src/components/ReportSummaryHero.tsx
+  s_2ffe6075cd8388::t_b45de96de49fb4 187
+  s_2ffe6075cd8388::t_5d52c368732102 148
+  s_2ffe6075cd8388::t_c3c3c49fedf77b 157,161
+apps/web/src/components/DiscoveryChatPanel.tsx
+  s_2ffe6075cd8388::t_1aebe9c5259390 205
+  s_2ffe6075cd8388::t_d51a4257a0e17c 147
+  s_2ffe6075cd8388::t_fcb3bff85107d9 140-141
+apps/web/src/components/YangjibaoHoldingsBoard.tsx
+  s_2ffe6075cd8388::t_34a13ac992e177 138
+  s_2ffe6075cd8388::t_1cf2f3d5d4effa 528
+  s_2ffe6075cd8388::t_b7636a789c2ee0 502
+  s_2ffe6075cd8388::t_3edf3b36e69775 566
+apps/web/src/components/IntradayPercentChart.tsx
+  s_2ffe6075cd8388::t_88cb1e7ee3da6d 215
+  s_2ffe6075cd8388::t_1d479334b41237 103-104
+  s_2ffe6075cd8388::t_59bf5273046051 196,206
+apps/web/src/app/settings/page.tsx
+  s_2ffe6075cd8388::t_82cfc37b538488 13
+apps/web/src/components/PortfolioDashboard.tsx
+  s_2ffe6075cd8388::t_96222d345c64d7 244,246-247
+  s_2ffe6075cd8388::t_dc440ee3e670ee 267
+apps/web/src/app/error.tsx
+  s_2ffe6075cd8388::t_d893b227b2e8c1 67-71
+  s_2ffe6075cd8388::t_518cec671cdd71 76-77
+  s_2ffe6075cd8388::t_7d07f56a20e7f2 106
+apps/web/src/components/WorkspaceSkeleton.tsx
+  s_2ffe6075cd8388::t_049c2cf9ab6939 32
+apps/web/src/components/AddHoldingModal.tsx
+  s_2ffe6075cd8388::t_8dc69fcbb9cb14 356
+  s_2ffe6075cd8388::t_558ef0a1795a45 195
+  s_2ffe6075cd8388::t_c0e078acd34fec 224
+  s_2ffe6075cd8388::t_909d870fc5775c 213
+apps/web/src/components/PerformanceTrendPanel.tsx
+  s_2ffe6075cd8388::t_4eaa6e37b2a44d 259,263
+apps/web/src/components/DiscoveryHistoryRail.tsx
+  s_2ffe6075cd8388::t_06a87fae9961d1 93
+  s_2ffe6075cd8388::t_55f2d7345438ff 185-186
+apps/web/src/components/ReportThinkingSidebar.tsx
+  s_2ffe6075cd8388::t_b5fe477f62a11d 69
+  s_2ffe6075cd8388::t_e9f638c4528bcf 57
+  s_2ffe6075cd8388::t_3e5534a717a4b8 53
+apps/web/src/components/MePage.tsx
+  s_2ffe6075cd8388::t_4d5ebf095c1d38 28,30
+  s_2ffe6075cd8388::t_56255785922054 88
+  s_2ffe6075cd8388::t_c54dbf91ce8fb3 54
+  s_2ffe6075cd8388::t_ee359a2aa25343 23
+  s_2ffe6075cd8388::t_41355168988989 36
+  s_2ffe6075cd8388::t_c09472aa4bb9d7 83
+apps/web/src/components/NavHistoryListModal.tsx
+  s_2ffe6075cd8388::t_a661a2605c7fa5 117,119,122
+  s_2ffe6075cd8388::t_1e80b911dd3a2e 103
+  s_2ffe6075cd8388::t_ee9c2d398f9079 110
+apps/web/src/components/FundResearchDetail.tsx
+  s_2ffe6075cd8388::t_b1245986c810fa 169
+  s_2ffe6075cd8388::t_a53e7445e63178 181,183
+apps/web/src/components/ReportSkeleton.tsx
+  s_2ffe6075cd8388::t_6732733dc0683f 43,45
+apps/web/src/components/ReportDetailsHub.tsx
+  s_2ffe6075cd8388::t_b91bf018bb95b6 141
+  s_2ffe6075cd8388::t_d135ae630fa341 155-156
+  s_2ffe6075cd8388::t_2023de92db2af7 114-116
+apps/web/src/components/DiscoveryOutcomesPanel.tsx
+  s_2ffe6075cd8388::t_7b6fbba7419816 84,86-92
+apps/web/src/components/HistoryDeleteDialog.tsx
+  s_2ffe6075cd8388::t_fbd1b2f86a8c82 43
+  s_2ffe6075cd8388::t_668dccb8fc4e4a 68,71
+  s_2ffe6075cd8388::t_9950609106f2bb 58
+apps/web/src/components/TradingSessionBar.tsx
+  s_2ffe6075cd8388::t_31418370921485 56
+apps/web/src/app/globals.css
+  s_2ffe6075cd8388::t_6bea0780c47f39 423-436
+  s_62a0d05f0b36c2::t_63b4af871fa86b 1339-1340
+  s_2ffe6075cd8388::t_ac9e5116cf980a 249-252
+  s_2ffe6075cd8388::t_7a830e705a7bd1 416-422
+  s_2ffe6075cd8388::t_0020d457843058 1324,1331-1338
+  s_2ffe6075cd8388::t_6f9d9a943dc1aa 358-362,366-383
+  s_2ffe6075cd8388::t_fbc87d4e3a4f18 363-365,384-412,439-440
+  s_2ffe6075cd8388::t_497af7e3c210cb 1386-1397
+  s_2ffe6075cd8388::t_ae12a5f08e4913 413-415,437-438
+  s_2ffe6075cd8388::t_258b21b8e973de 78-168
+apps/web/src/components/UserAvatar.tsx
+  s_2ffe6075cd8388::t_8d60fdc93e3582 29
+apps/web/src/components/FundSearchDialog.tsx
+  s_2ffe6075cd8388::t_74b71a98877cc6 198,201,207
+  s_2ffe6075cd8388::t_3a5cd32cdc4a7b 186
+  s_2ffe6075cd8388::t_0b36cde4b3e629 218
+apps/web/src/components/SectorOpportunityCard.tsx
+  s_2ffe6075cd8388::t_5822c2b53d6014 11-13
+apps/web/src/components/DecisionMetricGrid.tsx
+  s_2ffe6075cd8388::t_4c445f6a726bc1 32-33
+apps/web/src/components/RebalanceSimulationPanel.tsx
+  s_2ffe6075cd8388::t_f84e52b8fa78c6 219-221
+apps/web/src/components/FundReturnDistributionPanel.tsx
+  s_2ffe6075cd8388::t_4a6b1e29872754 317,319,326,332,336
+  s_2ffe6075cd8388::t_c7563c44c502d0 303-308
+apps/web/src/components/SectorMappingModal.tsx
+  s_2ffe6075cd8388::t_ebbf15d030fcc3 66,68-69,72
+  s_2ffe6075cd8388::t_703f4e4d9ad555 51
+apps/web/src/components/Dashboard.tsx
+  s_2ffe6075cd8388::t_d20758a19b7e71 1681
+apps/web/src/components/PerformanceReturnChart.tsx
+  s_2ffe6075cd8388::t_66928246b308dc 11-12
+  s_2ffe6075cd8388::t_8c04825602478a 339
+  s_2ffe6075cd8388::t_025f1de084ee98 330
+  s_2ffe6075cd8388::t_01061e2df8b0e6 380
+  s_2ffe6075cd8388::t_37c8da72b6df9d 361
+apps/web/src/components/FocusSectorPicker.tsx
+  s_2ffe6075cd8388::t_6227b7601ef9a4 153
+apps/web/src/components/SingleFundTransactionModal.tsx
+  s_2ffe6075cd8388::t_fabca51bd48fe4 156
+  s_2ffe6075cd8388::t_8e7495d3962dcb 129
+  s_2ffe6075cd8388::t_78bba41ce54a59 140
+  s_2ffe6075cd8388::t_8999ae33abba65 145
+apps/web/src/components/SwingAlertsPanel.tsx
+  s_2ffe6075cd8388::t_bd807f01a7b38b 33-34,37-38,43
+  s_2ffe6075cd8388::t_c66c25a80c53fe 54
+  s_2ffe6075cd8388::t_9047b0875d7f67 58,63-64
+apps/web/src/components/ReportChatPanel.tsx
+  s_2ffe6075cd8388::t_019d15295b3901 249
+  s_2ffe6075cd8388::t_2ae2fea6dc3512 281
+  s_2ffe6075cd8388::t_4018c0421e15c8 308
+  s_2ffe6075cd8388::t_1ce74b549376c6 241-242
+apps/web/src/components/FundCodeEditModal.tsx
+  s_2ffe6075cd8388::t_bd906b805dceab 276
+  s_2ffe6075cd8388::t_184d6794ea56e2 191
+  s_2ffe6075cd8388::t_3030ff6d5844e2 176
+  s_2ffe6075cd8388::t_a4bf3a896b6076 195,198
+apps/web/src/components/FundDiscoveryPanel.tsx
+  s_2ffe6075cd8388::t_f18c17f0e680b3 690-691
+apps/web/src/components/RecommendationAccuracyPanel.tsx
+  s_2ffe6075cd8388::t_f6fa32305e9cc6 31
+  s_2ffe6075cd8388::t_2fbf7210435899 94,96,100-102
+apps/web/src/app/global-error.tsx
+  s_2ffe6075cd8388::t_491997602816ae 114-115
+  s_2ffe6075cd8388::t_97510287af59d6 69-70
+  s_2ffe6075cd8388::t_c690d31c7cd104 79-81
+  s_2ffe6075cd8388::t_a6c5f9ac9e5430 88
+  s_2ffe6075cd8388::t_e5b094bb14dc9d 96-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "24a8eadba66332469965e64e8feb09f60b2d562b",
+  "prompts": {},
+  "sessions": {
+    "s_2ffe6075cd8388": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "617ad772-913a-46d0-896a-c78ce1d8a37b",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_62a0d05f0b36c2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "40423201-7334-4118-9f3b-c2969ddc664c",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
