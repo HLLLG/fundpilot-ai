@@ -1,0 +1,19 @@
+.github/workflows/outcome-settlement.yml
+  s_62a0d05f0b36c2::t_2e059976d9fc44 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "985329548bcb27859e990626c56f9492f7bce565",
+  "prompts": {},
+  "sessions": {
+    "s_62a0d05f0b36c2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "40423201-7334-4118-9f3b-c2969ddc664c",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
