@@ -359,7 +359,7 @@ export function YangjibaoHoldingsBoard({
     if (metricsHoveringRef.current) {
       setMetricsScrollbarVisible(true);
     }
-  }, []);
+  }, [setMetricsScrollbarVisible]);
 
   const scrollMetricsBy = useCallback(
     (delta: number) => {
