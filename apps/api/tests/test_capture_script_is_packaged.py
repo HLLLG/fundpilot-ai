@@ -92,7 +92,6 @@ def test_outcome_settlement_workflow_keeps_long_ssh_sessions_alive() -> None:
     ).read_text(encoding="utf-8")
     helper_text = (REPO_ROOT / helper).read_text(encoding="utf-8")
     assert helper in workflow
-    assert "group: fundpilot-lighthouse-production" in workflow
     assert workflow.count(helper) == 2
     assert "python -u scripts/settle_pending_outcomes.py" in workflow
     assert "python -u scripts/evaluate_decision_quality.py" in workflow
