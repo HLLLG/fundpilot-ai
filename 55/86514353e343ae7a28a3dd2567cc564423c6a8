@@ -1,0 +1,27 @@
+scripts/ci/run-lighthouse-compose-exec.sh
+  s_62a0d05f0b36c2::t_e1c439627c7276 135,139-144
+  s_62a0d05f0b36c2::t_d622ed1bedd242 6-7,13,49,51,53,86-94,96,98-100,103,106-107,112-115,120-126,130-134,136-137,145,147,151-153,156,158,160-178,180-181
+  s_62a0d05f0b36c2::t_4001376be86f69 1-5,8-12,14-48,50,52,54-85,95,97,101-102,104-105,108-111,116-119,127-129,138,146,148-150,154-155,157,159,179,182-187
+.github/workflows/outcome-settlement.yml
+  s_62a0d05f0b36c2::t_7e21b9ec5f706f 23-25,55-56,68-73
+apps/api/tests/test_capture_script_is_packaged.py
+  s_62a0d05f0b36c2::t_f3e106feb0a562 87-89,93-95,99-105
+apps/api/tests/test_factor_ic_ssh_tunnel.py
+  s_62a0d05f0b36c2::t_8ce7b7ac64657d 23-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "5586514353e343ae7a28a3dd2567cc564423c6a8",
+  "prompts": {},
+  "sessions": {
+    "s_62a0d05f0b36c2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "40423201-7334-4118-9f3b-c2969ddc664c",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
