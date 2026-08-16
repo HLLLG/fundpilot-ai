@@ -1,0 +1,25 @@
+apps/api/app/services/decision_contract.py
+  s_2a8ac14658cbfe::t_0ba26c1f80966a 22
+apps/api/tests/test_decision_contract_prompt_version.py
+  s_2a8ac14658cbfe::t_0ba26c1f80966a 9
+scripts/ci/run-lighthouse-compose-exec.sh
+  s_2a8ac14658cbfe::t_0ba26c1f80966a 16-17,19,36
+apps/api/app/services/evidence_maturity.py
+  s_2a8ac14658cbfe::t_0ba26c1f80966a 756
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "d63ec36244fea04918461b837c1d3ab63b919b49",
+  "prompts": {},
+  "sessions": {
+    "s_2a8ac14658cbfe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1ed6533b-172c-4f53-a632-23c4cbc5a715",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
