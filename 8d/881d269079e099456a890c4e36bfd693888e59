@@ -1,0 +1,24 @@
+scripts/ci/run-lighthouse-compose-exec.sh
+  s_62a0d05f0b36c2::t_8ec88387f55ce3 153
+  s_62a0d05f0b36c2::t_5c33d9cf37f49d 4-5,7-12,40,68,72-75,79,128-152,159,186
+apps/api/tests/test_capture_script_is_packaged.py
+  s_62a0d05f0b36c2::t_90f759227dcec3 103
+apps/api/tests/test_factor_ic_ssh_tunnel.py
+  s_62a0d05f0b36c2::t_6d84616f293626 30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "8d881d269079e099456a890c4e36bfd693888e59",
+  "prompts": {},
+  "sessions": {
+    "s_62a0d05f0b36c2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "40423201-7334-4118-9f3b-c2969ddc664c",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
