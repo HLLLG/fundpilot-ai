@@ -76,8 +76,8 @@ ssh_once() {
 ssh_call() {
   local attempt st=255
   for attempt in $(seq 1 "$CONNECT_ATTEMPTS"); do
-    ssh_once "$@"
-    st=$?
+    st=0
+    ssh_once "$@" || st=$?
     if [[ "$st" -ne 255 ]]; then
       return "$st"
     fi
@@ -161,7 +161,7 @@ poll_remote_job() {
     FUNDPILOT_EXIT="$remote_exit" \
     FUNDPILOT_PID="$remote_pid" \
     FUNDPILOT_SKIP_LINES="$skip_lines" \
-    bash -s <<'REMOTE'
+    bash -s <<'REMOTE' || return $?
 set -euo pipefail
 if [[ -f "$FUNDPILOT_PID" && ! -f "$FUNDPILOT_EXIT" ]]; then
   pid="$(tr -d '[:space:]' < "$FUNDPILOT_PID" || true)"

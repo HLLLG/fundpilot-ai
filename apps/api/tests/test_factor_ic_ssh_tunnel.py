@@ -28,6 +28,7 @@ def test_lighthouse_compose_exec_helper_detaches_and_retries_transport_errors() 
     assert "IPQoS=none" in text
     assert "st -ne 255" in text or '"$st" -ne 255' in text
     assert "setsid --fork" in text
+    assert 'ssh_once "$@" || st=$?' in text
     assert "deploy.lock" in text
 
 
