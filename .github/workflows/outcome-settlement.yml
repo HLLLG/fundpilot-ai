@@ -17,7 +17,7 @@ jobs:
   settle:
     if: vars.LIGHTHOUSE_DEPLOY_ENABLED == 'true' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     environment: production
     steps:
       - name: Configure Lighthouse SSH identity
@@ -50,9 +50,22 @@ jobs:
         run: |
           set -euo pipefail
           target="${LIGHTHOUSE_USER}@${LIGHTHOUSE_HOST}"
-          ssh_options=(-i "$SSH_KEY_PATH" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH")
+          # docker exec stays silent until Python prints the final JSON. GitHub →
+          # Lighthouse NAT drops idle TCP in ~5 minutes (Broken pipe / "Timeout,
+          # server not responding"), which aborts the in-container process and
+          # leaves pending T+N rows to pile up. Keepalive matches Factor IC tunnels.
+          ssh_options=(
+            -i "$SSH_KEY_PATH"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH"
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=10
+            -o TCPKeepAlive=yes
+          )
           ssh "${ssh_options[@]}" "$target" \
-            "cd /srv/fundpilot/repo && docker compose --env-file .env.production -f docker-compose.production.yml exec -T api python scripts/settle_pending_outcomes.py"
+            "cd /srv/fundpilot/repo && docker compose --env-file .env.production -f docker-compose.production.yml exec -T -e PYTHONUNBUFFERED=1 api python -u scripts/settle_pending_outcomes.py"
 
       - name: Persist point-in-time decision-quality snapshots
         id: quality-snapshot
@@ -65,9 +78,18 @@ jobs:
           set -euo pipefail
           target="${LIGHTHOUSE_USER}@${LIGHTHOUSE_HOST}"
           evaluation_as_of="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          ssh_options=(-i "$SSH_KEY_PATH" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH")
+          ssh_options=(
+            -i "$SSH_KEY_PATH"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH"
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=10
+            -o TCPKeepAlive=yes
+          )
           ssh "${ssh_options[@]}" "$target" \
-            "cd /srv/fundpilot/repo && docker compose --env-file .env.production -f docker-compose.production.yml exec -T api python scripts/evaluate_decision_quality.py --all-users --evaluation-as-of '$evaluation_as_of' --window-days 365 --format summary"
+            "cd /srv/fundpilot/repo && docker compose --env-file .env.production -f docker-compose.production.yml exec -T -e PYTHONUNBUFFERED=1 api python -u scripts/evaluate_decision_quality.py --all-users --evaluation-as-of '$evaluation_as_of' --window-days 365 --format summary"
 
       - name: Record settlement contract
         if: always()

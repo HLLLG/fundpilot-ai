@@ -95,6 +95,13 @@ def _print_summary(result: dict[str, Any]) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    scope = "all-users" if args.all_users else ",".join(str(item) for item in (args.user_ids or []))
+    print(
+        f"[decision-quality] evaluating as_of={args.evaluation_as_of} "
+        f"window_days={args.window_days} scope={scope}",
+        file=sys.stderr,
+        flush=True,
+    )
     try:
         result = evaluate_and_persist_decision_quality_snapshots(
             evaluation_as_of=args.evaluation_as_of,

@@ -51,6 +51,7 @@ def settle_pending_outcomes(
     fetch_benchmark: BenchmarkFetcher | None = default_benchmark_fetcher,
     trade_dates: frozenset[str] | None = None,
     connection_factory: Callable[[], Any] | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Evaluate and persist every pending formal V2 horizon.
 
@@ -73,6 +74,11 @@ def settle_pending_outcomes(
         max_reports=safe_limit,
         connection_factory=connection_factory,
     )
+    if progress is not None:
+        progress(
+            f"loaded {len(targets)} pending reports"
+            + (f", {len(orphaned)} orphaned" if orphaned else "")
+        )
     if not targets:
         return _summary(
             anchor=anchor,
@@ -91,12 +97,16 @@ def settle_pending_outcomes(
 
     from app.request_context import reset_request_user_id, set_request_user_id
 
-    for target in targets:
+    for index, target in enumerate(targets, start=1):
         user_id = int(target["user_id"])
         source_type = str(target["source_type"])
         report_id = str(target["report_id"])
         pending = target["pending_event_horizons"]
         report = target["report"]
+        if progress is not None:
+            progress(
+                f"{index}/{len(targets)} user={user_id} {source_type} {report_id}"
+            )
         token = set_request_user_id(user_id)
         try:
             if source_type == "daily":

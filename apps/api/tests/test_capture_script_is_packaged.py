@@ -83,6 +83,21 @@ def test_capture_workflow_invokes_the_packaged_path() -> None:
     assert "apps/api/scripts/capture_sector_direction_states.py" not in workflow
 
 
+def test_outcome_settlement_workflow_keeps_long_ssh_sessions_alive() -> None:
+    """结算脚本结束前几乎不打日志；无 SSH keepalive 时 GitHub→Lighthouse 的空闲
+    TCP 会被 NAT 掐掉（Broken pipe），docker exec 中途退出、pending 越积越多。"""
+    workflow = (
+        REPO_ROOT / ".github" / "workflows" / "outcome-settlement.yml"
+    ).read_text(encoding="utf-8")
+    assert "python -u scripts/settle_pending_outcomes.py" in workflow
+    assert "python -u scripts/evaluate_decision_quality.py" in workflow
+    assert "apps/api/scripts/settle_pending_outcomes.py" not in workflow
+    assert "ServerAliveInterval=30" in workflow
+    assert "ServerAliveCountMax=10" in workflow
+    assert "TCPKeepAlive=yes" in workflow
+    assert "PYTHONUNBUFFERED=1" in workflow
+
+
 # ---------------------------------------------------------------------------
 # 同一张表的 schema 有**两处**维护点：SQLite 走 db_migrations，生产 MySQL 走
 # mysql_bootstrap。第二次生产实测踩的就是这个——脚本已在镜像里、取数各段都跑完，

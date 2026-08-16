@@ -74,6 +74,10 @@ def _reconcile_receipts(
     }
 
 
+def _progress(message: str) -> None:
+    print(f"[settle] {message}", file=sys.stderr, flush=True)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="自动结算正式决策的 pending T+N 结果")
     parser.add_argument(
@@ -91,6 +95,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     failed = False
     try:
+        _progress("reconciling decision-quality artifact receipts")
         receipt_result = _reconcile_receipts(
             user_ids=args.user_ids,
             limit=max(1, int(args.max_receipts)),
@@ -101,10 +106,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         receipt_result = _failed_closed_result(exc)
         failed = True
     try:
+        _progress("settling pending T+N outcomes")
         result = settle_pending_outcomes(
             user_ids=args.user_ids,
             as_of_date=args.as_of_date,
             max_reports=args.max_reports,
+            progress=_progress,
         )
     # Isolate both jobs even when a service leaks an unexpected exception.
     except Exception as exc:  # noqa: BLE001
@@ -112,6 +119,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         failed = True
 
     try:
+        _progress("settling candidate selection outcomes")
         candidate_result = settle_candidate_selection_outcomes(
             user_ids=args.user_ids,
             as_of_date=args.as_of_date,
