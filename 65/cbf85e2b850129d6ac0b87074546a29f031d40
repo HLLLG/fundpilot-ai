@@ -1,0 +1,28 @@
+README.md
+  s_2a8ac14658cbfe::t_8171880ad3e98f 61-63
+  s_2a8ac14658cbfe::t_8f6b81089a0742 205-206
+docs/PROJECT_CONTEXT.md
+  s_2a8ac14658cbfe::t_a8836d51c5056b 1290-1291
+  s_2a8ac14658cbfe::t_e714fad6897c60 18
+  s_2a8ac14658cbfe::t_e17d5cc3625d7b 7
+  s_2a8ac14658cbfe::t_33944995ca6d56 665
+  s_2a8ac14658cbfe::t_77f82f69c99f25 350
+.env.example
+  s_2a8ac14658cbfe::t_ff9b4ff5dbe787 89-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "65cbf85e2b850129d6ac0b87074546a29f031d40",
+  "prompts": {},
+  "sessions": {
+    "s_2a8ac14658cbfe": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1ed6533b-172c-4f53-a632-23c4cbc5a715",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
