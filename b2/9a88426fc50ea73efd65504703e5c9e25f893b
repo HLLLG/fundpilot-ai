@@ -1,0 +1,28 @@
+apps/api/tests/test_factor_ic_ssh_tunnel.py
+  s_62a0d05f0b36c2::t_fb75578f8fec71 31
+.github/workflows/outcome-settlement.yml
+  s_62a0d05f0b36c2::t_1743f6713bf0c5 13
+apps/api/tests/test_capture_script_is_packaged.py
+  s_62a0d05f0b36c2::t_be7beed2ff78c4 95
+scripts/ci/run-lighthouse-compose-exec.sh
+  s_62a0d05f0b36c2::t_aca509361bba95 42
+  s_62a0d05f0b36c2::t_e273912cf6f687 80-85,88,90,95-96,98
+  s_62a0d05f0b36c2::t_f3e15e690a91c3 94
+  s_62a0d05f0b36c2::t_0b3c031d0d1726 13-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "b29a88426fc50ea73efd65504703e5c9e25f893b",
+  "prompts": {},
+  "sessions": {
+    "s_62a0d05f0b36c2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "40423201-7334-4118-9f3b-c2969ddc664c",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
