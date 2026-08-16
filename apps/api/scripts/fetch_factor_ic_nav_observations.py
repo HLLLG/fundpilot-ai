@@ -17,7 +17,9 @@ SCHEMA_VERSION = "factor_ic_nav_observation_history.v1"
 AVAILABILITY_BASIS = "collector_first_observed_at"
 REVISION_POLICY = "first_observed_value"
 QUERY_CHUNK_SIZE = 100
-MAX_CODES = 5_000
+# Unique PIT members rotate weekly and already exceeded 5,000 in production.
+# Cap at the stratified catalogue ceiling used by capture/refresh.
+MAX_CODES = 25_000
 
 
 def _canonical_json(value: Any) -> str:
