@@ -9,9 +9,11 @@ import type {
 } from "@/lib/api";
 import {
   loadAnalysisPrompt,
+  loadDiscoveryBudgetYuan,
   loadDiscoveryPrompt,
   loadInvestorProfile,
   saveAnalysisPrompt,
+  saveDiscoveryBudgetYuan,
   saveDiscoveryPrompt,
   saveInvestorProfile,
 } from "@/lib/storage";
@@ -97,6 +99,17 @@ describe("account-scoped local preferences", () => {
     expect(loadDiscoveryPrompt(202, fallbackPrompt).role_prompt).toBe("discovery-b");
   });
 
+  it("isolates discovery budgets by user and defaults to 10000", () => {
+    expect(loadDiscoveryBudgetYuan(101)).toBe(10_000);
+
+    saveDiscoveryBudgetYuan(101, 8_000);
+    saveDiscoveryBudgetYuan(202, 12_000);
+
+    expect(loadDiscoveryBudgetYuan(101)).toBe(8_000);
+    expect(loadDiscoveryBudgetYuan(202)).toBe(12_000);
+    expect(loadDiscoveryBudgetYuan(null)).toBe(10_000);
+  });
+
   it("never attributes a legacy ownerless value to the next signed-in user", () => {
     window.localStorage.setItem(
       "fundpilot-investor-profile",
@@ -129,9 +142,12 @@ describe("account-scoped local preferences", () => {
       default_role_prompt: "default",
       is_custom: true,
     });
+    saveDiscoveryBudgetYuan(null, 5_000);
 
     expect(window.localStorage.getItem("fundpilot-investor-profile")).toBeNull();
     expect(window.localStorage.getItem("fundpilot-analysis-prompt")).toBeNull();
+    expect(window.localStorage.getItem("fundpilot-discovery-budget-yuan")).toBeNull();
     expect(loadInvestorProfile(null, fallbackProfile).style).toBe("fallback");
+    expect(loadDiscoveryBudgetYuan(null)).toBe(10_000);
   });
 });

@@ -7,9 +7,11 @@ def test_parse_eastmoney_quote_rows_preserves_market_namespace_and_timestamp() -
             {
                 "f2": 19.5,
                 "f3": 1.56,
+                "f4": 0.3,
                 "f12": "600089",
                 "f13": 1,
                 "f14": "特变电工",
+                "f109": 2.4,
                 "f124": 1784621497,
             },
             {
@@ -25,6 +27,8 @@ def test_parse_eastmoney_quote_rows_preserves_market_namespace_and_timestamp() -
     )
 
     assert result["1.600089"]["change_percent"] == 1.56
+    assert result["1.600089"]["change_5d_percent"] == 2.4
+    assert result["1.600089"]["change_amount"] == 0.3
     assert result["1.600089"]["quote_timestamp"] == 1784621497
     assert result["116.00700"]["change_percent"] == -0.8
     assert result["116.00700"]["security_name"] == "腾讯控股"
@@ -42,3 +46,4 @@ def test_parse_eastmoney_quote_rows_ignores_unrequested_and_malformed_rows() -> 
 
     assert list(result) == ["0.002028"]
     assert result["0.002028"]["latest_price"] is None
+    assert result["0.002028"]["change_5d_percent"] is None

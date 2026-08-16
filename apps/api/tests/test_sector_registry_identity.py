@@ -24,6 +24,7 @@ from collections import defaultdict
 import pytest
 
 from app.services.sector_registry_data import (
+    THEME_BOARD_FLOW,
     THEME_BOARD_INDEX,
     THEME_BOARD_PROVIDER_IDENTITIES,
     THEME_BOARD_WHITELIST,
@@ -123,6 +124,7 @@ _BOARD_ONLY_SECTOR_LABELS: frozenset[str] = frozenset(
     {
         "AI医疗",
         "CPO",
+        "CXO",
         "MLCC",
         "PCB",
         "低空经济",
@@ -225,6 +227,18 @@ def test_tracking_index_short_names_keep_their_own_quote_identity() -> None:
     hsh = get_canonical_sector("沪港深黄金")
     assert hsh is not None
     assert hsh.source_code == "931238"
+
+
+def test_oil_gas_uses_resource_index_not_the_old_hydrogen_code() -> None:
+    """油气走中证油气资源 931248；H30198 油气产业曾被错当成氢能，不能再拿来报价。"""
+    assert THEME_BOARD_INDEX["油气"] == ("2.931248", "931248", "index")
+    assert THEME_BOARD_INDEX["氢能"] == ("90.BK0864", "BK0864", "concept")
+    assert THEME_BOARD_FLOW["油气"] == "BK1649"
+
+
+def test_cxo_uses_industry_board_not_narrower_cro_concept() -> None:
+    """东财没有名叫 CXO 的板；医疗研发外包才是 CXO 行业，CRO 概念更窄、涨跌会分叉。"""
+    assert THEME_BOARD_INDEX["CXO"] == ("90.BK1600", "BK1600", "industry")
 
 
 def test_digital_economy_is_not_aliased_to_xinchuang() -> None:

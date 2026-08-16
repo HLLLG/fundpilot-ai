@@ -44,6 +44,12 @@ def serialize_holding_for_client(
         profile=profile,
     )
     payload["profit_accrual_deferred"] = is_profit_accrual_deferred(profile)
+    from app.services.holding_detail_service import resolve_holding_list_metrics
+
+    shares, cost, days = resolve_holding_list_metrics(holding, profile)
+    payload["holding_shares"] = shares
+    payload["holding_cost"] = cost
+    payload["holding_days"] = days
     return payload
 
 

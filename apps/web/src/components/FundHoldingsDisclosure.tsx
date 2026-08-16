@@ -50,11 +50,6 @@ function quoteTone(value: number | null | undefined) {
   return value > 0 ? "text-rose-600" : "text-emerald-600";
 }
 
-function shortTime(value: string | null | undefined) {
-  const matched = /T(\d{2}):(\d{2})/.exec(value ?? "");
-  return matched ? `${matched[1]}:${matched[2]}` : null;
-}
-
 function changePresentation(row: FundDisclosureHolding) {
   const magnitude = Math.abs(row.change_percent_points ?? 0).toFixed(2);
   if (row.change_direction === "new") {
@@ -120,7 +115,6 @@ export function FundHoldingsDisclosure({
   const quoteHeaderLabel = distribution?.quote_session_date
     ? `${shortDate(distribution.quote_session_date)}涨幅`
     : "涨幅";
-  const quoteTime = shortTime(distribution?.quote_updated_at);
 
   return (
     <section className="border-t border-slate-100 pt-3" aria-labelledby="fund-holdings-title">
@@ -249,12 +243,6 @@ export function FundHoldingsDisclosure({
               </button>
             ) : null}
           </div>
-          <p className="px-1 pb-1 pt-2 text-[10px] leading-4 text-slate-400">
-            {distribution.data_note} 季报有滞后，不代表当前实时持仓。
-            {distribution.quote_session_date
-              ? ` 涨幅为 ${shortDate(distribution.quote_session_date)}${quoteTime ? ` ${quoteTime}` : ""} 行情快照。`
-              : ""}
-          </p>
         </>
       ) : null}
     </section>

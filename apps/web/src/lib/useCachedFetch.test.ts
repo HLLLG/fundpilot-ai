@@ -2,7 +2,7 @@
 
 import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { deleteClientCache, writeClientCache } from "@/lib/clientCache";
+import { deleteClientCache, readClientCache, writeClientCache } from "@/lib/clientCache";
 import { useCachedFetch } from "@/lib/useCachedFetch";
 
 const CACHE_KEY = "test:dedupe";
@@ -79,5 +79,28 @@ describe("useCachedFetch", () => {
     });
     expect(result.current.data).toEqual(["cached"]);
     expect(result.current.loading).toBe(false);
+  });
+
+  it("always hits the fetcher and does not persist when storage is none", async () => {
+    writeClientCache(CACHE_KEY, ["stale-session"], "session");
+    const fetcher = vi.fn().mockResolvedValue(["from-server"]);
+
+    const { result } = renderHook(() =>
+      useCachedFetch({
+        cacheKey: CACHE_KEY,
+        fetcher,
+        staleTimeMs: 60_000,
+        storage: "none",
+      }),
+    );
+
+    expect(result.current.data).toBeNull();
+    await waitFor(() => {
+      expect(result.current.data).toEqual(["from-server"]);
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(readClientCache(CACHE_KEY, -1, "session")).toEqual(["stale-session"]);
+    expect(readClientCache(CACHE_KEY, -1, "memory")).toBeNull();
+    deleteClientCache(CACHE_KEY, "session");
   });
 });

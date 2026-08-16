@@ -30,7 +30,6 @@ import { DiscoveryReportPanel } from "@/components/DiscoveryReportPanel";
 import { DiscoverySkeleton } from "@/components/DiscoverySkeleton";
 import { FocusSectorPicker } from "@/components/FocusSectorPicker";
 import { DiscoveryStrategySelector } from "@/components/DiscoveryStrategySelector";
-import { MethodologyNote } from "@/components/MethodologyNote";
 import { RolePromptEditor } from "@/components/RolePromptEditor";
 import { YangjibaoFundDetail } from "@/components/YangjibaoFundDetail";
 import { displayableHoldings } from "@/lib/holdingMetrics";
@@ -43,7 +42,14 @@ import {
   type StreamingDiscoveryState,
 } from "@/lib/discoveryStreamApi";
 import { ensureNotificationPermission } from "@/lib/notifications";
-import { loadDiscoveryPrompt, loadDiscoverySectorHeatCache, saveDiscoveryPrompt, saveDiscoverySectorHeatCache } from "@/lib/storage";
+import {
+  loadDiscoveryBudgetYuan,
+  loadDiscoveryPrompt,
+  loadDiscoverySectorHeatCache,
+  saveDiscoveryBudgetYuan,
+  saveDiscoveryPrompt,
+  saveDiscoverySectorHeatCache,
+} from "@/lib/storage";
 import { useCachedFetch } from "@/lib/useCachedFetch";
 import { buildClientCacheKey } from "@/lib/clientCache";
 import {
@@ -77,23 +83,31 @@ const DEFAULT_DISCOVERY_PROMPT: DiscoveryPromptConfig = {
   is_custom: false,
 };
 
-export function resolveDynamicDiscoveryBudgetYuan(
-  holdings: Holding[],
-  expectedInvestmentAmount: number | null | undefined,
-): number {
-  const totalHoldings = displayableHoldings(holdings).reduce((total, holding) => {
-    const amount = Number(holding.holding_amount);
-    return total + (Number.isFinite(amount) && amount > 0 ? amount : 0);
-  }, 0);
-  const expected = Number(expectedInvestmentAmount);
-  const plannedTotal = Number.isFinite(expected) && expected > 0 ? expected : totalHoldings;
-  return Math.max(Math.round((plannedTotal - totalHoldings) * 100) / 100, 0);
-}
-
 function formatBudgetInput(value: number): string {
   return Number.isInteger(value)
     ? String(value)
     : value.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function parseBudgetYuan(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function formatBudgetWanLabel(yuan: number): string {
+  if (yuan >= 10_000) {
+    const wan = yuan / 10_000;
+    const text = Number.isInteger(wan) ? String(wan) : wan.toFixed(1).replace(/\.0$/, "");
+    return `${text}万`;
+  }
+  return String(yuan);
 }
 
 type DiscoveryFeedback = {
@@ -172,14 +186,9 @@ export function FundDiscoveryPanel({
   );
 
   const [focusSectors, setFocusSectors] = useState<string[]>(() => loadDiscoveryFocusSectors());
-  const dynamicBudgetYuan = useMemo(
-    () => resolveDynamicDiscoveryBudgetYuan(holdings, profile.expected_investment_amount),
-    [holdings, profile.expected_investment_amount],
-  );
   const [budgetYuan, setBudgetYuan] = useState<string>(() =>
-    formatBudgetInput(dynamicBudgetYuan),
+    formatBudgetInput(loadDiscoveryBudgetYuan(userId)),
   );
-  const budgetChangedByUserRef = useRef(false);
   const budgetUserRef = useRef(userId);
   const [report, setReport] = useState<FundDiscoveryReport | null>(() =>
     readFreshLatestDiscoveryReport(userId),
@@ -199,7 +208,7 @@ export function FundDiscoveryPanel({
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<DiscoveryFeedback | null>(null);
-  const [configExpanded, setConfigExpanded] = useState(true);
+  const [configExpanded, setConfigExpanded] = useState(false);
   const [rolePromptOpen, setRolePromptOpen] = useState(false);
   const [previewHolding, setPreviewHolding] = useState<Holding | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -209,14 +218,12 @@ export function FundDiscoveryPanel({
   const [promptReady, setPromptReady] = useState(false);
 
   useEffect(() => {
-    if (budgetUserRef.current !== userId) {
-      budgetUserRef.current = userId;
-      budgetChangedByUserRef.current = false;
+    if (budgetUserRef.current === userId) {
+      return;
     }
-    if (!budgetChangedByUserRef.current) {
-      setBudgetYuan(formatBudgetInput(dynamicBudgetYuan));
-    }
-  }, [dynamicBudgetYuan, userId]);
+    budgetUserRef.current = userId;
+    setBudgetYuan(formatBudgetInput(loadDiscoveryBudgetYuan(userId)));
+  }, [userId]);
 
   useEffect(() => {
     if (rawSectors.length > 0) {
@@ -330,13 +337,11 @@ export function FundDiscoveryPanel({
     // 比对时间戳可靠：created_at 是服务端时钟，startedAt 是浏览器时钟。
     latestKnownReportIdRef.current = historyReports[0]?.id ?? null;
     lastStreamActivityRef.current = streamTimestamp();
-    const parsedBudget = budgetYuan.trim() ? Number(budgetYuan) : null;
+    const parsedBudget = parseBudgetYuan(budgetYuan) ?? loadDiscoveryBudgetYuan(userId);
+    saveDiscoveryBudgetYuan(userId, parsedBudget);
     const scanOptions = {
       focusSectors,
-      budgetYuan:
-        parsedBudget !== null && Number.isFinite(parsedBudget) && parsedBudget >= 0
-          ? parsedBudget
-          : null,
+      budgetYuan: parsedBudget,
       fundTypePreference: "any" as const,
       selectionStrategy: "balanced" as const,
       scanMode: SCAN_MODE,
@@ -474,6 +479,7 @@ export function FundDiscoveryPanel({
     profile,
     refreshReports,
     report,
+    userId,
   ]);
 
   useEffect(() => {
@@ -499,53 +505,25 @@ export function FundDiscoveryPanel({
   const reportedScanGoal =
     report?.discovery_facts?.effective_configuration?.scan_goal ??
     report?.discovery_facts?.portfolio_gap?.scan_mode;
-  const summaryScanModeLabel =
-    reportedScanGoal === "full_market" || reportedScanGoal === "portfolio_gap"
-      ? SCAN_MODE_LABELS[reportedScanGoal]
-      : report
-        ? "历史模式"
-        : SCAN_MODE_LABELS[SCAN_MODE];
-  const summaryAnalysisMode = report?.analysis_mode ?? "deep";
   const reportedDiscoveryStrategy =
     report?.discovery_facts?.effective_configuration?.discovery_strategy;
-  const summaryDiscoveryStrategy = report
-    ? reportedDiscoveryStrategy === "opportunity_first"
-      ? "机会优先（20～60交易日）"
-      : reportedDiscoveryStrategy === "risk_first"
-        ? "稳健筛选"
-        : "历史稳健策略"
-    : "机会优先（20～60交易日）";
   const summaryFocusSectors = report ? report.focus_sectors : focusSectors;
-  const reportedSelectionPolicy =
-    report?.discovery_facts?.effective_configuration?.selection_policy ??
-    report?.discovery_facts?.selection_strategy;
-  const summarySelectionLabel = report
-    ? reportedSelectionPolicy === "with_new_issue"
-        ? "历史策略：含新发观察"
-        : reportedSelectionPolicy === "balanced"
-          ? "均衡质量策略"
-          : "自动质量优选"
-    : "自动质量优选";
-  const reportedShareClassPolicy =
-    report?.discovery_facts?.effective_configuration?.share_class_policy;
-  const reportedFundTypePreference =
-    report?.discovery_facts?.effective_configuration?.legacy_fund_type_preference ??
-    report?.discovery_facts?.fund_type_preference;
-  const summaryShareClassLabel = !report || reportedShareClassPolicy
-    ? "同基金份额自动去重（费用待核对）"
-    : reportedFundTypePreference === "etf_link"
-      ? "历史偏好：ETF联接"
-      : reportedFundTypePreference === "no_c_class"
-        ? "历史偏好：排除C类"
-        : "基金类型不限";
+  const parsedBudgetYuan = parseBudgetYuan(budgetYuan);
   const configSummary = [
-    summaryScanModeLabel,
-    summaryDiscoveryStrategy,
-    summarySelectionLabel,
-    summaryShareClassLabel,
-    summaryAnalysisMode === "fast" ? "快速分析" : "深度分析",
-    summaryFocusSectors.length ? `关注：${summaryFocusSectors.join("、")}` : "方向：自动筛选",
-    !report && budgetYuan.trim() ? `预算：¥${budgetYuan.trim()}` : null,
+    reportedScanGoal === "portfolio_gap"
+      ? SCAN_MODE_LABELS.portfolio_gap
+      : report && reportedScanGoal !== "full_market"
+        ? "历史模式"
+        : null,
+    report
+      ? reportedDiscoveryStrategy === "opportunity_first"
+        ? "机会优先"
+        : reportedDiscoveryStrategy === "risk_first"
+          ? "稳健筛选"
+          : "历史稳健策略"
+      : "机会优先",
+    summaryFocusSectors.length ? `关注 ${summaryFocusSectors.join("、")}` : "方向自动",
+    parsedBudgetYuan == null ? null : `预算 ${formatBudgetWanLabel(parsedBudgetYuan)}`,
   ]
     .filter((item): item is string => Boolean(item))
     .join(" · ");
@@ -703,19 +681,13 @@ export function FundDiscoveryPanel({
       <div className="flex min-w-0 flex-col gap-4">
         <section className="discovery-composer overflow-hidden">
           <div className="report-control-hero border-b border-[var(--line)] px-4 py-4 sm:px-5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-start gap-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[var(--brand-soft)] text-[var(--brand-strong)]">
                   <Target size={20} strokeWidth={2.3} />
                 </span>
                 <div className="min-w-0">
                   <h2 className="font-display text-lg font-extrabold text-slate-950">发现基金机会</h2>
-                  {/* 原来这里是一段 59 字的策略自述。它讲的内容与下面「荐基决策策略」
-                      两张卡片高度重合，而用户打开这一屏是为了发起扫描，不是先读一段
-                      产品说明。收进口径披露。 */}
-                  <MethodologyNote label="扫描逻辑与免责" className="mt-1">
-                    优先寻找高波动、高动量与回撤修复机会，再用交易条件、持仓相关性和退出信号控制风险；没有合格基金时不会凑数。仅供参考，不构成投资建议。
-                  </MethodologyNote>
                 </div>
               </div>
               <button
@@ -739,203 +711,179 @@ export function FundDiscoveryPanel({
             <li className={report ? "is-current" : ""}><span>03</span>候选与依据</li>
           </ol>
 
-          {report && !configExpanded ? (
-            <div className="p-4 sm:p-5" data-testid="discovery-config-summary">
-              <span id="discovery-scan-settings" hidden />
-              <p className="section-eyebrow">当前运行条件</p>
-              <p className="mt-2 text-sm font-semibold leading-6 text-slate-700">{configSummary}</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setConfigExpanded(true)}
-                  aria-expanded={false}
-                  aria-controls="discovery-scan-settings"
-                  className="btn-secondary min-h-11 px-4 text-sm"
-                >
-                  调整条件
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleScan()}
-                  disabled={isRunning}
-                  className="btn-primary min-h-11 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isRunning ? "扫描进行中…" : "重新扫描"}
-                </button>
-              </div>
-            </div>
-          ) : (
-          <div id="discovery-scan-settings" className="p-4 sm:p-5">
-          <div>
-            <div className="mb-2 flex min-h-11 items-center justify-between gap-3">
-              <p className="text-[11px] font-bold text-slate-500">荐基决策策略</p>
-              {report ? (
-                <button
-                  type="button"
-                  onClick={() => setConfigExpanded(false)}
-                  aria-expanded={true}
-                  aria-controls="discovery-scan-settings"
-                  className="min-h-11 rounded-full px-3 text-xs font-bold text-[var(--brand-strong)] hover:bg-[var(--brand-soft)]"
-                >
-                  收起条件
-                </button>
-              ) : null}
-            </div>
-            <DiscoveryStrategySelector />
-          </div>
-
-          <div className="mt-4 overflow-hidden rounded-xl border border-[var(--line)]">
-            <div className="flex items-center gap-2 px-2">
+          <div className="p-4 sm:p-5">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => setRolePromptOpen((current) => !current)}
-                className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-lg px-1 text-left hover:bg-slate-50"
-                aria-expanded={rolePromptOpen}
-                aria-controls="discovery-role-prompt-settings"
+                data-testid="discovery-scan-button"
+                disabled={isRunning}
+                onClick={() => void handleScan()}
+                className="btn-primary min-h-11 w-full !rounded-xl sm:w-auto"
               >
-                <span className="flex min-w-0 items-center gap-2">
-                  <Sparkles size={15} className="shrink-0 text-[var(--brand)]" />
-                  <span className="text-xs font-bold text-slate-700">AI 分析偏好附录（高级）</span>
-                  <span className="truncate text-[11px] font-semibold text-slate-500">
-                    {discoveryPrompt.is_custom ? "已添加" : "未添加"}
-                  </span>
-                </span>
-                <ChevronDown
-                  size={15}
-                  className={`shrink-0 text-slate-500 transition ${rolePromptOpen ? "rotate-180" : ""}`}
-                  aria-hidden
-                />
+                {isRunning ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Sparkles size={16} />
+                )}
+                {isRunning ? "扫描进行中…" : report ? "重新扫描" : "扫描今日机会"}
               </button>
-              {rolePromptOpen && discoveryPrompt.is_custom ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    promptChangedByUserRef.current = true;
-                    setDiscoveryPrompt((current) => ({
-                      ...current,
-                      role_prompt: current.default_role_prompt,
-                      is_custom: false,
-                    }));
-                  }}
-                  className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-[11px] font-bold text-slate-600 transition hover:bg-slate-50"
-                >
-                  <RotateCcw size={12} />
-                  清空附录
-                </button>
-              ) : null}
-            </div>
-            {rolePromptOpen ? (
-              <div id="discovery-role-prompt-settings" className="border-t border-[var(--line)]">
-                <RolePromptEditor
-                  value={discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : ""}
-                  onChange={(value) => {
-                    promptChangedByUserRef.current = true;
-                    setDiscoveryPrompt((current) => ({
-                      ...current,
-                      role_prompt: value,
-                      is_custom: Boolean(value.trim()),
-                    }));
-                  }}
-                />
-              </div>
-            ) : null}
-            {/* 折叠态原来还挂一句"普通扫描无需填写；附录只能……"。这是一个标了
-                「（高级）」、状态显示「未添加」的可选项，折叠时再解释一遍它的边界，
-                只会给不打算用它的人增加阅读量。展开后 RolePromptEditor 里本来就有说明。 */}
-          </div>
-
-          <div className="mt-4">
-            <div className="mb-2 text-xs font-semibold text-slate-700">
-              关注方向（可选，最多 3 个）
-            </div>
-            <FocusSectorPicker
-              selected={focusSectors}
-              onChange={handleFocusSectorsChange}
-              allLabels={allSectorLabels}
-              heatRows={rawSectors}
-              loading={loadingSectors && allSectorLabels.length === 0}
-              error={sectorsError}
-              onRetry={() => void refreshSectors()}
-            />
-            {loadingSectors && rawSectors.length === 0 ? (
-              <p className="mt-2 flex items-center gap-2 text-[11px] text-slate-500">
-                <Loader2 size={12} className="animate-spin" />
-                同步板块热度…
-              </p>
-            ) : null}
-            {sectorsError && rawSectors.length === 0 ? (
-              <p className="mt-2 text-[11px] text-[var(--warn-icon)]">
-                板块热度暂不可用，仍可搜索选择关注方向。
-                <button
-                  type="button"
-                  onClick={() => void refreshSectors()}
-                  className="ml-1 inline-flex min-h-11 items-center rounded-lg px-2 font-semibold underline"
-                >
-                  重试
-                </button>
-              </p>
-            ) : null}
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2">
-            <p className="text-xs font-black text-slate-800">系统自动选基</p>
-            <MethodologyNote label="核验哪些项">
-              自动核验申购状态、首次起购额与单日限额；费用可得时按未折扣标准费率估算上限，下单前仍需复核。
-            </MethodologyNote>
-          </div>
-
-          <div className="mt-4 max-w-md">
-            <label className="block text-xs font-semibold text-slate-700">
-              本次可投入预算（元）
-              <input
-                type="number"
-                min={0}
-                step={500}
-                value={budgetYuan}
-                onChange={(event) => {
-                  budgetChangedByUserRef.current = true;
-                  setBudgetYuan(event.target.value);
-                }}
-                placeholder="按计划投入余额自动计算"
-                className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
-              />
-            </label>
-            {/* placeholder 已经写着「按计划投入余额自动计算」，这段只补充口径细节。 */}
-            <MethodologyNote label="怎么算的" className="mt-1.5">
-              默认按计划投入总额减当前持仓动态计算；手工修改后，本次扫描保留你的输入。
-            </MethodologyNote>
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              data-testid="discovery-scan-button"
-              disabled={isRunning}
-              onClick={() => void handleScan()}
-              className="btn-primary min-h-11 w-full !rounded-xl sm:w-auto"
-            >
+              {/* 扫描中必须永远留一个出口。手机切走再回来时流式连接可能已被系统挂起，
+                  此时主按钮是禁用态，若这里没有「停止」，页面就彻底卡死在扫描进行中。 */}
               {isRunning ? (
-                <Loader2 size={16} className="animate-spin" />
-              ) : (
-                <Sparkles size={16} />
-              )}
-              {isRunning ? "扫描进行中…" : report ? "按当前条件重新扫描" : "扫描今日机会"}
-            </button>
-            {/* 扫描中必须永远留一个出口。手机切走再回来时流式连接可能已被系统挂起，
-                此时主按钮是禁用态，若这里没有「停止」，页面就彻底卡死在扫描进行中。 */}
-            {isRunning ? (
+                <button
+                  type="button"
+                  data-testid="discovery-stop-button"
+                  onClick={handleCancelStream}
+                  className="btn-ghost min-h-11 w-full !rounded-xl border border-[var(--line)] sm:w-auto"
+                >
+                  停止扫描
+                </button>
+              ) : null}
+            </div>
+
+            <div className="mt-3 overflow-hidden rounded-xl border border-slate-100">
               <button
                 type="button"
-                data-testid="discovery-stop-button"
-                onClick={handleCancelStream}
-                className="btn-ghost min-h-11 w-full !rounded-xl border border-[var(--line)] sm:w-auto"
+                onClick={() => setConfigExpanded((current) => !current)}
+                className="flex min-h-11 w-full items-center justify-between gap-2 px-3 text-left text-xs font-bold text-slate-600 hover:bg-slate-50"
+                aria-expanded={configExpanded}
+                aria-controls="discovery-scan-settings"
               >
-                停止扫描
+                <span>高级设置</span>
+                <ChevronDown
+                  size={14}
+                  className={`shrink-0 transition ${configExpanded ? "rotate-180" : ""}`}
+                />
               </button>
-            ) : null}
+              {!configExpanded ? (
+                <p
+                  id="discovery-scan-settings"
+                  data-testid="discovery-config-summary"
+                  className="border-t border-slate-100 px-3 py-2 text-[11px] leading-5 text-slate-500"
+                >
+                  {configSummary}
+                </p>
+              ) : (
+                <div id="discovery-scan-settings" className="grid gap-4 border-t border-slate-100 p-3">
+                  <DiscoveryStrategySelector />
+
+                  <div className="overflow-hidden rounded-xl border border-[var(--line)]">
+                    <div className="flex items-center gap-2 px-2">
+                      <button
+                        type="button"
+                        onClick={() => setRolePromptOpen((current) => !current)}
+                        className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-lg px-1 text-left hover:bg-slate-50"
+                        aria-expanded={rolePromptOpen}
+                        aria-controls="discovery-role-prompt-settings"
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <Sparkles size={15} className="shrink-0 text-[var(--brand)]" />
+                          <span className="text-xs font-bold text-slate-700">AI 分析偏好附录（高级）</span>
+                          <span className="truncate text-[11px] font-semibold text-slate-500">
+                            {discoveryPrompt.is_custom ? "已添加" : "未添加"}
+                          </span>
+                        </span>
+                        <ChevronDown
+                          size={15}
+                          className={`shrink-0 text-slate-500 transition ${rolePromptOpen ? "rotate-180" : ""}`}
+                          aria-hidden
+                        />
+                      </button>
+                      {rolePromptOpen && discoveryPrompt.is_custom ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            promptChangedByUserRef.current = true;
+                            setDiscoveryPrompt((current) => ({
+                              ...current,
+                              role_prompt: current.default_role_prompt,
+                              is_custom: false,
+                            }));
+                          }}
+                          className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 text-[11px] font-bold text-slate-600 transition hover:bg-slate-50"
+                        >
+                          <RotateCcw size={12} />
+                          清空附录
+                        </button>
+                      ) : null}
+                    </div>
+                    {rolePromptOpen ? (
+                      <div id="discovery-role-prompt-settings" className="border-t border-[var(--line)]">
+                        <RolePromptEditor
+                          value={discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : ""}
+                          onChange={(value) => {
+                            promptChangedByUserRef.current = true;
+                            setDiscoveryPrompt((current) => ({
+                              ...current,
+                              role_prompt: value,
+                              is_custom: Boolean(value.trim()),
+                            }));
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <span id="discovery-role-prompt-settings" hidden />
+                    )}
+                  </div>
+
+                  <div>
+                    <div className="mb-2 text-xs font-semibold text-slate-700">
+                      关注方向（可选，最多 3 个）
+                    </div>
+                    <FocusSectorPicker
+                      selected={focusSectors}
+                      onChange={handleFocusSectorsChange}
+                      allLabels={allSectorLabels}
+                      heatRows={rawSectors}
+                      loading={loadingSectors && allSectorLabels.length === 0}
+                      error={sectorsError}
+                      onRetry={() => void refreshSectors()}
+                    />
+                    {loadingSectors && rawSectors.length === 0 ? (
+                      <p className="mt-2 flex items-center gap-2 text-[11px] text-slate-500">
+                        <Loader2 size={12} className="animate-spin" />
+                        同步板块热度…
+                      </p>
+                    ) : null}
+                    {sectorsError && rawSectors.length === 0 ? (
+                      <p className="mt-2 text-[11px] text-[var(--warn-icon)]">
+                        板块热度暂不可用，仍可搜索选择关注方向。
+                        <button
+                          type="button"
+                          onClick={() => void refreshSectors()}
+                          className="ml-1 inline-flex min-h-11 items-center rounded-lg px-2 font-semibold underline"
+                        >
+                          重试
+                        </button>
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="max-w-md">
+                    <label className="block text-xs font-semibold text-slate-700">
+                      本次可投入预算（元）
+                      <input
+                        type="number"
+                        min={0}
+                        step={500}
+                        value={budgetYuan}
+                        onChange={(event) => {
+                          const next = event.target.value;
+                          setBudgetYuan(next);
+                          const parsed = parseBudgetYuan(next);
+                          if (parsed !== null) {
+                            saveDiscoveryBudgetYuan(userId, parsed);
+                          }
+                        }}
+                        placeholder="10000"
+                        className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[var(--brand)]"
+                      />
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-          </div>
-          )}
         </section>
 
         {feedback ? (

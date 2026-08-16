@@ -126,6 +126,7 @@ from app.services.discovery_recommendation_scope import (
 from app.services.discovery_sector_heat import build_sector_heat_ranking, build_sector_heat_ranking_for_ui
 from app.services.board_fund_flow_history import get_board_flow_history
 from app.services.theme_board_snapshot import get_theme_board_snapshot
+from app.services.cn_index_overview import get_cn_index_overview
 from app.services.us_market_service import get_us_market_snapshot
 from app.services.ocr_pipeline import apply_confirmed_holdings, run_ocr_upload_pipeline
 from app.services.report_diff import diff_reports
@@ -999,6 +1000,17 @@ def market_board_flow_history(
         flow_range=range,  # type: ignore[arg-type]
         force_refresh=force_refresh,
     )
+
+
+@app.get("/api/market/index-overview")
+def market_index_overview(force_refresh: bool = False) -> dict:
+    """行情页头部 A 股宽基指数（上证 / 深成 / 创业板 / 沪深300 等）。
+
+    任何数据源失败均返回 200，通过 ``available`` / ``stale`` / ``message`` 表达降级，
+    绝不抛 5xx、绝不编造数值。``force_refresh`` 跳过服务端缓存重新采集。
+    """
+    snapshot = get_cn_index_overview(force_refresh=force_refresh)
+    return snapshot.model_dump(mode="json")
 
 
 @app.get("/api/market/us-overview")

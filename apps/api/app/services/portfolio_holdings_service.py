@@ -233,7 +233,11 @@ def _fast_daily_profit(holding: Holding) -> float | None:
     return _fast_round2(amount * rate / 100)
 
 
-def _fast_serialize_holding_for_client(holding: Holding) -> dict:
+def _fast_serialize_holding_for_client(
+    holding: Holding,
+    *,
+    profile: FundProfile | None = None,
+) -> dict:
     payload = holding.model_dump()
     settled = holding.settled_holding_amount or holding.holding_amount
     sector_return = _fast_trusted_sector_return(holding)
@@ -275,6 +279,12 @@ def _fast_serialize_holding_for_client(holding: Holding) -> dict:
         and daily_rate is not None
     )
     payload["profit_accrual_deferred"] = holding.daily_return_percent_source == "pending_accrual"
+    from app.services.holding_detail_service import resolve_holding_list_metrics
+
+    shares, cost, days = resolve_holding_list_metrics(holding, profile)
+    payload["holding_shares"] = shares
+    payload["holding_cost"] = cost
+    payload["holding_days"] = days
     return payload
 
 
@@ -311,8 +321,12 @@ def build_fast_snapshot_holdings_response() -> dict | None:
     holdings = [_fast_overlay_cached_official_nav(holding, trade_date) for holding in holdings]
     from app.services.pending_holding_preview import overlay_pending_transaction_previews
 
+    matched_profiles = match_profiles_to_holdings(holdings, list_fund_profiles())
     serialized = overlay_pending_transaction_previews(
-        [_fast_serialize_holding_for_client(holding) for holding in holdings]
+        [
+            _fast_serialize_holding_for_client(holding, profile=profile)
+            for holding, profile in zip(holdings, matched_profiles, strict=True)
+        ]
     )
     daily_profit = snapshot.get("daily_profit")
     if daily_profit is None:

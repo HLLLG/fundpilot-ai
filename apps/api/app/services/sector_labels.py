@@ -15,6 +15,8 @@ _TOPIC_ALIASES = (
     "新能源",
     "传媒",
     "CPO",
+    "CXO",
+    "油气",
 )
 
 _FUND_COMPANY_PREFIXES = (

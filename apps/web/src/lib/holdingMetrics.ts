@@ -77,6 +77,9 @@ const HOLDING_QUOTE_FIELDS = [
   "estimated_daily_return_percent",
   "holding_return_is_estimated",
   "daily_return_is_estimated",
+  "holding_shares",
+  "holding_cost",
+  "holding_days",
 ] as const satisfies readonly (keyof Holding)[];
 
 const PRESERVE_QUOTE_FIELDS = HOLDING_QUOTE_FIELDS;
@@ -653,6 +656,41 @@ export function computeHoldingWeight(
     return null;
   }
   return round2((holding.holding_amount / totalAssets) * 100);
+}
+
+export function getHoldingShares(holding: Holding): number | null {
+  return holding.holding_shares ?? null;
+}
+
+export function getHoldingDays(holding: Holding): number | null {
+  return holding.holding_days ?? null;
+}
+
+/** 持有成本单价；档案缺失时用成本总额 / 份额回推。 */
+export function getHoldingUnitCost(holding: Holding): number | null {
+  if (holding.holding_cost != null && holding.holding_cost > 0) {
+    return holding.holding_cost;
+  }
+  const shares = getHoldingShares(holding);
+  const basis = computeCostBasis(holding);
+  if (shares == null || shares <= 0 || basis == null) {
+    return null;
+  }
+  return basis / shares;
+}
+
+export function formatHoldingUnitCost(value: number | null | undefined): string {
+  if (value == null) {
+    return "—";
+  }
+  return value.toFixed(4);
+}
+
+export function formatHoldingDays(value: number | null | undefined): string {
+  if (value == null) {
+    return "—";
+  }
+  return `${Math.max(0, Math.round(value))}天`;
 }
 
 // 共享 formatter：这两个函数在持仓看板、详情与日报里按行调用，原实现每次调用都会

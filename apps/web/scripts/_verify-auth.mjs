@@ -29,10 +29,10 @@ const activeTabBg = await page.evaluate(() => {
   return el ? getComputedStyle(el).backgroundColor : null;
 });
 
-// 切到「市场」Tab
+// 切到「行情」Tab
 let marketInfo = {};
 try {
-  await page.getByRole("button", { name: "市场" }).click();
+  await page.getByRole("button", { name: "行情" }).click();
   await page.waitForTimeout(3500);
   await page.screenshot({ path: `${OUT}/market.png`, fullPage: true });
   // 读取板块种类徽章（指数/行业/概念）的实际颜色

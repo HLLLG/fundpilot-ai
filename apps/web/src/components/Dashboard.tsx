@@ -86,8 +86,10 @@ import {
 import {
   fillClosestFundCodes,
   fillClosestTransactionFundCodes,
+  mapWithConcurrency,
   mergeFundCodeResolutions,
   mergeParsedTransactions,
+  OCR_UPLOAD_CONCURRENCY,
   type TransactionSyncPlan,
 } from "@/lib/ocrBatchUpload";
 import { clearCachedPortfolioHoldings } from "@/lib/portfolioHoldingsCache";
@@ -180,7 +182,7 @@ const FundDiscoveryPanel = dynamic(
 );
 const MarketTab = dynamic(
   () => import("@/components/MarketTab").then((module) => module.MarketTab),
-  { loading: () => <DashboardTabLoading label="市场行情" /> },
+  { loading: () => <DashboardTabLoading label="行情" /> },
 );
 const YangjibaoFundDetail = dynamic(
   () =>
@@ -1280,10 +1282,10 @@ export function Dashboard() {
     let recognized = 0;
     const failures: string[] = [];
     try {
-      for (let index = 0; index < selectedFiles.length; index += 1) {
-        const selectedFile = selectedFiles[index];
-        setOcrUploadProgress({ current: index + 1, total: selectedFiles.length });
-        try {
+      const outcomes = await mapWithConcurrency(
+        selectedFiles,
+        OCR_UPLOAD_CONCURRENCY,
+        async (selectedFile) => {
           const formData = new FormData();
           formData.append("file", selectedFile);
           const result = await parseOcrUpload(formData, { preview: true });
@@ -1293,20 +1295,33 @@ export function Dashboard() {
           if (!result.holdings.length) {
             throw new Error("未识别到基金持仓，请确认截图为支付宝「我的持有」。");
           }
-          nextHoldings = mergeHoldingsAppend(nextHoldings, result.holdings);
-          nextResolutions = mergeFundCodeResolutions(
-            nextResolutions,
-            result.fund_code_resolutions ?? [],
-          );
-          if (result.ocr_source) {
-            nextSource = result.ocr_source;
-          }
-          recognized += 1;
-        } catch (error) {
-          failures.push(
-            `${selectedFile.name || `第 ${index + 1} 张`}：${userFacingErrorMessage(error, "截图识别失败。")}`,
-          );
+          return result;
+        },
+        (done, total) => {
+          setOcrUploadProgress({ current: done, total });
+        },
+      );
+      for (let index = 0; index < outcomes.length; index += 1) {
+        const selectedFile = selectedFiles[index];
+        const outcome = outcomes[index];
+        if (!selectedFile || !outcome) {
+          continue;
         }
+        if (outcome.status === "rejected") {
+          failures.push(
+            `${selectedFile.name || `第 ${index + 1} 张`}：${userFacingErrorMessage(outcome.reason, "截图识别失败。")}`,
+          );
+          continue;
+        }
+        nextHoldings = mergeHoldingsAppend(nextHoldings, outcome.value.holdings);
+        nextResolutions = mergeFundCodeResolutions(
+          nextResolutions,
+          outcome.value.fund_code_resolutions ?? [],
+        );
+        if (outcome.value.ocr_source) {
+          nextSource = outcome.value.ocr_source;
+        }
+        recognized += 1;
       }
       if (recognized === 0) {
         throw new Error(failures.join("\n") || "截图识别失败。");
@@ -1479,10 +1494,10 @@ export function Dashboard() {
     let recognized = 0;
     const failures: string[] = [];
     try {
-      for (let index = 0; index < selectedFiles.length; index += 1) {
-        const selectedFile = selectedFiles[index];
-        setBatchUploadProgress({ current: index + 1, total: selectedFiles.length });
-        try {
+      const outcomes = await mapWithConcurrency(
+        selectedFiles,
+        OCR_UPLOAD_CONCURRENCY,
+        async (selectedFile) => {
           const result = await transactionsOcr(selectedFile);
           // 识别不可用/失败时后端返回 error 字段而不是 500；不透出的话用户只会看到
           // 「未识别到交易记录」这种误导性提示。
@@ -1497,13 +1512,26 @@ export function Dashboard() {
                 : "未识别到交易记录，请确认截图为支付宝「交易记录」页。",
             );
           }
-          next = mergeParsedTransactions(next, result.transactions);
-          recognized += 1;
-        } catch (error) {
-          failures.push(
-            `${selectedFile.name || `第 ${index + 1} 张`}：${userFacingErrorMessage(error, "交易记录识别失败。")}`,
-          );
+          return result;
+        },
+        (done, total) => {
+          setBatchUploadProgress({ current: done, total });
+        },
+      );
+      for (let index = 0; index < outcomes.length; index += 1) {
+        const selectedFile = selectedFiles[index];
+        const outcome = outcomes[index];
+        if (!selectedFile || !outcome) {
+          continue;
         }
+        if (outcome.status === "rejected") {
+          failures.push(
+            `${selectedFile.name || `第 ${index + 1} 张`}：${userFacingErrorMessage(outcome.reason, "交易记录识别失败。")}`,
+          );
+          continue;
+        }
+        next = mergeParsedTransactions(next, outcome.value.transactions);
+        recognized += 1;
       }
       if (recognized === 0) {
         throw new Error(failures.join("\n") || "交易记录识别失败。");
@@ -1617,7 +1645,7 @@ export function Dashboard() {
   const activePageTitle = {
     holdings: "账户持仓",
     dashboard: "盈亏分析",
-    market: "市场观察",
+    market: "行情",
     discovery: "发现基金",
     report: "投研日报",
     history: "历史日报",

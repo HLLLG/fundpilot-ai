@@ -62,9 +62,8 @@ from app.services.us_stock_quote_client import (
 
 logger = logging.getLogger(__name__)
 
-# 时段感知 TTL（秒）：盘前/盘中高频；盘后/休市低频（需求 4.3 / 4.4，Property 4）。
-_LIVE_TTL_SECONDS = 60.0
-_CLOSED_TTL_SECONDS = 1800.0
+# 读缓存新鲜度：活跃 20min；休市沿用闲时 TTL，过期后只回 stale 缓存、不再打源。
+# 不再用 60s TTL，避免后台 20min 才真刷、接口却提前标 stale。
 _CACHE_VERSION = "v9"
 _STOCK_QUOTES_CACHE_VERSION = "v3"
 _FUNDGZ_CACHE_VERSION = "v1"
@@ -81,6 +80,8 @@ _MARKET_SYMBOLS: tuple[tuple[str, str], ...] = (
 
 _LIVE_KINDS = {"pre_market", "regular"}
 _REST_KINDS = {"after_hours", "closed"}
+# 与 worker 一致：盘后仍按活跃节奏刷新，TTL 也按活跃算。
+_TTL_LIVE_KINDS = {"pre_market", "regular", "after_hours"}
 
 
 def qdii_estimates_enabled() -> bool:
@@ -89,8 +90,15 @@ def qdii_estimates_enabled() -> bool:
 
 
 def _ttl_for(session_kind: str) -> float:
-    """时段感知 TTL：pre_market/regular ≤60s；after_hours/closed 用更长 TTL。"""
-    return _LIVE_TTL_SECONDS if session_kind in _LIVE_KINDS else _CLOSED_TTL_SECONDS
+    """时段感知 TTL：盘前/盘中/盘后跟后台活跃间隔；休市只用来判断缓存是否标 stale。"""
+    from app.services.market_shared_refresh import (
+        idle_refresh_interval_seconds,
+        live_refresh_interval_seconds,
+    )
+
+    if session_kind in _TTL_LIVE_KINDS:
+        return live_refresh_interval_seconds()
+    return idle_refresh_interval_seconds()
 
 
 def _bucket_for(session_kind: str) -> str:

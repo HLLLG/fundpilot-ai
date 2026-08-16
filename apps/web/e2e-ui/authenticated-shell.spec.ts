@@ -322,7 +322,7 @@ test("模拟登录态可进入响应式应用壳层", async ({ page }) => {
   await expect(page.getByRole("menu", { name: "账号菜单" })).toHaveCount(0);
 
   if ((page.viewportSize()?.width ?? 1440) < 1024) {
-    // 底栏五个标签全部平铺（持仓 / 市场 / 发现 / 日报 / 我的），每个都要是一次点击就能到，
+    // 底栏五个标签全部平铺（持仓 / 行情 / 发现 / 日报 / 我的），每个都要是一次点击就能到，
     // 且在最窄的 320px 屏上仍满足最小可点击区域。
     const bottomNav = page.getByRole("navigation", { name: "主导航" }).last();
     await expect(bottomNav).toBeVisible();
@@ -344,7 +344,7 @@ test("模拟登录态可进入响应式应用壳层", async ({ page }) => {
 
     // 后台任务浮层（日报 / 荐基进度）必须停在底栏**上方**。它曾经是
     // `fixed bottom-6 right-6 z-50`，1.5rem 正好落在底栏那一条里，于是稳定地盖住
-    // 「市场 / 更多」两个按钮，用户没法切页。这里用真实 CSS 类注入一条来量几何关系，
+    // 「行情 / 更多」两个按钮，用户没法切页。这里用真实 CSS 类注入一条来量几何关系，
     // 不必真的跑一次后台任务。
     const geometry = await page.evaluate(() => {
       const nav = document.querySelector(".dashboard-bottom-nav");

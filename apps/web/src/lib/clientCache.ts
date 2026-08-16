@@ -45,7 +45,7 @@ function writeSession<T>(key: string, data: T) {
   window.sessionStorage.setItem(key, JSON.stringify(envelope));
 }
 
-export type ClientCacheStorage = "memory" | "session";
+export type ClientCacheStorage = "memory" | "session" | "none";
 
 export function buildClientCacheKey(...parts: Array<string | number | boolean | null | undefined>) {
   return parts
@@ -59,6 +59,9 @@ export function readClientCache<T>(
   maxAgeMs: number,
   storage: ClientCacheStorage = "memory",
 ): T | null {
+  if (storage === "none") {
+    return null;
+  }
   const envelope =
     storage === "session" ? readSession(key) : (memoryStore.get(key) as CacheEnvelope<T> | undefined);
   if (!envelope) {
@@ -81,6 +84,9 @@ export function writeClientCache<T>(
   data: T,
   storage: ClientCacheStorage = "memory",
 ) {
+  if (storage === "none") {
+    return;
+  }
   const envelope: CacheEnvelope<T> = { fetchedAt: Date.now(), data };
   if (storage === "session") {
     writeSession(key, data);
@@ -91,6 +97,9 @@ export function writeClientCache<T>(
 }
 
 export function deleteClientCache(key: string, storage: ClientCacheStorage = "memory"): void {
+  if (storage === "none") {
+    return;
+  }
   if (storage === "session") {
     if (typeof window !== "undefined") {
       try {
@@ -116,6 +125,9 @@ export function peekClientCacheAgeMs(
   key: string,
   storage: ClientCacheStorage = "memory",
 ): number | null {
+  if (storage === "none") {
+    return null;
+  }
   const envelope =
     storage === "session" ? readSession(key) : (memoryStore.get(key) as CacheEnvelope<unknown> | undefined);
   if (!envelope) {

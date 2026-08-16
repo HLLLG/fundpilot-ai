@@ -347,6 +347,9 @@ def fetch_eastmoney_quote_by_secid(
     return None, None
 
 
+_ULIST_SECID_CHUNK = 20
+
+
 @eastmoney_budgeted
 def fetch_eastmoney_quotes_by_secid(
     secids: Sequence[str],
@@ -372,10 +375,31 @@ def fetch_eastmoney_quotes_by_secid(
     if not requested:
         return {}
 
-    requested_set = set(requested)
+    merged: dict[str, dict[str, Any]] = {}
+    for offset in range(0, len(requested), _ULIST_SECID_CHUNK):
+        chunk = requested[offset : offset + _ULIST_SECID_CHUNK]
+        merged.update(
+            _fetch_eastmoney_quotes_chunk(
+                chunk,
+                timeout=timeout,
+                max_retries=max_retries,
+                max_hosts=max_hosts,
+            )
+        )
+    return merged
+
+
+def _fetch_eastmoney_quotes_chunk(
+    secids: tuple[str, ...],
+    *,
+    timeout: float,
+    max_retries: int,
+    max_hosts: int,
+) -> dict[str, dict[str, Any]]:
+    requested_set = set(secids)
     params = {
-        "secids": ",".join(requested),
-        "fields": "f12,f13,f14,f2,f3,f124",
+        "secids": ",".join(secids),
+        "fields": "f12,f13,f14,f2,f3,f4,f109,f124",
         "ut": _COMMON_PARAMS["ut"],
         "fltt": "2",
         "invt": "2",
@@ -447,6 +471,8 @@ def _parse_eastmoney_quote_rows(
             "security_name": str(row.get("f14") or "").strip() or None,
             "latest_price": _as_board_float(row.get("f2")),
             "change_percent": _as_board_float(row.get("f3")),
+            "change_5d_percent": _as_board_float(row.get("f109")),
+            "change_amount": _as_board_float(row.get("f4")),
             "quote_timestamp": timestamp,
         }
     return parsed
@@ -457,7 +483,12 @@ def _parse_current_board_flow_kline(
     *,
     trade_date: str,
 ) -> dict[str, Any] | None:
-    """Parse one dated ``fflow/kline`` row without relabeling stale data."""
+    """Parse one dated ``fflow/kline`` row without relabeling stale data.
+
+    ``parts[12]``（f63）是该板块**自身**的当日涨跌幅——与资金流同一个成分篮子。
+    量价背离判断必须用它而不是主题挂的指数涨幅（两个篮子同日可差好几个百分点），
+    所以这里把它一并带回，缺失时置 None 而不是拿别的口径凑。
+    """
     if not isinstance(raw, str):
         return None
     parts = [part.strip() for part in raw.split(",")]
@@ -474,9 +505,18 @@ def _parse_current_board_flow_kline(
         for value in (main_force, small, medium, large, super_large)
     ):
         return None
+    change_percent: float | None = None
+    if len(parts) > 12:
+        try:
+            candidate = float(parts[12])
+        except (TypeError, ValueError):
+            candidate = None
+        if candidate is not None and math.isfinite(candidate):
+            change_percent = candidate
     return {
         "date": trade_date,
         "main_force_net_yi": _board_yuan_to_yi(main_force),
+        "change_percent": change_percent,
         "flow_tiers": {
             "super_large_net_yi": _board_yuan_to_yi(super_large),
             "large_net_yi": _board_yuan_to_yi(large),
@@ -511,7 +551,9 @@ def fetch_eastmoney_current_board_flow(
         "klt": "101",
         "secid": cleaned_secid,
         "fields1": "f1,f2,f3,f7",
-        "fields2": "f51,f52,f53,f54,f55,f56",
+        # 与 board_fund_flow_history 的 daykline 同一字段布局：f62=收盘价、
+        # f63=板块自身涨跌幅（parts[11]/parts[12]），供量价判断同源取价。
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65",
         "ut": _COMMON_PARAMS["ut"],
     }
     host_pool = _CURRENT_FLOW_HOSTS[: max(0, max_hosts)]
@@ -1010,6 +1052,20 @@ _CLIST_THEME_POOLS: dict[str, dict[str, str]] = {
     },
     "index": {
         "fs": "m:2",
+        "fid": "f12",
+        "wbp2u": "|0|0|0|web",
+        "stat": "5",
+    },
+    # 深市/沪市挂牌的中证指数不在 m:2。只拉中证池时，保险 399809、医疗 399989、
+    # 有色 000819 等永远没有 f109，主题榜「5日」会空着，只能靠后面的 ulist 补。
+    "index_sz": {
+        "fs": "m:0+t:5",
+        "fid": "f12",
+        "wbp2u": "|0|0|0|web",
+        "stat": "5",
+    },
+    "index_sh": {
+        "fs": "m:1+t:1",
         "fid": "f12",
         "wbp2u": "|0|0|0|web",
         "stat": "5",

@@ -3,6 +3,7 @@ import type { AnalysisPromptConfig, DiscoveryPromptConfig, DiscoverySectorHeat, 
 const PROFILE_KEY = "fundpilot-investor-profile";
 const ANALYSIS_PROMPT_KEY = "fundpilot-analysis-prompt";
 const DISCOVERY_PROMPT_KEY = "fundpilot-discovery-prompt";
+const DISCOVERY_BUDGET_KEY = "fundpilot-discovery-budget-yuan";
 const DISCOVERY_SECTORS_KEY = "fundpilot-discovery-sectors";
 const CHAT_MODE_KEY = "fundpilot-report-chat-mode";
 
@@ -203,6 +204,27 @@ export function saveDiscoveryPrompt(userId: UserStorageId, config: DiscoveryProm
   saveUserScopedValue(DISCOVERY_PROMPT_KEY, userId, config);
 }
 
+export const DEFAULT_DISCOVERY_BUDGET_YUAN = 10_000;
+
+function isPersistedBudgetYuan(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+export function loadDiscoveryBudgetYuan(
+  userId: UserStorageId,
+  fallback = DEFAULT_DISCOVERY_BUDGET_YUAN,
+): number {
+  const stored = loadUserScopedValue<unknown>(DISCOVERY_BUDGET_KEY, userId);
+  return isPersistedBudgetYuan(stored) ? stored : fallback;
+}
+
+export function saveDiscoveryBudgetYuan(userId: UserStorageId, value: number) {
+  if (!isPersistedBudgetYuan(value)) {
+    return;
+  }
+  saveUserScopedValue(DISCOVERY_BUDGET_KEY, userId, value);
+}
+
 export function loadReportChatMode(fallback: ReportChatMode = "fast"): ReportChatMode {
   if (typeof window === "undefined") {
     return fallback;
@@ -321,9 +343,9 @@ type FundReturnDistributionCache = {
   data: FundReturnDistribution;
 };
 
-/** 基金涨跌分布：localStorage 冷启动缓存，进入市场页时先展示再后台续期。 */
+/** 基金涨跌分布：localStorage 冷启动缓存，进入行情页时先展示再后台续期。 */
 export function loadFundReturnDistributionCache(
-  maxAgeMs = 30 * 60 * 1000,
+  maxAgeMs = 3 * 24 * 60 * 60 * 1000,
 ): FundReturnDistribution | null {
   if (typeof window === "undefined") {
     return null;

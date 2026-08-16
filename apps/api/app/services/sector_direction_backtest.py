@@ -1319,7 +1319,12 @@ def _clean_flow_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
         value = _num(row.get("main_force_net_yi"))
         if len(day) != 10 or value is None:
             continue
-        by_date[day] = {"date": day, "main_force_net_yi": value}
+        cleaned: dict[str, Any] = {"date": day, "main_force_net_yi": value}
+        # daykline 行自带的板块自身涨跌：量价 pattern 的同源价格腿（与生产一致）。
+        change = _num(row.get("change_percent"))
+        if change is not None:
+            cleaned["change_percent"] = change
+        by_date[day] = cleaned
     return [by_date[day] for day in sorted(by_date)]
 
 
@@ -1400,13 +1405,26 @@ def _flow_context_as_of(
     # 归一化与口径标注直接复用生产的 `_flow_scale_yi` / `_normalized_flow`，不另写一份，
     # 否则重放出来的资金分量就不再是线上口径。
     flow_scale = _flow_scale_yi([dict(row) for row in points])
-    if date_aligned:
+    # 与生产 `build_sector_fund_flow_context` 同口径：量价 pattern 的价格腿优先取资金流
+    # 行自带的板块自身涨跌（同一成分篮子）。行里没有该字段（旧 capture/注入 fixture）时
+    # 退回调用方传入的价格序列涨跌——对概念/行业主题两者本就同源，对指数主题这是
+    # 回放数据缺口下的近似，样本口径由 price_series 决定。
+    flow_price_change = _num(latest.get("change_percent")) if date_aligned else None
+    if flow_price_change is None and date_aligned:
+        flow_price_change = _num(change_1d)
+    if date_aligned and flow_price_change is not None:
         pattern = _classify_flow_pattern(
-            sector_return_percent=change_1d,
+            price_change_percent=flow_price_change,
             today_flow=today_flow,
             cumulative_5d=cumulative_5d,
             flow_tiers=None,
         )
+    elif date_aligned:
+        pattern = {
+            "pattern_label": "price_source_mismatch",
+            "pattern_hint": "板块资金流缺同口径涨跌幅，勿做量价背离判断。",
+            "flow_structure_hint": None,
+        }
     else:
         pattern = {
             "pattern_label": "flow_date_mismatch",
@@ -1431,6 +1449,8 @@ def _flow_context_as_of(
         "cumulative_20d_net_yi": cumulative_20d,
         "flow_scale_yi": flow_scale,
         "flow_universe": flow_universe,
+        "flow_price_change_percent": flow_price_change,
+        "pattern_price_source": "board_flow" if flow_price_change is not None else None,
         "normalized_today_net": _normalized_flow(today_flow, flow_scale, 1),
         "normalized_5d_net": _normalized_flow(cumulative_5d, flow_scale, 5),
         "normalized_20d_net": _normalized_flow(cumulative_20d, flow_scale, 20),

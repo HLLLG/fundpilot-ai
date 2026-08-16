@@ -2,20 +2,44 @@ import { describe, expect, it } from "vitest";
 
 import {
   boardKindClass,
+  countHeldThemeBoards,
+  filterThemeBoardItems,
   formatBoardKindLabel,
+  formatThemeBoardUpdatedAt,
   formatThemeFlowYi,
   formatThemePercent,
   formatThemeRank,
+  formatThemeStreak,
   hasThemeFlowDetail,
   nextThemeSortState,
   sortThemeBoardItems,
   themeBoardHeading,
+  themeBoardMatchesQuery,
   themeRankClass,
 } from "@/lib/marketThemeBoard";
 
 describe("marketThemeBoard formatters", () => {
   it("uses fixed gainers heading", () => {
     expect(themeBoardHeading()).toBe("主题板块涨跌");
+  });
+
+  it("formats theme board update time like fund distribution", () => {
+    expect(
+      formatThemeBoardUpdatedAt({
+        refreshed_at: "2026-08-13T06:40:29.109425+00:00",
+        trade_date: "2026-08-13",
+        session_kind: "trading_day_pre_close",
+      }),
+    ).toBe("更新：2026-08-13 14:40");
+    expect(
+      formatThemeBoardUpdatedAt({
+        refreshed_at: "2026-08-16T05:39:00+00:00",
+        trade_date: "2026-08-14",
+        session_kind: "non_trading_day",
+      }),
+    ).toBe("更新：2026-08-14 15:00");
+    expect(formatThemeBoardUpdatedAt({ trade_date: "2026-08-14" })).toBe("更新：2026-08-14 15:00");
+    expect(formatThemeBoardUpdatedAt(null)).toBeNull();
   });
 
   it("formats rank with leading zero", () => {
@@ -46,6 +70,15 @@ describe("marketThemeBoard formatters", () => {
     expect(boardKindClass("concept")).toContain("amber");
   });
 
+  it("formats consecutive up days", () => {
+    expect(formatThemeStreak(3)).toBe("+3天");
+    expect(formatThemeStreak(1)).toBe("+1天");
+    expect(formatThemeStreak(-3)).toBe("-3天");
+    expect(formatThemeStreak(-1)).toBe("-1天");
+    expect(formatThemeStreak(0)).toBe("0天");
+    expect(formatThemeStreak(null)).toBe("—");
+  });
+
   it("formats flow yi with sign", () => {
     expect(formatThemeFlowYi(12.34)).toBe("+12.34亿");
     expect(formatThemeFlowYi(-7.5)).toBe("-7.50亿");
@@ -74,6 +107,44 @@ describe("marketThemeBoard formatters", () => {
 
     const byInflowAsc = sortThemeBoardItems(items, "inflow", "asc");
     expect(byInflowAsc.map((item) => item.sector_label)).toEqual(["B", "C", "A"]);
+
+    const withStreak = [
+      { ...items[0], consecutive_up_days: 1 },
+      { ...items[1], consecutive_up_days: 4 },
+      { ...items[2], consecutive_up_days: null },
+    ];
+    const byStreakDesc = sortThemeBoardItems(withStreak, "streak", "desc");
+    expect(byStreakDesc.map((item) => item.sector_label)).toEqual(["B", "A", "C"]);
+  });
+
+  it("matches theme boards by name or board kind", () => {
+    const semiconductor = {
+      sector_label: "半导体",
+      board_kind: "index" as const,
+    };
+    expect(themeBoardMatchesQuery(semiconductor, "半导")).toBe(true);
+    expect(themeBoardMatchesQuery(semiconductor, " 半 导 ")).toBe(true);
+    expect(themeBoardMatchesQuery(semiconductor, "指数")).toBe(true);
+    expect(themeBoardMatchesQuery(semiconductor, "红利")).toBe(false);
+  });
+
+  it("filters by search query and held-only shortcut", () => {
+    const items = [
+      { sector_label: "红利", board_kind: "index" as const, held_fund_count: 2, in_portfolio: true },
+      { sector_label: "新能源", board_kind: "index" as const, held_fund_count: 0, in_portfolio: false },
+      { sector_label: "化工", board_kind: "industry" as const, held_fund_count: 1, in_portfolio: true },
+    ];
+    expect(filterThemeBoardItems(items, { query: "新" }).map((item) => item.sector_label)).toEqual([
+      "新能源",
+    ]);
+    expect(filterThemeBoardItems(items, { heldOnly: true }).map((item) => item.sector_label)).toEqual([
+      "红利",
+      "化工",
+    ]);
+    expect(
+      filterThemeBoardItems(items, { query: "红", heldOnly: true }).map((item) => item.sector_label),
+    ).toEqual(["红利"]);
+    expect(countHeldThemeBoards(items)).toBe(2);
   });
 
   it("toggles sort direction on repeated column click", () => {

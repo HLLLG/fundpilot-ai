@@ -1377,9 +1377,15 @@ def _weak_evidence_reasons(pool_item: dict, opportunity: dict | None) -> list[st
                 reasons.append(f"板块机会分 {score:.2f}，低于 60")
         if not has_maturity_policy:
             pattern = str(opportunity.get("pattern_label") or "")
-            if pattern in {"flow_date_mismatch", "distribution", "weak_outflow"}:
+            if pattern in {
+                "flow_date_mismatch",
+                "price_source_mismatch",
+                "distribution",
+                "weak_outflow",
+            }:
                 pattern_labels = {
                     "flow_date_mismatch": "资金与价格时点未对齐",
+                    "price_source_mismatch": "资金与价格口径未对齐",
                     "distribution": "资金流呈高位分化",
                     "weak_outflow": "资金流偏弱",
                 }

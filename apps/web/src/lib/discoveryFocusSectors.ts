@@ -101,7 +101,7 @@ function removeDiscoveryFocusSector(sector: string): string[] {
   });
 }
 
-/** 市场页：已关注则取消，否则加入。 */
+/** 行情页：已关注则取消，否则加入。 */
 export function toggleDiscoveryFocusSector(sector: string): string[] {
   const trimmed = sector.trim();
   const current = loadDiscoveryFocusSectors();

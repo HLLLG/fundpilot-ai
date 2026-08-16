@@ -67,9 +67,13 @@ export function useCachedFetch<T>({
           if (shared != null) {
             setData(shared);
             setError(null);
+            setLoading(false);
+            return;
           }
-          setLoading(false);
-          return;
+          if (storage !== "none") {
+            setLoading(false);
+            return;
+          }
         }
       }
 

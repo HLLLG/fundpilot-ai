@@ -218,10 +218,6 @@ export function FocusSectorPicker({
           </ul>
         ) : null}
       </div>
-
-      <p className="text-[11px] leading-5 text-slate-500">
-        共 {optionLabels.length} 个主题板块可选；也可在市场 → 主题板块点击「加入关注方向」
-      </p>
     </div>
   );
 }

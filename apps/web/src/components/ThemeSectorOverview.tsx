@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useId, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, ChevronUp, Loader2, RotateCcw } from "lucide-react";
+import { Briefcase, ChevronDown, ChevronRight, ChevronUp, Loader2, Search, X } from "lucide-react";
 import { BoardFlowHistoryChart } from "@/components/BoardFlowHistoryChart";
 import type {
   BoardFlowHistoryRange,
@@ -14,10 +14,14 @@ import { useMediaQuery } from "@/lib/useMediaQuery";
 import { MethodologyNote } from "@/components/MethodologyNote";
 import {
   boardKindClass,
+  countHeldThemeBoards,
+  filterThemeBoardItems,
   formatBoardKindLabel,
+  formatThemeBoardUpdatedAt,
   formatThemeFlowYi,
   formatThemePercent,
   formatThemeRank,
+  formatThemeStreak,
   hasThemeFlowDetail,
   isMarketThemeBoardUsable,
   nextThemeSortState,
@@ -33,10 +37,7 @@ import {
 type ThemeSectorOverviewProps = {
   data: MarketThemeBoardResponse | null;
   loading: boolean;
-  revalidating: boolean;
-  onRefresh: () => void;
-  onAddFocusSector?: (sectorLabel: string) => void;
-  focusSectors?: string[];
+  revalidating?: boolean;
 };
 
 const FLOW_HISTORY_LOAD_FAILED = "历史资金流加载失败";
@@ -52,8 +53,23 @@ function FlowTierGrid({ item }: { item: MarketThemeBoardItem }) {
   if (!tiers) {
     return null;
   }
+  // 指数主题的榜面涨幅是跟踪指数口径，与资金流的东财板块不是同一个成分篮子；
+  // 展开资金详情时补一行板块口径自身涨跌，用户对照资金数据才不会拿错价格。
+  const flowBasketDiffers =
+    Boolean(item.flow_source_code) &&
+    Boolean(item.source_code) &&
+    item.flow_source_code !== item.source_code;
+  const showFlowChange = flowBasketDiffers && item.flow_change_1d_percent != null;
   return (
     <div className="mt-2 space-y-2 border-t border-slate-100 pt-2">
+      {showFlowChange ? (
+        <div className="flex items-center justify-between rounded-lg bg-white/80 px-2.5 py-2 text-xs">
+          <span className="text-slate-500">资金口径板块今日（东财 {item.flow_source_code}）</span>
+          <span className={`tabular-nums font-medium ${profitToneClass(item.flow_change_1d_percent)}`}>
+            {formatThemePercent(item.flow_change_1d_percent)}
+          </span>
+        </div>
+      ) : null}
       <div className="grid grid-cols-2 gap-2 text-xs">
         {THEME_FLOW_TIER_ROWS.map(({ key, label, hint }) => {
           const value = tiers[key];
@@ -71,7 +87,10 @@ function FlowTierGrid({ item }: { item: MarketThemeBoardItem }) {
         })}
       </div>
       <MethodologyNote>
-        主力净流入 = 超大单 + 大单；涨幅与资金可能来自不同口径（指数 vs 东财板块）。
+        主力净流入 = 超大单 + 大单。
+        {flowBasketDiffers
+          ? "榜面涨幅为跟踪指数口径（与基金净值对齐）；资金及量价信号取自东财板块口径，并在该口径内同源计算。"
+          : "涨幅与资金均为东财板块口径（同源）。"}
       </MethodologyNote>
     </div>
   );
@@ -252,34 +271,6 @@ function ThemeExpandButton({
   );
 }
 
-function ThemeRowActions({
-  item,
-  focused,
-  onAddFocusSector,
-  mobile = false,
-}: {
-  item: MarketThemeBoardItem;
-  focused: boolean;
-  onAddFocusSector?: (sectorLabel: string) => void;
-  mobile?: boolean;
-}) {
-  return (
-    <div className={mobile ? "contents" : "inline-flex items-center justify-end gap-1"}>
-      <button
-        type="button"
-        className={`${mobile ? "w-full" : ""} min-h-11 rounded-lg px-2 text-xs font-medium transition ${
-          focused
-            ? "bg-[var(--brand-soft)] text-[var(--brand-strong)]"
-            : "text-[var(--brand-strong)] hover:bg-[var(--brand-soft)]"
-        }`}
-        onClick={() => onAddFocusSector?.(item.sector_label)}
-      >
-        {focused ? "已关注" : "加关注"}
-      </button>
-    </div>
-  );
-}
-
 function ThemeExpandedDetails({
   id,
   item,
@@ -316,10 +307,7 @@ function ThemeExpandedDetails({
 export function ThemeSectorOverview({
   data,
   loading,
-  revalidating,
-  onRefresh,
-  onAddFocusSector,
-  focusSectors = [],
+  revalidating = false,
 }: ThemeSectorOverviewProps) {
   const detailsIdPrefix = useId().replace(/:/g, "");
   const [expandedItem, setExpandedItem] = useState<{
@@ -331,9 +319,13 @@ export function ThemeSectorOverview({
   const [flowLoadingKey, setFlowLoadingKey] = useState<string | null>(null);
   const [sortColumn, setSortColumn] = useState<ThemeSortColumn>("change");
   const [sortDirection, setSortDirection] = useState<ThemeSortDirection>("desc");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [heldOnly, setHeldOnly] = useState(false);
   const [mobileVisibleCount, setMobileVisibleCount] = useState(MOBILE_PAGE_SIZE);
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const showData = isMarketThemeBoardUsable(data);
+  const heldCount = countHeldThemeBoards(data?.items ?? []);
+  const updatedAt = formatThemeBoardUpdatedAt(data);
 
   useEffect(() => {
     if (!expandedItem) {
@@ -395,14 +387,32 @@ export function ThemeSectorOverview({
   }, [expandedItem, flowRange, flowCache]);
 
   const sortedItems = useMemo(
-    () => sortThemeBoardItems(data?.items ?? [], sortColumn, sortDirection),
-    [data?.items, sortColumn, sortDirection],
+    () =>
+      sortThemeBoardItems(
+        filterThemeBoardItems(data?.items ?? [], {
+          query: searchQuery,
+          heldOnly,
+        }),
+        sortColumn,
+        sortDirection,
+      ),
+    [data?.items, heldOnly, searchQuery, sortColumn, sortDirection],
   );
   const mobileItems = sortedItems.slice(0, mobileVisibleCount);
+  const filterActive = Boolean(searchQuery.trim()) || heldOnly;
 
   useEffect(() => {
     setMobileVisibleCount(MOBILE_PAGE_SIZE);
-  }, [data?.trade_date, sortColumn, sortDirection]);
+  }, [data?.trade_date, heldOnly, searchQuery, sortColumn, sortDirection]);
+
+  useEffect(() => {
+    if (!expandedItem) {
+      return;
+    }
+    if (!sortedItems.some((item) => item.sector_label === expandedItem.label)) {
+      setExpandedItem(null);
+    }
+  }, [expandedItem, sortedItems]);
 
   const handleSort = (column: ThemeSortColumn) => {
     const next = nextThemeSortState(column, sortColumn, sortDirection);
@@ -438,7 +448,7 @@ export function ThemeSectorOverview({
   return (
     <section className="overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--panel)] shadow-sm">
       <div className="bg-gradient-to-b from-amber-50/90 via-amber-50/30 to-white px-4 pb-3 pt-4">
-        <div className="flex items-start justify-between gap-2">
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-lg font-bold tracking-tight text-slate-900 sm:text-xl">{themeBoardHeading()}</h2>
             {/*
@@ -455,20 +465,62 @@ export function ThemeSectorOverview({
               <p className="mt-1 text-xs text-[var(--warn-icon)]">{data.message}</p>
             ) : null}
           </div>
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={revalidating}
-            className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-3 py-1 text-xs text-slate-500 hover:bg-white/80"
-            aria-label="刷新主题板块"
-          >
-            {revalidating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
-            刷新
-          </button>
+          {updatedAt ? (
+            <p className="inline-flex shrink-0 items-center gap-1.5 pt-1 text-right text-xs text-slate-400">
+              {revalidating ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+              <span>{updatedAt}</span>
+            </p>
+          ) : null}
         </div>
       </div>
 
       <div className="px-4 pb-4 pt-1">
+        {showData ? (
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-start">
+            <label className="relative flex min-h-11 w-full min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 focus-within:border-[var(--brand)] focus-within:bg-white sm:w-72">
+              <Search className="h-4 w-4 shrink-0 text-slate-500" aria-hidden />
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="搜索板块，如 半导体"
+                className="min-h-11 min-w-0 flex-1 bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-500"
+                aria-label="按名称搜索主题板块"
+                autoComplete="off"
+              />
+              {searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="inline-flex min-h-11 min-w-11 items-center justify-center text-slate-500 hover:text-slate-700"
+                  aria-label="清除搜索"
+                >
+                  <X className="h-4 w-4" aria-hidden />
+                </button>
+              ) : null}
+            </label>
+            <button
+              type="button"
+              onClick={() => setHeldOnly((current) => !current)}
+              aria-pressed={heldOnly}
+              className={`inline-flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-xl border px-3 text-sm font-semibold transition ${
+                heldOnly
+                  ? "border-[var(--info-border)] bg-[var(--info-bg)] text-[var(--info-fg)]"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-[var(--brand)] hover:text-[var(--brand-strong)]"
+              }`}
+            >
+              <Briefcase className="h-4 w-4" aria-hidden />
+              {heldCount > 0 ? `持仓 ${heldCount}` : "持仓板块"}
+            </button>
+          </div>
+        ) : null}
+        {showData && filterActive && sortedItems.length > 0 ? (
+          <p className="mb-3 text-xs text-slate-500">
+            {heldOnly
+              ? `正在查看 ${sortedItems.length} 个持仓板块`
+              : `找到 ${sortedItems.length} 个板块`}
+          </p>
+        ) : null}
         {loading && !showData ? (
           <div className="flex items-center justify-center py-10 text-sm text-slate-500">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -476,6 +528,12 @@ export function ThemeSectorOverview({
           </div>
         ) : !showData ? (
           <p className="py-8 text-center text-sm text-slate-500">{data?.message ?? "暂无主题板块数据"}</p>
+        ) : sortedItems.length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-500" data-testid="theme-sector-empty-filter">
+            {heldOnly && !searchQuery.trim()
+              ? "持仓还没有对上主题板块"
+              : "没有匹配的板块"}
+          </p>
         ) : (
           !isDesktop ? (
             <div className="space-y-3" data-testid="theme-sector-mobile-list">
@@ -484,7 +542,6 @@ export function ThemeSectorOverview({
                 const expanded = expandedItem?.label === item.sector_label;
                 const cacheId = flowHistoryCacheId(item.sector_label, item.flow_source_code);
                 const detailsId = `${detailsIdPrefix}-mobile-${index}`;
-                const focused = focusSectors.includes(item.sector_label);
                 return (
                   <article
                     key={item.sector_label}
@@ -512,13 +569,21 @@ export function ThemeSectorOverview({
                       </div>
                     </div>
 
-                    <dl className="mt-3 grid grid-cols-3 gap-2">
+                    <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                       <div className="min-w-0 rounded-xl bg-slate-50 px-2 py-2 text-center">
                         <dt className="text-[11px] font-medium text-slate-500">今日</dt>
                         <dd
                           className={`mt-1 break-words text-sm font-bold tabular-nums ${profitToneClass(item.change_1d_percent)}`}
                         >
                           {formatThemePercent(item.change_1d_percent)}
+                        </dd>
+                      </div>
+                      <div className="min-w-0 rounded-xl bg-slate-50 px-2 py-2 text-center">
+                        <dt className="text-[11px] font-medium text-slate-500">连涨</dt>
+                        <dd
+                          className={`mt-1 break-words text-sm font-bold tabular-nums ${profitToneClass(item.consecutive_up_days)}`}
+                        >
+                          {formatThemeStreak(item.consecutive_up_days)}
                         </dd>
                       </div>
                       <div className="min-w-0 rounded-xl bg-slate-50 px-2 py-2 text-center">
@@ -539,7 +604,7 @@ export function ThemeSectorOverview({
                       </div>
                     </dl>
 
-                    <div className="mt-3 grid grid-cols-2 gap-2">
+                    <div className="mt-3">
                       {expandable ? (
                         <ThemeExpandButton
                           item={item}
@@ -553,12 +618,6 @@ export function ThemeSectorOverview({
                           暂无明细
                         </span>
                       )}
-                      <ThemeRowActions
-                        item={item}
-                        focused={focused}
-                        onAddFocusSector={onAddFocusSector}
-                        mobile
-                      />
                     </div>
 
                     {expanded && expandable ? (
@@ -597,7 +656,7 @@ export function ThemeSectorOverview({
             </div>
 
           ) : (
-            <div className="overflow-x-auto" data-testid="theme-sector-desktop-table">
+            <div className="overflow-x-auto pr-2" data-testid="theme-sector-desktop-table">
               <table className="w-full min-w-[560px] text-sm">
                 <caption className="sr-only">主题板块行情，可按今日、5日和主力净流入排序</caption>
                 <thead>
@@ -627,6 +686,19 @@ export function ThemeSectorOverview({
                     <th
                       scope="col"
                       className="pb-2 pr-2 text-right"
+                      aria-sort={sortAriaValue("streak", sortColumn, sortDirection)}
+                    >
+                      <SortColumnHeader
+                        label="连涨天数"
+                        column="streak"
+                        activeColumn={sortColumn}
+                        direction={sortDirection}
+                        onSort={handleSort}
+                      />
+                    </th>
+                    <th
+                      scope="col"
+                      className="pb-2 pr-2 text-right"
                       aria-sort={sortAriaValue("change5d", sortColumn, sortDirection)}
                     >
                       <SortColumnHeader
@@ -639,7 +711,7 @@ export function ThemeSectorOverview({
                     </th>
                     <th
                       scope="col"
-                      className="pb-2 pr-2 text-right"
+                      className="pb-2 pr-6 text-right"
                       aria-sort={sortAriaValue("inflow", sortColumn, sortDirection)}
                     >
                       <SortColumnHeader
@@ -650,9 +722,6 @@ export function ThemeSectorOverview({
                         onSort={handleSort}
                       />
                     </th>
-                    <th scope="col" className="pb-2 text-right font-medium text-slate-500">
-                      操作
-                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -661,7 +730,6 @@ export function ThemeSectorOverview({
                     const expanded = expandedItem?.label === item.sector_label;
                     const cacheId = flowHistoryCacheId(item.sector_label, item.flow_source_code);
                     const detailsId = `${detailsIdPrefix}-desktop-${index}`;
-                    const focused = focusSectors.includes(item.sector_label);
                     return (
                       <Fragment key={item.sector_label}>
                         <tr
@@ -696,21 +764,19 @@ export function ThemeSectorOverview({
                             {formatThemePercent(item.change_1d_percent)}
                           </td>
                           <td
+                            className={`py-3 pr-2 text-right tabular-nums font-medium ${profitToneClass(item.consecutive_up_days)}`}
+                          >
+                            {formatThemeStreak(item.consecutive_up_days)}
+                          </td>
+                          <td
                             className={`py-3 pr-2 text-right tabular-nums font-medium ${profitToneClass(item.change_5d_percent)}`}
                           >
                             {formatThemePercent(item.change_5d_percent)}
                           </td>
                           <td
-                            className={`py-3 pr-2 text-right tabular-nums font-medium ${profitToneClass(item.main_force_net_yi)}`}
+                            className={`py-3 pr-6 text-right tabular-nums font-medium ${profitToneClass(item.main_force_net_yi)}`}
                           >
                             {formatThemeFlowYi(item.main_force_net_yi)}
-                          </td>
-                          <td className="py-2 text-right">
-                            <ThemeRowActions
-                              item={item}
-                              focused={focused}
-                              onAddFocusSector={onAddFocusSector}
-                            />
                           </td>
                         </tr>
                         {expanded && expandable ? (

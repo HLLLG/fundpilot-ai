@@ -362,6 +362,21 @@ def build_fund_return_distribution(*, force_refresh: bool = False) -> dict:
     )
 
 
+def fund_return_distribution_is_settled(
+    payload: dict | None,
+    session: dict | None = None,
+) -> bool:
+    """官方净值已对齐当前有效交易日时，再打源只会拿到同一份收盘分布。"""
+    if not payload or payload.get("available") is not True:
+        return False
+    if payload.get("source_mode") != "official_nav":
+        return False
+    resolved = session or build_trading_session()
+    expected = str(resolved.get("effective_trade_date") or "")[:10]
+    actual = str(payload.get("as_of_date") or "")[:10]
+    return bool(expected and actual == expected)
+
+
 def refresh_fund_return_distribution_snapshot() -> dict:
     """后台刷新入口：同步打源并持久化，API 请求本身不承担该开销。"""
     return build_fund_return_distribution(force_refresh=True)

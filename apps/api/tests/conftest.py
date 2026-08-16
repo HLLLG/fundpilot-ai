@@ -203,6 +203,14 @@ def _stub_market_data_fetches(monkeypatch):
         lambda **_kwargs: {},
     )
     monkeypatch.setattr(
+        "app.services.theme_board_snapshot.fetch_eastmoney_quotes_by_secid",
+        lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.services.theme_board_snapshot.fetch_eastmoney_daily_kline_series",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
         "app.services.theme_board_snapshot.fetch_eastmoney_kline_close_percent",
         lambda *_args, **_kwargs: None,
     )
@@ -407,6 +415,8 @@ def _stub_market_data_fetches(monkeypatch):
     )
     # API 路由在模块加载时导入该符号；提供确定性 snapshot stub 供 smoke 测试。
     from app.models import (
+        CnIndexOverview,
+        CnIndexQuote,
         UsdCnyQuote,
         UsFuturesQuote,
         UsMarketSnapshot,
@@ -461,6 +471,38 @@ def _stub_market_data_fetches(monkeypatch):
         )
 
     monkeypatch.setattr("app.main.get_us_market_snapshot", _stub_us_market_snapshot)
+
+    def _stub_cn_index_overview(**_kwargs):
+        return CnIndexOverview(
+            items=[
+                CnIndexQuote(
+                    symbol="000001",
+                    display_name="上证指数",
+                    last_price=3927.18,
+                    change=0.22,
+                    change_percent=0.01,
+                    quote_time="2026-06-17T15:00:00+08:00",
+                    status="ok",
+                ),
+                CnIndexQuote(
+                    symbol="399001",
+                    display_name="深证成指",
+                    last_price=12880.12,
+                    change=12.4,
+                    change_percent=0.10,
+                    quote_time="2026-06-17T15:00:00+08:00",
+                    status="ok",
+                ),
+            ],
+            available=True,
+            from_cache=False,
+            stale=False,
+            updated_at="2026-06-17T15:00:12+08:00",
+            trade_date="2026-06-17",
+            message=None,
+        )
+
+    monkeypatch.setattr("app.main.get_cn_index_overview", _stub_cn_index_overview)
 
     # 大盘情绪温度计（market_breadth_signal.py）与互联互通摘要（market_flow_client.py）
     # 都是 build_analysis_facts 非 budget_enhancements 路径末尾无条件调用、且没有超时

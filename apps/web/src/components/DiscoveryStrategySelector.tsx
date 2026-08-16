@@ -1,7 +1,6 @@
 "use client";
 
 import { Crosshair } from "lucide-react";
-import { MethodologyNote } from "@/components/MethodologyNote";
 
 /**
  * 荐基决策策略已收敛为单一的「机会优先」口径，不再提供「稳健筛选」分支，
@@ -29,10 +28,6 @@ export function DiscoveryStrategySelector() {
           优先高波动、高动量与回撤修复机会；质量只作准入，不奖励低波动。
         </span>
       </div>
-      {/* 两张卡片各自的描述已经说明了策略差异，这条脚注讲的是共同的评分口径。 */}
-      <MethodologyNote className="mt-2">
-        机会分不扣历史回撤；买入仍须通过趋势、资金、修复、组合风险和明确退出条件。
-      </MethodologyNote>
     </fieldset>
   );
 }

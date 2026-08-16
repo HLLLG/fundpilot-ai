@@ -322,6 +322,9 @@ def _live_today_flow_from_snapshot(
         return {
             "main_force_net_yi": main_force,
             "flow_tiers": item.get("flow_tiers"),
+            # 与资金流同一行 clist 的板块自身涨跌（不是主题挂的指数涨幅）。
+            # 量价 pattern 的价格腿只能用它；缺失时置 None，让分类端诚实降级。
+            "change_percent": _finite_number(item.get("flow_change_1d_percent")),
         }
     return None
 
@@ -388,7 +391,18 @@ def _ensure_today_point(
         live = _live_today_flow_from_theme_board(board_code, trade_date)
     candidates = list(series)
     if isinstance(live, dict):
-        candidates.append({"date": trade_date, **live})
+        live_point = {"date": trade_date, **live}
+        # live 点整行覆盖同日历史行；若 live 缺板块自身涨跌（如旧版快照）而
+        # 收盘后的 daykline 行已有，则保留历史行的同源价格，别把它覆盖没了。
+        if _finite_number(live_point.get("change_percent")) is None:
+            for point in series:
+                if str(point.get("date") or "") != trade_date:
+                    continue
+                history_change = _finite_number(point.get("change_percent"))
+                if history_change is not None:
+                    live_point["change_percent"] = history_change
+                break
+        candidates.append(live_point)
     return _normalize_flow_series(candidates, trade_date)
 
 
@@ -424,12 +438,21 @@ def _flow_structure_hint(flow_tiers: dict[str, Any] | None) -> str | None:
 
 def _classify_flow_pattern(
     *,
-    sector_return_percent: float | None,
+    price_change_percent: float | None,
     today_flow: float | None,
     cumulative_5d: float | None,
     flow_tiers: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    price = sector_return_percent
+    """量价 pattern 分类。
+
+    ``price_change_percent`` 必须是与 ``today_flow`` **同一个成分篮子**的当日涨跌
+    （东财 BK 板块自己的 f3 / daykline change_percent）。此前这里接的是主题挂的
+    指数涨幅（source_code 口径），与 BK 资金流是两个篮子，同日可差好几个百分点，
+    判出的 distribution/accumulation 可能纯粹是成分差造成的假背离；历史回测
+    `sector_flow_divergence_backtest` 早已改为同源取价，live 分类必须同口径，
+    否则回测验证的规律套不到线上判定上。
+    """
+    price = price_change_percent
     flow = today_flow
     price_up = price is not None and price > 0.5
     price_down = price is not None and price < -0.5
@@ -493,10 +516,16 @@ def _classify_flow_pattern(
 def build_sector_fund_flow_context(
     sector_name: str | None,
     *,
-    sector_return_percent: float | None = None,
     trade_date: str | None = None,
     theme_snapshot: dict[str, Any] | None | object = _THEME_SNAPSHOT_UNSET,
 ) -> dict[str, Any] | None:
+    """板块资金流上下文（含量价 pattern）。
+
+    量价 pattern 的价格腿一律取资金流点位自带的板块涨跌（``change_percent``：盘中来自
+    主题快照同一行 clist 的 ``flow_change_1d_percent``，收盘后来自 daykline 行自身），
+    不接受调用方传入的板块/指数涨幅——指数主题的展示涨幅与 BK 资金流不是同一个
+    成分篮子。同源价格缺失时输出 ``pattern_label="price_source_mismatch"``，宁可不判。
+    """
     label = normalize_sector_label(sector_name)
     if not label:
         return None
@@ -588,6 +617,7 @@ def build_sector_fund_flow_context(
             live = {
                 "main_force_net_yi": main_force,
                 "flow_tiers": current_flow.get("flow_tiers"),
+                "change_percent": _finite_number(current_flow.get("change_percent")),
             }
     # History may have completed while this request was already waiting for
     # the current-day lookup. Read that shared result only when done; never
@@ -660,21 +690,34 @@ def build_sector_fund_flow_context(
     # 否则"资金分位"是在比较两把不同的尺子。
     flow_universe = "eastmoney_board" if board_code else "index_constituent_aggregate"
 
-    if date_aligned:
+    # 量价 pattern 的价格腿：资金流点位自带的板块涨跌（与主力净流入同一个成分篮子）。
+    flow_price_change = _finite_number(point.get("change_percent"))
+    if not date_aligned:
+        pattern = {
+            "pattern_label": "flow_date_mismatch",
+            "pattern_hint": (
+                f"板块资金流为 {flow_date} 数据，与当日（{target_trade_date}）不同日，"
+                "勿做量价背离判断。"
+            ),
+        }
+    elif flow_price_change is None:
+        pattern = {
+            "pattern_label": "price_source_mismatch",
+            "pattern_hint": (
+                "板块资金流缺同口径涨跌幅（资金为东财板块口径，sector_return_percent "
+                "为主题指数口径，两者成分篮子不同），勿做量价背离判断。"
+            ),
+            "flow_structure_hint": _flow_structure_hint(
+                tiers if isinstance(tiers, dict) else None
+            ),
+        }
+    else:
         pattern = _classify_flow_pattern(
-            sector_return_percent=sector_return_percent,
+            price_change_percent=flow_price_change,
             today_flow=today_flow,
             cumulative_5d=cumulative_5d,
             flow_tiers=tiers if isinstance(tiers, dict) else None,
         )
-    else:
-        pattern = {
-            "pattern_label": "flow_date_mismatch",
-            "pattern_hint": (
-                f"板块资金流为 {flow_date} 数据，与当日 sector_return_percent"
-                f"（{target_trade_date}）不同日，勿做量价背离判断。"
-            ),
-        }
 
     return {
         "available": True,
@@ -695,6 +738,10 @@ def build_sector_fund_flow_context(
         "cumulative_20d_net_yi": cumulative_20d,
         "flow_scale_yi": flow_scale,
         "flow_universe": flow_universe,
+        # 量价 pattern 实际使用的价格腿（东财板块口径当日涨跌）及其来源标注。
+        # 它与 sector_return_percent（主题指数口径）可以是不同的数字——两个成分篮子。
+        "flow_price_change_percent": flow_price_change,
+        "pattern_price_source": "board_flow" if flow_price_change is not None else None,
         "normalized_today_net": _normalized_flow(
             _finite_number(today_flow), flow_scale, 1
         ),
@@ -730,16 +777,9 @@ def build_sector_fund_flow_map(
     if not unique_labels:
         return {}
 
-    return_by_label: dict[str, float | None] = {}
-    for holding in holdings:
-        label = normalize_sector_label(holding.sector_name)
-        if label and label not in return_by_label:
-            return_by_label[label] = holding.sector_return_percent
-
     def _fetch(label: str) -> tuple[str, dict[str, Any] | None]:
         context = build_sector_fund_flow_context(
             label,
-            sector_return_percent=return_by_label.get(label),
             trade_date=target_trade_date,
         )
         return label, context
@@ -771,6 +811,5 @@ def sector_fund_flow_for_holding(
         return cached
     return build_sector_fund_flow_context(
         label,
-        sector_return_percent=holding.sector_return_percent,
         trade_date=get_effective_trade_date(),
     )

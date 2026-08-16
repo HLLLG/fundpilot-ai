@@ -129,6 +129,9 @@ export type Holding = {
   pending_transaction_count?: number | null;
   has_in_progress_transactions?: boolean | null;
   unsettled_preview?: boolean | null;
+  holding_shares?: number | null;
+  holding_cost?: number | null;
+  holding_days?: number | null;
 };
 
 export type DecisionStyle = "conservative" | "tactical" | "aggressive";
@@ -1889,13 +1892,19 @@ export type MarketThemeBoardItem = {
   board_kind: MarketThemeBoardKind;
   change_1d_percent?: number | null;
   change_5d_percent?: number | null;
+  consecutive_up_days?: number | null;
   main_force_net_yi?: number | null;
   rising_count?: number | null;
   falling_count?: number | null;
   flat_count?: number | null;
   advancing_ratio_percent?: number | null;
   flow_tiers?: MarketThemeBoardFlowTiers | null;
+  source_code?: string | null;
   flow_source_code?: string | null;
+  /** 资金流板块（东财 BK）自身的当日/5日涨跌，与主力净流入同一个成分篮子。
+   * 指数主题的 change_1d_percent 是跟踪指数口径，两者可能不同。 */
+  flow_change_1d_percent?: number | null;
+  flow_change_5d_percent?: number | null;
   held_fund_count: number;
   in_portfolio: boolean;
   rank?: number;
@@ -1933,11 +1942,32 @@ export type BoardFlowHistoryResponse = {
   message?: string | null;
 };
 
-// --- 美股概览（市场 Tab · 美股子 Tab）-------------------------------------
+// --- 行情页指数条 / 美股概览 ----------------------------------------------
 // 镜像后端 Pydantic 模型（models.py）。
 // 数据源状态：ok=本次真实采集；stale=采集失败但沿用上次真实缓存值；
 // unavailable=无可用数据（数值字段一律为 null，禁止占位常量/收盘价回退）。
 export type UsDataSourceStatus = "ok" | "stale" | "unavailable";
+
+export type CnIndexQuote = {
+  symbol: string;
+  display_name: string;
+  last_price?: number | null;
+  change?: number | null;
+  change_percent?: number | null;
+  quote_time?: string | null;
+  status: UsDataSourceStatus;
+};
+
+export type CnIndexOverview = {
+  items: CnIndexQuote[];
+  available: boolean;
+  from_cache?: boolean;
+  stale?: boolean;
+  updated_at: string;
+  trade_date?: string | null;
+  session_kind?: string | null;
+  message?: string | null;
+};
 // 美股交易时段（America/New_York，含夏令时）。
 export type UsSessionKind = "pre_market" | "regular" | "after_hours" | "closed";
 
@@ -2016,6 +2046,7 @@ type ReportChatStreamEvent =
 
 import { getAccessToken, type AuthSession, type AuthUser } from "@/lib/auth";
 import { API_BASE, ApiError, apiFetch } from "@/lib/api/core";
+import { CN_INDEX_SPECS, overviewFromDailyRows, parseApiErrorDetail } from "@/lib/cnIndexOverview";
 
 /** Merge concurrent GETs within one ownership scope, avoiding Strict Mode duplicates. */
 function dedupeConcurrentGet<T>(
@@ -2484,6 +2515,36 @@ export async function fetchBoardFlowHistory(options: {
     throw new Error(await response.text());
   }
   return response.json();
+}
+
+export async function fetchCnIndexOverview(
+  forceRefresh = false,
+): Promise<CnIndexOverview> {
+  const params = new URLSearchParams();
+  if (forceRefresh) {
+    params.set("force_refresh", "true");
+  }
+  const query = params.toString();
+  const url = `${API_BASE}/api/market/index-overview${query ? `?${query}` : ""}`;
+  const response = await apiFetch(url, { cache: "no-store" });
+  if (response.ok) {
+    return response.json();
+  }
+  // 开发态 API 默认不热重载时，新路由会 404；回退到已有的日线接口拼出头部卡片。
+  if (response.status === 404) {
+    const rows = await Promise.all(
+      CN_INDEX_SPECS.map(async ({ symbol, name }) => {
+        try {
+          const history = await fetchIndexDailyHistory(symbol, 8);
+          return { symbol, name, points: history.points ?? [] };
+        } catch {
+          return { symbol, name, points: [] };
+        }
+      }),
+    );
+    return overviewFromDailyRows(rows);
+  }
+  throw new Error(parseApiErrorDetail(await response.text()));
 }
 
 export async function fetchUsMarketOverview(

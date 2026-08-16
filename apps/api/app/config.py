@@ -262,7 +262,7 @@ class Settings(BaseSettings):
     factor_ic_stale_after_days: int = 30
     # 方案 A 默认关闭：美股 Tab 仅展示指数 + 汇率，不拉 QDII 穿透估值
     us_market_qdii_enabled: bool = False
-    # 主题板块后台刷新：daemon 线程时段感知（A 股活跃 20min / 休市 3h），前台只读缓存
+    # 主题板块后台刷新：盘中 20min；收盘锁价后休市不再打源。idle 间隔仍给指数/美股用
     theme_board_refresh_enabled: bool = True
     theme_board_refresh_interval_seconds: int = 1200  # 盘中/美股活跃时段每 20min
     theme_board_refresh_idle_interval_seconds: int = 10800  # 非活跃时段每 3h（兼容旧 env）

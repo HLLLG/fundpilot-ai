@@ -931,9 +931,6 @@ export function YangjibaoFundDetail({
                   </div>
                 </div>
               </div>
-              {intradayNote && intradayPoints.length >= 2 ? (
-                <p className="pb-1 text-center text-[11px] text-slate-500">{intradayNote}</p>
-              ) : null}
               <FundHoldingsDisclosure
                 fundCode={activeHolding.fund_code}
                 enabled={detail?.fund_code_resolved === true}

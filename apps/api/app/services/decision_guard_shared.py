@@ -23,6 +23,7 @@ _PATTERN_LABELS = {
     "flow_turning_positive": "资金开始转正",
     "multi_day_outflow_then_inflow": "资金由流出转回流",
     "price_flow_aligned_up": "上涨有资金配合",
+    "price_source_mismatch": "资金口径需核验",
     "weak_outflow": "资金偏弱",
 }
 

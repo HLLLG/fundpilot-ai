@@ -1,6 +1,6 @@
 import type { MarketThemeBoardItem, MarketThemeBoardResponse } from "@/lib/api";
 
-export type ThemeSortColumn = "change" | "change5d" | "inflow";
+export type ThemeSortColumn = "change" | "change5d" | "inflow" | "streak";
 export type ThemeSortDirection = "asc" | "desc";
 
 export function isMarketThemeBoardUsable(data: MarketThemeBoardResponse | null | undefined): boolean {
@@ -13,6 +13,39 @@ export function acceptMarketThemeBoardFresh(fresh: MarketThemeBoardResponse): bo
 
 export function themeBoardHeading(): string {
   return "主题板块涨跌";
+}
+
+const SHANGHAI_DATE_TIME = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+const THEME_LIVE_SESSIONS = new Set(["trading_day_intraday", "trading_day_pre_close"]);
+
+export function formatThemeBoardUpdatedAt(
+  data: Pick<MarketThemeBoardResponse, "refreshed_at" | "trade_date" | "session_kind"> | null | undefined,
+): string | null {
+  const tradeDate = String(data?.trade_date || "").slice(0, 10);
+  const live = THEME_LIVE_SESSIONS.has(String(data?.session_kind || ""));
+  if (!live && /^\d{4}-\d{2}-\d{2}$/.test(tradeDate)) {
+    return `更新：${tradeDate} 15:00`;
+  }
+  const refreshed = String(data?.refreshed_at || "").trim();
+  if (refreshed) {
+    const ms = Date.parse(refreshed);
+    if (Number.isFinite(ms)) {
+      const parts = SHANGHAI_DATE_TIME.formatToParts(new Date(ms));
+      const pick = (type: Intl.DateTimeFormatPartTypes) =>
+        parts.find((part) => part.type === type)?.value ?? "";
+      return `更新：${pick("year")}-${pick("month")}-${pick("day")} ${pick("hour")}:${pick("minute")}`;
+    }
+  }
+  return /^\d{4}-\d{2}-\d{2}$/.test(tradeDate) ? `更新：${tradeDate}` : null;
 }
 
 export function formatBoardKindLabel(kind: string | null | undefined): string {
@@ -52,6 +85,17 @@ export function profitToneClass(value: number | null | undefined): string {
   return value > 0 ? "profit-up" : "profit-down";
 }
 
+export function formatThemeStreak(value: number | null | undefined): string {
+  if (value == null) {
+    return "—";
+  }
+  const days = Math.round(value);
+  if (days === 0) {
+    return "0天";
+  }
+  return `${days > 0 ? "+" : ""}${days}天`;
+}
+
 export function formatThemeFlowYi(value: number | null | undefined): string {
   if (value == null) {
     return "—";
@@ -84,7 +128,9 @@ export function sortThemeBoardItems(
       ? "change_1d_percent"
       : column === "change5d"
         ? "change_5d_percent"
-        : "main_force_net_yi";
+        : column === "streak"
+          ? "consecutive_up_days"
+          : "main_force_net_yi";
   const sorted = [...items].sort((left, right) => {
     const leftValue = left[key];
     const rightValue = right[key];
@@ -100,6 +146,45 @@ export function sortThemeBoardItems(
     return direction === "desc" ? rightValue - leftValue : leftValue - rightValue;
   });
   return sorted.map((item, index) => ({ ...item, rank: index + 1 }));
+}
+
+export function normalizeThemeSearchText(value: string | null | undefined): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+}
+
+export function themeBoardMatchesQuery(
+  item: Pick<MarketThemeBoardItem, "sector_label" | "board_kind">,
+  query: string,
+): boolean {
+  const needle = normalizeThemeSearchText(query);
+  if (!needle) {
+    return true;
+  }
+  if (normalizeThemeSearchText(item.sector_label).includes(needle)) {
+    return true;
+  }
+  return normalizeThemeSearchText(formatBoardKindLabel(item.board_kind)).includes(needle);
+}
+
+export function filterThemeBoardItems(
+  items: MarketThemeBoardItem[],
+  options: { query?: string; heldOnly?: boolean } = {},
+): MarketThemeBoardItem[] {
+  const query = options.query ?? "";
+  const heldOnly = Boolean(options.heldOnly);
+  return items.filter((item) => {
+    if (heldOnly && !item.in_portfolio) {
+      return false;
+    }
+    return themeBoardMatchesQuery(item, query);
+  });
+}
+
+export function countHeldThemeBoards(items: MarketThemeBoardItem[]): number {
+  return items.reduce((count, item) => count + (item.in_portfolio ? 1 : 0), 0);
 }
 
 export function nextThemeSortState(

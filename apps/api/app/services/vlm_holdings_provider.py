@@ -68,7 +68,12 @@ def _image_data_url(image_bytes: bytes, mime: str) -> str:
 
 
 def build_vlm_messages(image_bytes: bytes, settings: Settings) -> list[dict]:
-    """仅图片、不带文本 prompt → qwen-vl-ocr 走默认纯文本识别（最稳，输出干净文本）。"""
+    """仅一张图、不带文本 prompt → qwen-vl-ocr 走默认纯文本识别（最稳，输出干净文本）。
+
+    官方文档有「多图像输入」，但一次请求会把多张图的字混成一份文本。支付宝截图靠
+    列布局解析，混页会把金额/收益错位；自定义分隔 prompt 又会触发坐标输出。批量加速
+    因此走多路单图并发，而不是把多张图塞进 ``content``。
+    """
     data, mime = compress_image_for_vlm(image_bytes, settings)
     return [
         {

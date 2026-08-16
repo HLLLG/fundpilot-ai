@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ParsedTransaction } from "@/lib/api";
 import {
   MAX_OCR_IMAGES,
+  OCR_UPLOAD_CONCURRENCY,
   appendQueuedImageFiles,
   batchTransactionKey,
   collectDataTransferImages,
@@ -9,6 +10,7 @@ import {
   fillClosestFundCodes,
   fillClosestTransactionFundCodes,
   isLikelyImageFile,
+  mapWithConcurrency,
   mergeFundCodeResolutions,
   mergeParsedTransactions,
   ocrProgressLabel,
@@ -150,9 +152,55 @@ describe("ocrProgressLabel", () => {
     expect(ocrProgressLabel(true, { current: 2, total: 3 }, "相册选择")).toBe(
       "识别中 2/3",
     );
+    expect(ocrProgressLabel(true, { current: 0, total: 3 }, "相册选择")).toBe(
+      "识别中...",
+    );
     expect(ocrProgressLabel(true, { current: 1, total: 1 }, "相册选择")).toBe(
       "识别中...",
     );
+  });
+});
+
+describe("mapWithConcurrency", () => {
+  it("caps in-flight work, keeps input order, and records rejections", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const started: number[] = [];
+    const progress: Array<[number, number]> = [];
+    const outcomes = await mapWithConcurrency(
+      [40, 10, 25, 5],
+      2,
+      async (delay, index) => {
+        started.push(index);
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => {
+          setTimeout(resolve, delay);
+        });
+        inFlight -= 1;
+        if (index === 2) {
+          throw new Error(`fail-${index}`);
+        }
+        return `ok-${index}`;
+      },
+      (done, total) => {
+        progress.push([done, total]);
+      },
+    );
+    expect(OCR_UPLOAD_CONCURRENCY).toBe(4);
+    expect(maxInFlight).toBe(2);
+    expect(started.slice(0, 2).sort()).toEqual([0, 1]);
+    expect(outcomes).toHaveLength(4);
+    expect(outcomes[0]).toEqual({ status: "fulfilled", value: "ok-0" });
+    expect(outcomes[1]).toEqual({ status: "fulfilled", value: "ok-1" });
+    expect(outcomes[2]).toMatchObject({ status: "rejected" });
+    expect(outcomes[3]).toEqual({ status: "fulfilled", value: "ok-3" });
+    expect(progress).toEqual([
+      [1, 4],
+      [2, 4],
+      [3, 4],
+      [4, 4],
+    ]);
   });
 });
 

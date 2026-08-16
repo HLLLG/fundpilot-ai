@@ -12,8 +12,12 @@ from app.services.eastmoney_spot_client import (
     fetch_eastmoney_board_records,
     fetch_eastmoney_clist_theme_metrics_by_code,
     fetch_eastmoney_quote_by_secid,
+    fetch_eastmoney_quotes_by_secid,
 )
-from app.services.eastmoney_trends_client import fetch_eastmoney_kline_close_percent
+from app.services.eastmoney_trends_client import (
+    fetch_eastmoney_daily_kline_series,
+    fetch_eastmoney_kline_close_percent,
+)
 from app.services.sector_canonical import (
     CanonicalSector,
     get_canonical_sector,
@@ -39,6 +43,7 @@ from app.services.sector_quote_cache import (
     save_spot_snapshot,
     snapshot_refreshed_before_process_boot,
 )
+from app.services.theme_board_streak import attach_consecutive_up_days
 from app.services.trading_session import build_trading_session
 
 logger = logging.getLogger(__name__)
@@ -46,7 +51,7 @@ logger = logging.getLogger(__name__)
 SortMode = Literal["change", "inflow"]
 BoardKind = Literal["industry", "concept", "index"]
 
-_CACHE_VERSION = "v7"
+_CACHE_VERSION = "v10"
 _REFRESH_BUDGET_SECONDS = 30.0
 _KLINE_FALLBACK_BUDGET_SECONDS = 15.0
 _SERIES_TIMEOUT = 8.0
@@ -300,7 +305,8 @@ def _clist_lookup_codes(entry: dict[str, Any], *, prefer_flow: bool) -> list[str
     0.399989、军工 0.399967、新能源 1.000941 等）永远查不到，于是涨跌幅静默回落到
     BK 码——医疗当日涨跌取的是 BK0727 医疗服务板块，而基金详情页分时走的是 0.399989
     中证医疗指数，两个数字对不上且没有任何告警。只有 THEME_BOARD_PROVIDER_IDENTITIES
-    里那几个 label 因为强制核身份而免疫。
+    里那几个 label 因为强制核身份而免疫。指数池现已补上 ``m:0+t:5`` / ``m:1+t:1``；
+    仍查不到的（恒生 HSTECH）走 ulist 精确 secid，**仍然不能**回落 BK 涨跌。
     """
     keys = ("flow_source_code", "source_code") if prefer_flow else ("source_code",)
     codes: list[str] = []
@@ -360,6 +366,8 @@ def _flow_fields_from_clist_row(
         return {
             "main_force_net_yi": None,
             "flow_tiers": None,
+            "flow_change_1d_percent": None,
+            "flow_change_5d_percent": None,
             "cumulative_5d_net_yi": None,
             "rising_count": None,
             "falling_count": None,
@@ -378,6 +386,11 @@ def _flow_fields_from_clist_row(
     return {
         "main_force_net_yi": main_force,
         "flow_tiers": tiers if has_any else None,
+        # 资金流行**自身**的涨跌幅（与 f62 同一个成分篮子、同一次 clist 响应）。
+        # 指数主题的展示涨幅走 source_code（中证指数），与 BK 资金流不是一个篮子；
+        # 量价背离判断必须取这里的同源涨跌，而不是展示涨幅。
+        "flow_change_1d_percent": _as_float(row.get("change_1d")),
+        "flow_change_5d_percent": _as_float(row.get("change_5d")),
         "cumulative_5d_net_yi": _as_float(row.get("cumulative_5d_net_yi")),
         "rising_count": _as_float(row.get("rising_count")),
         "falling_count": _as_float(row.get("falling_count")),
@@ -406,10 +419,16 @@ def _lookup_clist_flow(
     entry: dict[str, Any],
     by_code: dict[str, dict[str, float | str | None]],
 ) -> dict[str, Any]:
-    """资金流优先 BK(flow_source_code)，指数主题 fallback 到 source_code 的 m:2 f62。"""
+    """资金流优先 BK(flow_source_code)，指数主题 fallback 到 source_code 的 m:2 f62。
+
+    ``flow_change_1d_percent`` / ``flow_change_5d_percent`` 必须与 ``main_force_net_yi``
+    取自**同一行**：量价背离判断的价格腿只能来自资金流自己的成分篮子。
+    """
     result = {
         "main_force_net_yi": None,
         "flow_tiers": None,
+        "flow_change_1d_percent": None,
+        "flow_change_5d_percent": None,
         "cumulative_5d_net_yi": None,
         "rising_count": None,
         "falling_count": None,
@@ -428,6 +447,8 @@ def _lookup_clist_flow(
         if not current_found and fields.get("main_force_net_yi") is not None:
             result["main_force_net_yi"] = fields["main_force_net_yi"]
             result["flow_tiers"] = fields.get("flow_tiers")
+            result["flow_change_1d_percent"] = fields.get("flow_change_1d_percent")
+            result["flow_change_5d_percent"] = fields.get("flow_change_5d_percent")
             current_found = True
         if not breadth_found and fields.get("advancing_ratio_percent") is not None:
             result["rising_count"] = fields.get("rising_count")
@@ -465,6 +486,8 @@ def _item_from_entry(
         or {
             "main_force_net_yi": None,
             "flow_tiers": None,
+            "flow_change_1d_percent": None,
+            "flow_change_5d_percent": None,
             "cumulative_5d_net_yi": None,
             "rising_count": None,
             "falling_count": None,
@@ -474,6 +497,151 @@ def _item_from_entry(
         }
     )
     return item
+
+
+def _enrich_missing_changes_via_secid(
+    pending: list[tuple[dict[str, Any], dict[str, Any]]],
+) -> None:
+    """clist 指数池覆盖不到的挂牌指数 / 恒生，按精确 secid 补 1d+5d。
+
+    东财主题 clist 的 ``m:2`` 没有 399809（保险）、124.HSTECH（恒生科技）这类码，
+    5 日涨跌会空着；今日涨跌还能靠日 K / spot 兜底，5 日没有第二条路。ulist 按
+    secid 能直接给出 f3+f109，且按市场前缀对齐，不会把 BK 板块涨跌塞进来。
+    """
+    if not pending:
+        return
+    quotes = fetch_eastmoney_quotes_by_secid(
+        [str(entry.get("secid") or "") for _item, entry in pending],
+        timeout=min(_SERIES_TIMEOUT, 5.0),
+        max_retries=1,
+    )
+    if not quotes:
+        return
+    for item, entry in pending:
+        secid = str(entry.get("secid") or "")
+        row = quotes.get(secid)
+        if not row:
+            continue
+        if requires_provider_identity_check(entry.get("sector_label")):
+            if not provider_identity_matches(
+                entry.get("sector_label"),
+                expected_source_code=entry.get("source_code"),
+                actual_security_name=str(row.get("security_name") or "") or None,
+                actual_security_code=str(row.get("security_code") or entry.get("source_code")),
+            ):
+                logger.error(
+                    "theme ulist identity mismatch label=%s secid=%s provider_name=%s",
+                    entry.get("sector_label"),
+                    secid,
+                    row.get("security_name"),
+                )
+                continue
+        if item.get("change_1d_percent") is None:
+            change_1d = _as_float(row.get("change_percent"))
+            if change_1d is not None:
+                item["change_1d_percent"] = change_1d
+        if item.get("change_5d_percent") is None:
+            change_5d = _as_float(row.get("change_5d_percent"))
+            if change_5d is not None:
+                item["change_5d_percent"] = change_5d
+
+
+def _five_day_change_from_daily_bars(bars: list[dict[str, Any]]) -> float | None:
+    """用日 K 收盘价算近 5 个交易日涨跌，口径对齐东财 f109。
+
+    f109 = 今日收盘 / 5 个交易日前收盘 − 1。资金流日线是另一个成分篮子，不能拿来代。
+    """
+    closes: list[float] = []
+    for bar in bars:
+        close = _as_float(bar.get("close"))
+        if close is not None and close > 0:
+            closes.append(close)
+    if len(closes) >= 6:
+        return round((closes[-1] / closes[-6] - 1.0) * 100.0, 2)
+
+    changes: list[float] = []
+    for bar in bars[-5:]:
+        change = _as_float(bar.get("change_percent"))
+        if change is None:
+            return None
+        changes.append(change)
+    if len(changes) < 5:
+        return None
+    factor = 1.0
+    for change in changes:
+        factor *= 1.0 + change / 100.0
+    return round((factor - 1.0) * 100.0, 2)
+
+
+def _enrich_missing_5d_via_kline(
+    pending: list[tuple[dict[str, Any], dict[str, Any]]],
+) -> None:
+    """ulist 仍补不到 5 日时，用同一 secid 的日 K 收盘价算，绝不回落 BK。"""
+    pending = [
+        (item, entry)
+        for item, entry in pending
+        if item.get("change_5d_percent") is None
+    ]
+    if not pending:
+        return
+    deadline = time.monotonic() + _KLINE_FALLBACK_BUDGET_SECONDS
+    executor = ThreadPoolExecutor(max_workers=min(_KLINE_FALLBACK_MAX_WORKERS, len(pending)))
+
+    def fetch_five_day(entry: dict[str, Any]) -> float | None:
+        if requires_provider_identity_check(entry.get("sector_label")):
+            provider_name, _change = fetch_eastmoney_quote_by_secid(
+                entry["secid"],
+                timeout=min(_SERIES_TIMEOUT, 5.0),
+                max_retries=1,
+            )
+            if not provider_identity_matches(
+                entry.get("sector_label"),
+                expected_source_code=entry.get("source_code"),
+                actual_security_name=provider_name,
+                actual_security_code=entry.get("source_code"),
+            ):
+                logger.error(
+                    "theme 5d kline identity mismatch label=%s secid=%s provider_name=%s",
+                    entry.get("sector_label"),
+                    entry.get("secid"),
+                    provider_name,
+                )
+                return None
+        series = fetch_eastmoney_daily_kline_series(
+            entry["secid"],
+            source_code=entry.get("source_code"),
+            max_days=12,
+            timeout=_SERIES_TIMEOUT,
+            max_retries=1,
+        )
+        return _five_day_change_from_daily_bars(series)
+
+    futures = {
+        executor.submit(fetch_five_day, entry): (item, entry) for item, entry in pending
+    }
+    try:
+        while futures and time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            done, _still = wait(
+                futures,
+                timeout=min(0.5, max(0.05, remaining)),
+                return_when=FIRST_COMPLETED,
+            )
+            for future in done:
+                item, entry = futures.pop(future)
+                try:
+                    change = future.result()
+                except Exception as exc:
+                    logger.debug(
+                        "theme 5d kline fallback failed %s: %s",
+                        entry.get("sector_label"),
+                        exc,
+                    )
+                    change = None
+                if change is not None:
+                    item["change_5d_percent"] = change
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _enrich_missing_1d_via_kline(
@@ -567,7 +735,7 @@ def refresh_theme_board_snapshot(*, trade_date: str | None = None) -> dict[str, 
         logger.info("theme board clist bulk fetch failed: %s", exc)
 
     items: list[dict[str, Any]] = []
-    pending_kline: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    pending_changes: list[tuple[dict[str, Any], dict[str, Any]]] = []
 
     for entry in universe:
         change_1d, change_5d = _lookup_clist_changes(entry, by_code)
@@ -581,9 +749,16 @@ def refresh_theme_board_snapshot(*, trade_date: str | None = None) -> dict[str, 
             flow_fields=flow_fields,
         )
         items.append(item)
-        if item["change_1d_percent"] is None:
-            pending_kline.append((item, entry))
+        if item["change_1d_percent"] is None or item["change_5d_percent"] is None:
+            pending_changes.append((item, entry))
 
+    _enrich_missing_changes_via_secid(pending_changes)
+    _enrich_missing_5d_via_kline(pending_changes)
+    pending_kline = [
+        (item, entry)
+        for item, entry in pending_changes
+        if item.get("change_1d_percent") is None
+    ]
     _enrich_missing_1d_via_kline(pending_kline, trade_date=resolved_date)
 
     missing = [item for item in items if item["change_1d_percent"] is None]
@@ -599,6 +774,8 @@ def refresh_theme_board_snapshot(*, trade_date: str | None = None) -> dict[str, 
             change = spot_changes.get(item["sector_label"])
             if change is not None:
                 item["change_1d_percent"] = round(float(change), 2)
+
+    attach_consecutive_up_days(items, trade_date=str(resolved_date or ""), persist=True)
 
     snapshot = {
         "items": items,
@@ -713,6 +890,33 @@ def _snapshot_too_old_for_session(
     return age > _LIVE_STALE_AFTER_SECONDS
 
 
+def theme_board_snapshot_is_settled(
+    snapshot: dict[str, Any] | None,
+    session: dict[str, Any] | None = None,
+) -> bool:
+    """休市后已有对应交易日快照则不再打源。
+
+    盘中写入的快照在收盘后还要再锁一次收盘价；锁上之后周末/盘前不再刷新。
+    """
+    if not snapshot:
+        return False
+    items = snapshot.get("items")
+    if not isinstance(items, list) or not any(
+        isinstance(item, dict) and _has_live_theme_metric(item) for item in items
+    ):
+        return False
+    resolved = session or build_trading_session()
+    kind = str(resolved.get("session_kind") or "")
+    if kind in _LIVE_SESSION_KINDS:
+        return False
+    expected = str(resolved.get("effective_trade_date") or "")[:10]
+    actual = str(snapshot.get("trade_date") or "")[:10]
+    if not expected or actual != expected:
+        return False
+    cached_kind = str(snapshot.get("session_kind") or "")
+    return cached_kind not in _LIVE_SESSION_KINDS
+
+
 def get_theme_board_snapshot_cache_only() -> dict[str, Any] | None:
     """只读主题板块缓存，命中即返回（任意新鲜度），未命中直接返回 None，绝不触发刷新。
 
@@ -773,10 +977,15 @@ def get_theme_board_snapshot(
         from_cache = True
 
     items = list(cached.get("items") or [])
+    attach_consecutive_up_days(
+        items,
+        trade_date=str(cached.get("trade_date") or trade_date or ""),
+        persist=False,
+    )
     available = bool(items)
     snapshot_meta = {
         "trade_date": cached.get("trade_date", trade_date),
-        "session_kind": cached.get("session_kind", session_kind),
+        "session_kind": session_kind,
         "available": available,
         "from_cache": from_cache,
         "stale": stale,

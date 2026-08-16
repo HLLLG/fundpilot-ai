@@ -628,12 +628,33 @@ class SaveSectorMappingRequest(BaseModel):
     source_code: str | None = None
 
 
-# --- 美股概览（market Tab · 美股子 Tab）---------------------------------------
+# --- 行情页指数条 / 美股概览 ------------------------------------------------
 # 数据源状态：ok=本次真实采集成功；stale=采集失败但沿用上次真实缓存值；
 # unavailable=无可用数据（数值字段一律为 None，禁止占位常量/收盘价回退）。
 DataSourceStatus = Literal["ok", "stale", "unavailable"]
 # 美股交易时段（America/New_York，含夏令时）。
 UsSessionKind = Literal["pre_market", "regular", "after_hours", "closed"]
+
+
+class CnIndexQuote(BaseModel):
+    symbol: str
+    display_name: str
+    last_price: float | None = None
+    change: float | None = None
+    change_percent: float | None = None
+    quote_time: str | None = None
+    status: DataSourceStatus = "unavailable"
+
+
+class CnIndexOverview(BaseModel):
+    items: list[CnIndexQuote]
+    available: bool
+    from_cache: bool = False
+    stale: bool = False
+    updated_at: str
+    trade_date: str | None = None
+    session_kind: str | None = None
+    message: str | None = None
 
 
 class UsFuturesQuote(BaseModel):

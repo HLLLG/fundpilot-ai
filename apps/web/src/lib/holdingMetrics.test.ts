@@ -3,8 +3,12 @@ import type { Holding } from "@/lib/api";
 import {
   applySectorDailyEstimate,
   computeDailyProfit,
+  computeHoldingWeight,
   displayableHoldings,
   findHoldingIndex,
+  formatHoldingDays,
+  formatHoldingUnitCost,
+  getHoldingUnitCost,
   mergeHoldingsAppend,
   mergeSectorIntradayClose,
   mergeHoldingsPreserveQuoteFields,
@@ -244,6 +248,22 @@ describe("mergeHoldingsPreserveQuoteFields", () => {
     expect(merged[0].sector_return_percent).toBe(1.2);
     expect(merged[0].daily_profit).toBe(18.4);
   });
+
+  it("keeps shares/cost/days when a later payload omits them", () => {
+    const previous = [
+      {
+        ...holding("110022", "易方达消费行业股票"),
+        holding_shares: 4177.76,
+        holding_cost: 0.8378,
+        holding_days: 14,
+      },
+    ];
+    const incoming = [holding("110022", "易方达消费行业股票")];
+    const merged = mergeHoldingsPreserveQuoteFields(previous, incoming);
+    expect(merged[0].holding_shares).toBe(4177.76);
+    expect(merged[0].holding_cost).toBe(0.8378);
+    expect(merged[0].holding_days).toBe(14);
+  });
 });
 
 describe("profit accrual defer", () => {
@@ -290,5 +310,23 @@ describe("mergeSectorIntradayClose", () => {
     expect(merged.daily_return_percent).toBe(3.66);
     expect(merged.daily_return_percent_source).toBe("official_nav");
     expect(merged.daily_profit).toBe(317.32);
+  });
+});
+
+describe("holding list extra columns", () => {
+  it("computes weight and prefers archived unit cost", () => {
+    const item: Holding = {
+      fund_code: "110022",
+      fund_name: "易方达消费行业股票",
+      holding_amount: 3513.5,
+      return_percent: 8.42,
+      holding_shares: 4177.76,
+      holding_cost: 0.8378,
+    };
+    expect(computeHoldingWeight(item, 13774.15)).toBe(25.51);
+    expect(getHoldingUnitCost(item)).toBe(0.8378);
+    expect(formatHoldingUnitCost(0.8378)).toBe("0.8378");
+    expect(formatHoldingDays(14)).toBe("14天");
+    expect(formatHoldingDays(null)).toBe("—");
   });
 });

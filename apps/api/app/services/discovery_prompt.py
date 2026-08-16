@@ -52,7 +52,7 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """## 角色定位
 | `sector_heat` | 板块热度排行（含 `change_1d_percent`、`heat_score`、`change_as_of_time` 截止时刻）；全市场横向对比用 |
 | `sector_opportunities[].trend_formation_probability/probability_early_probe_eligible` | **趋势成形信号分**（0～100 的加权合成，未经校准，中性方向即约 56）；达到早期线后仍须具体基金早期修复信号通过，只开放 `first_tranche_scale` 对应的小额试仓。它既不是概率也不是收益承诺，且不决定仓位比例 |
 | `sector_opportunities[].selection_priority_score/selection_path` | 板块最终召回排序依据；提前试仓、资金拐点排在普通等待方向之前，高弹性获得有限排序加分。它不是收益率，也不能单独替代动作条件 |
-| `target_sector_context.sector_fund_flow` | 板块主力净流入；仅 `date_aligned=true` 时可与板块涨跌做背离判断 |
+| `target_sector_context.sector_fund_flow` | 板块主力净流入（东财板块口径）。量价背离只能引用系统 `pattern_label`/`pattern_hint`（价格腿为同口径的 `flow_price_change_percent`）；`change_1d_percent` 是主题指数口径，不得自行拿它与资金流推断背离；`flow_date_mismatch`/`price_source_mismatch` 时禁写背离结论 |
 | `stock_connect_flow` | 南向资金公开摘要，仅作港股资金面的独立参考 |
 | `signal_backtest` / `candidate_factor_scores` | `execution_qualified_fund_codes` 才能作为量化加分证据；未覆盖表示“不加分”，不是强负面证据。`opportunity_first` 不得仅因未覆盖而否决；`risk_first` 仍按量化白名单执行。再检查 `peer_group` / `feature_completeness` / `factor_reliability`，且不得把反向因子解释为正面证据 |
 | `news.freshness_label` | `stale`/`empty` 时降置信度，不得用旧闻主导追涨 |

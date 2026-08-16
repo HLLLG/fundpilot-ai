@@ -126,9 +126,13 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "sector_momentum/sector_intraday/sector_fund_flow 为短线提示；stock_connect_flow 仅提供南向数值，"
     "并且只作港股资金面的独立参考。"
     "sector_fund_flow.pattern_hint 可辅助判断高位出货、低位洗盘等，须用给定数字不得编造。"
-    "sector_fund_flow.today_main_force_net_yi：正=主力净流入、负=主力净流出；"
-    "须与 flow_date 同日且 date_aligned=true 时才可与 sector_return_percent 做量价背离判断；"
-    "date_aligned=false 或 pattern_label=flow_date_mismatch 时禁止写出货/诱多等背离结论。"
+    "sector_fund_flow.today_main_force_net_yi：正=主力净流入、负=主力净流出。"
+    "量价背离结论只能引用系统给出的 pattern_label/pattern_hint——它由东财板块口径内的"
+    "同源数据算出（价格腿为 flow_price_change_percent，不是 sector_return_percent；"
+    "后者是主题指数口径，两者成分篮子不同、同日可差数个百分点），禁止自行拿"
+    " sector_return_percent 与主力净流入推断背离。"
+    "date_aligned=false 或 pattern_label=flow_date_mismatch/price_source_mismatch 时"
+    "禁止写出货/诱多等背离结论。"
     "sector_fund_flow.flow_tiers 为「今日」资金分档净流入（单位：亿元）："
     "super_large_net_yi=超大单(机构)、large_net_yi=大单、medium_net_yi=中单(大户)、"
     "small_net_yi=小单(散户)；flow_structure_hint 已系统解读机构与散户资金是否同向，"
@@ -805,6 +809,8 @@ def trim_analysis_facts_for_llm(
                             "cumulative_20d_net_yi",
                             "flow_tiers",
                             "flow_structure_hint",
+                            "flow_price_change_percent",
+                            "pattern_price_source",
                             "pattern_label",
                             "pattern_hint",
                         )

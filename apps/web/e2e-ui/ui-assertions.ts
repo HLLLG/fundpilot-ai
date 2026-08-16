@@ -6,6 +6,18 @@ export async function expectNoHorizontalOverflow(page: Page): Promise<void> {
     const body = document.body;
     const contentWidth = Math.max(root.scrollWidth, body?.scrollWidth ?? 0);
     const viewportWidth = root.clientWidth;
+    const isInsideOnscreenHorizontalScroller = (element: HTMLElement) => {
+      let parent = element.parentElement;
+      while (parent) {
+        const overflowX = getComputedStyle(parent).overflowX;
+        if (overflowX === "auto" || overflowX === "scroll") {
+          const box = parent.getBoundingClientRect();
+          return box.left >= -1 && box.right <= window.innerWidth + 1;
+        }
+        parent = parent.parentElement;
+      }
+      return false;
+    };
     const offenders = Array.from(document.querySelectorAll<HTMLElement>("body *"))
       .map((element) => {
         const rect = element.getBoundingClientRect();
@@ -14,9 +26,10 @@ export async function expectNoHorizontalOverflow(page: Page): Promise<void> {
           testId: element.dataset.testid ?? null,
           left: Math.round(rect.left),
           right: Math.round(rect.right),
+          clipped: isInsideOnscreenHorizontalScroller(element),
         };
       })
-      .filter((item) => item.left < -1 || item.right > window.innerWidth + 1)
+      .filter((item) => !item.clipped && (item.left < -1 || item.right > window.innerWidth + 1))
       .slice(0, 5);
 
     return {

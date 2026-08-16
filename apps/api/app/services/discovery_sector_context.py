@@ -32,6 +32,11 @@ def _slim_sector_fund_flow(flow: dict[str, Any]) -> dict[str, Any]:
             "cumulative_20d_net_yi",
             "flow_tiers",
             "flow_structure_hint",
+            # 量价 pattern 用的是板块口径的同源涨跌（flow_price_change_percent），
+            # 与 change_1d_percent（主题指数口径）可能不同——两个字段都给 LLM，
+            # 引用背离结论时须用前者的数字。
+            "flow_price_change_percent",
+            "pattern_price_source",
             "pattern_label",
             "pattern_hint",
         )
@@ -90,7 +95,6 @@ def build_target_sector_context(
         else:
             flow = build_sector_fund_flow_context(
                 label,
-                sector_return_percent=change_1d if isinstance(change_1d, (int, float)) else None,
                 trade_date=effective_date,
             )
         if flow:

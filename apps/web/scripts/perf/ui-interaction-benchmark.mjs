@@ -71,7 +71,7 @@ const TABS = [
     extraClick: "盈亏分析",
     selector: '[data-testid="portfolio-allocation-section"], .pl-page, .analysis-hero, .pl-range-bar',
   },
-  { label: "市场", selector: ".market-nav, .market-workspace, #main-content section" },
+  { label: "行情", selector: ".market-nav, .market-workspace, #main-content section" },
   { label: "日报", selector: ".report-navigator" },
 ];
 const PANEL_TIMEOUT_MS = 3000;

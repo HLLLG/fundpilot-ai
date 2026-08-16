@@ -259,7 +259,8 @@ test("100 条发现历史保持有界，并在统一历史抽屉内连续切换"
   await expect(dialog).toBeHidden();
   await expect(page.getByRole("heading", { name: "历史推荐 080" })).toBeVisible();
   await expect(page.getByLabel("推荐报告阅读区")).toBeFocused();
-  await expect(page.getByTestId("discovery-config-summary")).toContainText("当前运行条件");
+  await expect(page.getByRole("button", { name: "高级设置" })).toBeVisible();
+  await expect(page.getByTestId("discovery-config-summary")).toContainText("关注 人工智能");
   await expectNoHorizontalOverflow(page);
 });
 

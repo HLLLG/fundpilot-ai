@@ -206,11 +206,13 @@ _SECTOR_GROUPS = {
     "港股医药": "healthcare",
     "医药": "healthcare",
     "医疗器械": "healthcare",
+    "CXO": "healthcare",
     "白酒": "consumer",
     "消费电子": "consumer",
     "银行": "finance",
     "证券": "finance",
     "有色金属": "cyclical",
+    "油气": "cyclical",
     "新能源车": "manufacturing",
     "光伏": "manufacturing",
     "电网设备": "manufacturing",
@@ -581,11 +583,11 @@ def build_sector_flow_map_for_opportunities(
         get_matching_theme_board_flow_snapshot,
     )
 
-    heat_by_label = {
-        str(row.get("sector_label") or "").strip(): row
-        for row in sector_heat
-        if str(row.get("sector_label") or "").strip()
-    }
+    # ``sector_heat`` 保留在签名里只为兼容既有调用方与 flow_builder 注入点。
+    # 热度榜的 change_1d 是主题指数口径，与 BK 资金流不是同一个成分篮子；量价
+    # pattern 的价格腿已改为由 flow context 在东财板块口径内同源取得，这里不再
+    # 把指数涨幅喂进去。
+    del sector_heat
     labels = _unique_labels(sector_labels)
     if not labels:
         return {}
@@ -601,12 +603,9 @@ def build_sector_flow_map_for_opportunities(
     shared_theme_snapshot = get_matching_theme_board_flow_snapshot(snapshot_trade_date)
 
     def load(label: str) -> tuple[str, dict | None]:
-        heat = heat_by_label.get(label) or {}
-        change_1d = _num(heat.get("change_1d_percent"))
         try:
             flow = build_sector_fund_flow_context(
                 label,
-                sector_return_percent=change_1d,
                 trade_date=trade_date,
                 theme_snapshot=shared_theme_snapshot,
             )
@@ -2481,6 +2480,11 @@ def _confidence(
         return "低"
     if not date_aligned:
         return "低"
+    # 资金流缺同口径涨跌幅时（pattern_label=price_source_mismatch），当日量价
+    # pattern 本身不可判——历史背离回测证据再强也不能升「高」：那套统计是在
+    # 板块口径的同源数据上验出来的，套不到一个当天没有同源判定的方向上。
+    if str(flow.get("pattern_label") or "") == "price_source_mismatch":
+        return "中"
     if _divergence_evidence_is_strong(divergence_backtest, penalties):
         return "高"
     return "中"

@@ -177,7 +177,7 @@ def backtest_flow_price_divergence(
         cur = aligned[index]
         nxt = aligned[index + 1]
         pattern = _classify_flow_pattern(
-            sector_return_percent=cur["change_percent"],
+            price_change_percent=cur["change_percent"],
             today_flow=cur["main_force_net_yi"],
             cumulative_5d=None,
             flow_tiers=None,

@@ -11,10 +11,7 @@ import type {
   InvestorProfile,
 } from "@/lib/api";
 import type { StreamingDiscoveryState } from "@/lib/discoveryStreamApi";
-import {
-  FundDiscoveryPanel,
-  resolveDynamicDiscoveryBudgetYuan,
-} from "@/components/FundDiscoveryPanel";
+import { FundDiscoveryPanel } from "@/components/FundDiscoveryPanel";
 import {
   fetchDiscoveryPrompt,
   fetchDiscoveryReportDetail,
@@ -203,6 +200,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     );
 
     await waitFor(() => expect(fetchDiscoveryPrompt).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
     expect(screen.getByRole("button", { name: /AI 分析偏好附录（高级）/ })).toHaveAttribute(
       "aria-expanded",
       "false",
@@ -268,6 +266,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     );
 
     await waitFor(() => expect(fetchDiscoveryPrompt).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
     fireEvent.click(screen.getByRole("button", { name: /AI 分析偏好附录（高级）/ }));
     await screen.findByText("remote prompt", {}, { timeout: 10_000 });
     vi.mocked(saveDiscoveryPromptRemote).mockClear();
@@ -289,7 +288,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.queryByRole("button", { name: /稳健筛选/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "选基策略" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "基金类型偏好" })).not.toBeInTheDocument();
-    expect(screen.getByText("系统自动选基")).toBeInTheDocument();
+    expect(screen.queryByText("系统自动选基")).not.toBeInTheDocument();
   });
 
   it("keeps the main discovery entry deep-only", () => {
@@ -299,38 +298,45 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.queryByRole("button", { name: "深度 · Pro" })).not.toBeInTheDocument();
   });
 
-  it("prefills the dynamic investment balance and preserves a manual override", async () => {
-    expect(resolveDynamicDiscoveryBudgetYuan([holding()], 30000)).toBe(20000);
-    expect(resolveDynamicDiscoveryBudgetYuan([holding()], null)).toBe(0);
-
+  it("defaults the investment budget to 10000 and ignores holdings changes", async () => {
     const view = renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
     const input = screen.getByRole("spinbutton", { name: /本次可投入预算/ });
-    expect(input).toHaveValue(20000);
+    expect(input).toHaveValue(10000);
 
     view.rerender(
       <FundDiscoveryPanel
         {...panelProps({ holdings: [{ ...holding(), holding_amount: 15000 }] })}
       />,
     );
-    await waitFor(() => expect(input).toHaveValue(15000));
+    expect(input).toHaveValue(10000);
 
     fireEvent.change(input, { target: { value: "8000" } });
-    view.rerender(
-      <FundDiscoveryPanel
-        {...panelProps({ holdings: [{ ...holding(), holding_amount: 18000 }] })}
-      />,
-    );
-    expect(input).toHaveValue(8000);
+    view.rerender(<FundDiscoveryPanel {...panelProps({ userId: 202 })} />);
+    expect(screen.getByRole("spinbutton", { name: /本次可投入预算/ })).toHaveValue(10000);
+    view.rerender(<FundDiscoveryPanel {...panelProps({ userId: 101 })} />);
+    expect(screen.getByRole("spinbutton", { name: /本次可投入预算/ })).toHaveValue(8000);
+
+    view.unmount();
+    renderPanel({ holdings: [{ ...holding(), holding_amount: 18000 }] });
+    fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
+    expect(screen.getByRole("spinbutton", { name: /本次可投入预算/ })).toHaveValue(8000);
 
     fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
     await waitFor(() => expect(streamDiscovery).toHaveBeenCalled());
     expect(vi.mocked(streamDiscovery).mock.calls[0]?.[3]).toMatchObject({
       budgetYuan: 8000,
     });
+
+    cleanup();
+    renderPanel({ userId: 202 });
+    fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
+    expect(screen.getByRole("spinbutton", { name: /本次可投入预算/ })).toHaveValue(10000);
   });
 
   it("submits an explicit zero budget instead of falling back to the server default", async () => {
     renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
     const input = screen.getByRole("spinbutton", { name: /本次可投入预算/ });
     fireEvent.change(input, { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
@@ -353,11 +359,13 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
       selectionStrategy: "balanced",
       fundTypePreference: "any",
       discoveryStrategy: "opportunity_first",
+      budgetYuan: 10000,
     });
   });
 
   it("states the fixed opportunity-first strategy without offering a switch", () => {
     renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
 
     expect(screen.getByRole("group", { name: "荐基决策策略" })).toBeInTheDocument();
     expect(screen.getByTestId("discovery-strategy-opportunity_first")).toHaveTextContent(
@@ -399,11 +407,11 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     });
 
     expect(await screen.findByTestId("discovery-config-summary")).toHaveTextContent(
-      "组合补缺 · 历史稳健策略 · 自动质量优选 · 同基金份额自动去重（费用待核对） · 深度分析 · 关注：医药",
+      "组合补缺 · 历史稳健策略 · 关注 医药 · 预算 1万",
     );
     expect(screen.queryByRole("group", { name: "荐基决策策略" })).not.toBeInTheDocument();
     expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("上一份机会报告");
-    expect(screen.getByRole("button", { name: "调整条件" })).toHaveClass("min-h-11");
+    expect(screen.getByRole("button", { name: "高级设置" })).toHaveClass("min-h-11");
 
     fireEvent.click(screen.getByRole("button", { name: "重新扫描" }));
     await waitFor(() => expect(startDiscoveryJob).toHaveBeenCalled());
@@ -413,7 +421,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(fallbackMessage.closest('[role="status"]')).toHaveClass("inline-notice-warning");
     expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("上一份机会报告");
 
-    fireEvent.click(screen.getByRole("button", { name: "调整条件" }));
+    fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
     expect(screen.getByRole("group", { name: "荐基决策策略" })).toBeInTheDocument();
   });
 

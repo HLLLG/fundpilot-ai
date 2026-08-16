@@ -80,4 +80,21 @@ describe("clientCache memory storage", () => {
     expect(window.sessionStorage.getItem(sessionKey)).not.toBeNull();
     expect(readClientCache(sessionKey, -1, "session")).toBe("session-value");
   });
+
+  it("none storage never reads or writes memory or session", () => {
+    const key = `${TEST_PREFIX}:none`;
+    writeClientCache(key, "memory-value", "memory");
+    writeClientCache(key, "session-value", "session");
+    writeClientCache(key, "ignored", "none");
+
+    expect(readClientCache(key, -1, "none")).toBeNull();
+    expect(readClientCache(key, -1, "memory")).toBe("memory-value");
+    expect(readClientCache(key, -1, "session")).toBe("session-value");
+
+    deleteClientCache(key, "none");
+    expect(readClientCache(key, -1, "memory")).toBe("memory-value");
+    expect(readClientCache(key, -1, "session")).toBe("session-value");
+    deleteClientCache(key, "memory");
+    deleteClientCache(key, "session");
+  });
 });

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowLeftRight,
   ArrowUp,
+  ChevronLeft,
   ChevronRight,
   Eye,
   EyeOff,
@@ -22,8 +23,16 @@ import { InlineNotice } from "@/components/InlineNotice";
 import { MethodologyNote } from "@/components/MethodologyNote";
 import {
   cnProfitClass,
+  computeHoldingWeight,
+  formatHoldingDays,
+  formatHoldingUnitCost,
+  formatPlainMoney,
+  formatPlainPercent,
   formatSignedMoney,
   formatSignedPercent,
+  getHoldingDays,
+  getHoldingShares,
+  getHoldingUnitCost,
   resolveSectorBoardReturnPercent,
   sumDailyProfit,
   sumPortfolioTotalAssets,
@@ -50,16 +59,31 @@ import { formatHoldingsColumnDateShort, formatTradeDateShort } from "@/lib/trade
 import type { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
 
 type SectorRefreshControl = ReturnType<typeof useSectorQuoteRefresh>;
-type HoldingsSortKey = "amount" | "daily" | "sector" | "holding";
+type HoldingsSortKey =
+  | "amount"
+  | "daily"
+  | "sector"
+  | "holding"
+  | "weight"
+  | "shares"
+  | "cost"
+  | "days";
 type HoldingsSortDir = "desc" | "asc";
 export type PortfolioLoadState = "loading" | "refreshing" | "ready" | "stale" | "error";
+type HoldingsMetricKey = Exclude<HoldingsSortKey, "amount">;
 
-const HOLDINGS_SORT_LABELS: Record<HoldingsSortKey, string> = {
-  amount: "持有金额",
-  daily: "当日收益",
-  sector: "关联板块",
-  holding: "持有收益",
-};
+const HOLDINGS_METRIC_COLUMNS: Array<{
+  key: HoldingsMetricKey;
+  label: string;
+}> = [
+  { key: "daily", label: "当日收益" },
+  { key: "sector", label: "关联板块" },
+  { key: "holding", label: "持有收益" },
+  { key: "weight", label: "持仓占比" },
+  { key: "shares", label: "持有份额" },
+  { key: "cost", label: "持有成本" },
+  { key: "days", label: "持有天数" },
+];
 
 type YangjibaoHoldingsBoardProps = {
   holdings: Holding[];
@@ -113,7 +137,11 @@ function formatBalance(value: number | null | undefined, hidden: boolean) {
 const SUMMARY_ICON_BTN =
   "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]";
 
-function holdingsSortValue(holding: Holding, key: HoldingsSortKey): number | null {
+function holdingsSortValue(
+  holding: Holding,
+  key: HoldingsSortKey,
+  totalAssets: number | null,
+): number | null {
   switch (key) {
     case "daily":
       return getDailyProfit(holding);
@@ -121,6 +149,14 @@ function holdingsSortValue(holding: Holding, key: HoldingsSortKey): number | nul
       return resolveSectorBoardReturnPercent(holding);
     case "holding":
       return getEstimatedHoldingProfit(holding);
+    case "weight":
+      return computeHoldingWeight(holding, totalAssets);
+    case "shares":
+      return getHoldingShares(holding);
+    case "cost":
+      return getHoldingUnitCost(holding);
+    case "days":
+      return getHoldingDays(holding);
     case "amount":
       return getSettledHoldingAmount(holding) || pendingBuyAmount(holding) || null;
   }
@@ -131,9 +167,10 @@ function compareHoldingsBySort(
   right: Holding,
   key: HoldingsSortKey,
   dir: HoldingsSortDir,
+  totalAssets: number | null,
 ): number {
-  const leftValue = holdingsSortValue(left, key);
-  const rightValue = holdingsSortValue(right, key);
+  const leftValue = holdingsSortValue(left, key, totalAssets);
+  const rightValue = holdingsSortValue(right, key, totalAssets);
   if (leftValue == null && rightValue == null) {
     return 0;
   }
@@ -157,7 +194,7 @@ function SortableColumnHeader({
 }: {
   label: string;
   date?: string | null;
-  columnKey: Exclude<HoldingsSortKey, "amount">;
+  columnKey: HoldingsMetricKey;
   activeSortKey: HoldingsSortKey;
   sortDir: HoldingsSortDir;
   onSort: () => void;
@@ -174,8 +211,8 @@ function SortableColumnHeader({
       title={
         active
           ? sortDir === "desc"
-            ? "收益从高到低，点击切换"
-            : "收益从低到高，点击切换"
+            ? `${label}从高到低，点击切换`
+            : `${label}从低到高，点击切换`
           : `按${label}排序`
       }
       aria-label={
@@ -268,7 +305,7 @@ export function YangjibaoHoldingsBoard({
     settledHoldings.length > 0 && officialDailyCount === settledHoldings.length;
   const dailyColumnLabel = allOfficialDaily ? "当日" : "估算";
 
-  const handleSort = (columnKey: Exclude<HoldingsSortKey, "amount">) => {
+  const handleSort = (columnKey: HoldingsMetricKey) => {
     if (sortKey === columnKey) {
       setSortDir((current) => (current === "desc" ? "asc" : "desc"));
       return;
@@ -280,10 +317,103 @@ export function YangjibaoHoldingsBoard({
   const sortedHoldings = useMemo(
     () =>
       [...displayHoldings].sort((left, right) =>
-        compareHoldingsBySort(left, right, sortKey, sortDir),
+        compareHoldingsBySort(left, right, sortKey, sortDir, totalAssets),
       ),
-    [displayHoldings, sortDir, sortKey],
+    [displayHoldings, sortDir, sortKey, totalAssets],
   );
+
+  const tableRef = useRef<HTMLDivElement>(null);
+  const metricsHoveringRef = useRef(false);
+  const [canScrollMetricsLeft, setCanScrollMetricsLeft] = useState(false);
+  const [canScrollMetricsRight, setCanScrollMetricsRight] = useState(false);
+  const [metricsScrollbarVisible, setMetricsScrollbarVisible] = useState(false);
+
+  const headerMetricsNode = useCallback(() => {
+    return tableRef.current?.querySelector<HTMLElement>("[data-holdings-metrics-scroll]");
+  }, []);
+
+  const syncMetricsScrollLeft = useCallback((left: number, source?: HTMLElement | null) => {
+    const root = tableRef.current;
+    if (!root) {
+      return;
+    }
+    root.querySelectorAll<HTMLElement>("[data-holdings-metrics-scroll]").forEach((node) => {
+      if (node !== source && node.scrollLeft !== left) {
+        node.scrollLeft = left;
+      }
+    });
+  }, []);
+
+  const updateMetricsScrollHint = useCallback((source?: HTMLElement | null) => {
+    const node = source ?? headerMetricsNode();
+    if (!node) {
+      setCanScrollMetricsLeft(false);
+      setCanScrollMetricsRight(false);
+      return;
+    }
+    setCanScrollMetricsLeft(node.scrollLeft > 2);
+    setCanScrollMetricsRight(node.scrollWidth - node.clientWidth - node.scrollLeft > 2);
+  }, [headerMetricsNode]);
+
+  const revealMetricsScrollbar = useCallback(() => {
+    if (metricsHoveringRef.current) {
+      setMetricsScrollbarVisible(true);
+    }
+  }, []);
+
+  const scrollMetricsBy = useCallback(
+    (delta: number) => {
+      const node = headerMetricsNode();
+      if (!node) {
+        return;
+      }
+      const next = Math.max(0, Math.min(node.scrollWidth - node.clientWidth, node.scrollLeft + delta));
+      node.scrollLeft = next;
+      syncMetricsScrollLeft(next, node);
+      updateMetricsScrollHint(node);
+      revealMetricsScrollbar();
+    },
+    [headerMetricsNode, revealMetricsScrollbar, syncMetricsScrollLeft, updateMetricsScrollHint],
+  );
+
+  const handleMetricsScroll = useCallback(
+    (event: React.UIEvent<HTMLElement>) => {
+      const source = event.currentTarget;
+      syncMetricsScrollLeft(source.scrollLeft, source);
+      updateMetricsScrollHint(source);
+      revealMetricsScrollbar();
+    },
+    [revealMetricsScrollbar, syncMetricsScrollLeft, updateMetricsScrollHint],
+  );
+
+  useEffect(() => {
+    updateMetricsScrollHint();
+  }, [sortedHoldings.length, updateMetricsScrollHint]);
+
+  useEffect(() => {
+    const root = tableRef.current;
+    if (!root) {
+      return;
+    }
+    const onWheel = (event: WheelEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest("[data-holdings-metrics-scroll]")) {
+        return;
+      }
+      const node = headerMetricsNode();
+      if (!node || node.scrollWidth <= node.clientWidth) {
+        return;
+      }
+      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+      if (delta === 0) {
+        return;
+      }
+      event.preventDefault();
+      scrollMetricsBy(delta);
+    };
+    root.addEventListener("wheel", onWheel, { passive: false });
+    return () => root.removeEventListener("wheel", onWheel);
+  }, [headerMetricsNode, scrollMetricsBy, sortedHoldings.length]);
 
   const sectionClassName = className ?? "max-w-none";
   const effectiveLoadState = loadState ?? (isLoading ? "loading" : "ready");
@@ -473,69 +603,64 @@ export function YangjibaoHoldingsBoard({
             还额外吃掉一行高度和一道分隔线。删掉。 */}
 
         <div
-          className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-3 py-2 sm:hidden"
-          data-testid="mobile-holdings-sort"
+          ref={tableRef}
+          className={`holdings-ledger-table${metricsScrollbarVisible ? " is-metrics-scrolling" : ""}`}
         >
-          <label className="flex min-w-0 flex-1 items-center gap-2">
-            <span className="shrink-0 text-xs font-bold text-slate-500">排序</span>
-            <select
-              value={sortKey}
-              onChange={(event) => {
-                setSortKey(event.target.value as HoldingsSortKey);
-                setSortDir("desc");
-              }}
-              className="min-h-11 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-blue-100"
-              aria-label="持仓排序方式"
-            >
-              {(Object.keys(HOLDINGS_SORT_LABELS) as HoldingsSortKey[]).map((key) => (
-                <option key={key} value={key}>
-                  {HOLDINGS_SORT_LABELS[key]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            onClick={() => setSortDir((current) => (current === "desc" ? "asc" : "desc"))}
-            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:border-blue-200 hover:text-[var(--brand)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
-            aria-label={`当前${sortDir === "desc" ? "降序" : "升序"}，点击切换为${sortDir === "desc" ? "升序" : "降序"}`}
-          >
-            {sortDir === "desc" ? <ArrowDown size={16} /> : <ArrowUp size={16} />}
-          </button>
-        </div>
-
+        <div className="holdings-fund-head">基金</div>
         <div
-          className="hidden grid-cols-[minmax(0,1fr)_7rem_7rem_7rem] items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-4 text-[10px] font-bold text-slate-500 sm:grid"
-          data-testid="desktop-holdings-header"
+          className="relative min-w-0"
+          onMouseEnter={() => {
+            metricsHoveringRef.current = true;
+            setMetricsScrollbarVisible(true);
+          }}
+          onMouseLeave={() => {
+            metricsHoveringRef.current = false;
+            setMetricsScrollbarVisible(false);
+          }}
         >
-          <span>基金</span>
-          <SortableColumnHeader
-            label="当日收益"
-            date={columnDate}
-            columnKey="daily"
-            activeSortKey={sortKey}
-            sortDir={sortDir}
-            onSort={() => handleSort("daily")}
-          />
-          <SortableColumnHeader
-            label="关联板块"
-            date={columnDate}
-            columnKey="sector"
-            activeSortKey={sortKey}
-            sortDir={sortDir}
-            onSort={() => handleSort("sector")}
-          />
-          <SortableColumnHeader
-            label="持有收益"
-            date={columnDate}
-            columnKey="holding"
-            activeSortKey={sortKey}
-            sortDir={sortDir}
-            onSort={() => handleSort("holding")}
-          />
+          <div
+            className="holdings-metrics-scroll holdings-metrics-scroll--header"
+            data-holdings-metrics-scroll
+            data-testid="desktop-holdings-header"
+            onScroll={handleMetricsScroll}
+          >
+            <div className="holdings-metrics-track text-[10px] font-bold text-slate-500">
+              {HOLDINGS_METRIC_COLUMNS.map((column) => (
+                <SortableColumnHeader
+                  key={column.key}
+                  label={column.label}
+                  date={columnDate}
+                  columnKey={column.key}
+                  activeSortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={() => handleSort(column.key)}
+                />
+              ))}
+            </div>
+          </div>
+          {canScrollMetricsLeft ? (
+            <button
+              type="button"
+              className="holdings-metrics-nudge holdings-metrics-nudge--left"
+              aria-label="查看前几列"
+              onClick={() => scrollMetricsBy(-(headerMetricsNode()?.clientWidth || 168))}
+            >
+              <ChevronLeft size={16} strokeWidth={2.4} />
+            </button>
+          ) : null}
+          {canScrollMetricsRight ? (
+            <button
+              type="button"
+              className="holdings-metrics-nudge holdings-metrics-nudge--right"
+              aria-label="查看后几列"
+              onClick={() => scrollMetricsBy(headerMetricsNode()?.clientWidth || 168)}
+            >
+              <ChevronRight size={16} strokeWidth={2.4} />
+            </button>
+          ) : null}
         </div>
 
-        <ul className="holdings-ledger space-y-2 p-2 sm:space-y-0 sm:divide-y sm:divide-[var(--line)] sm:p-0">
+        <ul className="holdings-ledger contents">
           {sortedHoldings.map((holding, rowIndex) => {
             const unsettledOnly = isUnsettledPreviewHolding(holding);
             const pendingBuy = pendingBuyAmount(holding);
@@ -553,6 +678,10 @@ export function YangjibaoHoldingsBoard({
             const sectorLabel = unsettledOnly ? "—" : holdingDisplaySectorLabel(holding, sectorMeta);
             const settledAmount = getSettledHoldingAmount(holding);
             const amountText = unsettledOnly ? pendingBuy : settledAmount;
+            const weight = unsettledOnly ? null : computeHoldingWeight(holding, totalAssets);
+            const shares = unsettledOnly ? null : getHoldingShares(holding);
+            const unitCost = unsettledOnly ? null : getHoldingUnitCost(holding);
+            const holdingDays = unsettledOnly ? null : getHoldingDays(holding);
             const holdingAmountLabel = amountsHidden
               ? "持有金额已隐藏"
               : unsettledOnly
@@ -567,11 +696,15 @@ export function YangjibaoHoldingsBoard({
               sectorLabel !== "—" ? sectorLabel : null,
               `持有收益 ${formatSignedMoney(holdingProfit)}`,
               holdingReturn != null ? formatSignedPercent(holdingReturn) : null,
+              `持仓占比 ${formatPlainPercent(weight)}`,
+              `持有份额 ${shares != null ? formatPlainMoney(shares) : "暂无"}`,
+              `持有成本 ${formatHoldingUnitCost(unitCost)}`,
+              `持有天数 ${formatHoldingDays(holdingDays)}`,
             ]
               .filter(Boolean)
               .join("，");
             return (
-              <li key={`${holdingIdentityKey(holding)}-${rowIndex}`}>
+              <li key={`${holdingIdentityKey(holding)}-${rowIndex}`} className="contents">
                 <button
                   type="button"
                   data-testid="holding-row"
@@ -582,9 +715,9 @@ export function YangjibaoHoldingsBoard({
                     })
                   }
                   aria-label={rowAriaLabel}
-                  className="holding-ledger-row grid min-h-11 w-full grid-cols-3 gap-x-2 gap-y-3 rounded-[var(--radius-control)] border border-[var(--line)] bg-[var(--panel)] px-3 py-3 text-left transition hover:border-[var(--line-strong)] hover:bg-[var(--brand-soft)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] active:bg-[var(--surface-muted)] sm:grid-cols-[minmax(0,1fr)_7rem_7rem_7rem] sm:gap-2 sm:rounded-none sm:border-0 sm:bg-transparent sm:px-4 sm:py-2"
+                  className="holding-ledger-row"
                 >
-                  <div className="col-span-3 min-w-0 sm:col-span-1">
+                  <div className="holdings-fund-cell">
                     <div className="flex items-center gap-1">
                       <div className="line-clamp-2 break-words text-sm font-bold leading-5 text-slate-900 sm:truncate sm:text-[13px] sm:leading-tight">
                         {holding.fund_name}
@@ -607,78 +740,99 @@ export function YangjibaoHoldingsBoard({
                   </div>
 
                   <div
-                    className="min-w-0 text-left leading-tight sm:text-center"
-                    title={
-                      unsettledOnly
-                        ? "交易已导入，份额尚未确认，暂不计收益"
-                        : profitAccrualDeferred
-                        ? "份额待确认，次交易日起计收益（与支付宝一致）"
-                        : holding.daily_return_percent_source === "official_nav"
-                        ? "官方净值已公布"
-                        : "板块或指数涨跌估算"
-                    }
+                    className="holdings-metrics-scroll"
+                    data-holdings-metrics-scroll
+                    onScroll={handleMetricsScroll}
                   >
-                    <span className="mb-1 block text-[10px] font-bold text-slate-500 sm:hidden">
-                      当日收益{columnDate ? ` ${columnDate}` : ""}
-                    </span>
-                    <div className={`whitespace-nowrap text-xs font-black tracking-tight tabular-nums sm:text-[13px] sm:tracking-normal ${cnProfitClass(daily)}`}>
-                      {daily != null ? formatSignedMoney(daily) : "—"}
-                    </div>
-                    {estimatedDailyReturn != null ? (
-                      <div className={`mt-1 whitespace-nowrap text-[11px] font-semibold tracking-tight tabular-nums sm:mt-0 sm:text-[10px] sm:tracking-normal ${cnProfitClass(estimatedDailyReturn)}`}>
-                        {!isOfficialDaily && dailyIsEstimated ? "≈" : ""}
-                        {formatSignedPercent(estimatedDailyReturn)}
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div
-                    className="min-w-0 border-l border-slate-100 pl-2 text-left leading-tight sm:border-0 sm:pl-0 sm:text-center"
-                    title={
-                      sectorLabel !== "—"
-                        ? isEstimateFallbackMeta(sectorMeta)
-                          ? `${sectorLabel}（无真实关联板块行情，当前用天天基金净值估值代替）`
-                          : sectorLabel
-                        : undefined
-                    }
-                  >
-                    <span className="mb-1 block text-[10px] font-bold text-slate-500 sm:hidden">
-                      关联板块{columnDate ? ` ${columnDate}` : ""}
-                    </span>
-                    <div className={`whitespace-nowrap text-xs font-black tracking-tight tabular-nums sm:text-[13px] sm:tracking-normal ${cnProfitClass(sectorReturn)}`}>
-                      {formatSignedPercent(sectorReturn)}
-                    </div>
-                    {sectorLabel !== "—" ? (
-                      <div className="mt-1 flex min-w-0 items-center justify-start gap-1 sm:mt-0 sm:justify-center">
-                        {isEstimateFallbackMeta(sectorMeta) ? (
-                          <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-1 py-0 text-[8px] font-bold leading-4 text-amber-600">
-                            估值
-                          </span>
+                    <div className="holdings-metrics-track">
+                      <div
+                        className="holdings-metric-cell"
+                        title={
+                          unsettledOnly
+                            ? "交易已导入，份额尚未确认，暂不计收益"
+                            : profitAccrualDeferred
+                            ? "份额待确认，次交易日起计收益（与支付宝一致）"
+                            : holding.daily_return_percent_source === "official_nav"
+                            ? "官方净值已公布"
+                            : "板块或指数涨跌估算"
+                        }
+                      >
+                        <div className={`whitespace-nowrap text-xs font-black tabular-nums sm:text-[13px] ${cnProfitClass(daily)}`}>
+                          {daily != null ? formatSignedMoney(daily) : "—"}
+                        </div>
+                        {estimatedDailyReturn != null ? (
+                          <div className={`mt-0.5 whitespace-nowrap text-[10px] font-semibold tabular-nums ${cnProfitClass(estimatedDailyReturn)}`}>
+                            {!isOfficialDaily && dailyIsEstimated ? "≈" : ""}
+                            {formatSignedPercent(estimatedDailyReturn)}
+                          </div>
                         ) : null}
-                        <span className="truncate text-[10px] font-semibold text-slate-500">{sectorLabel}</span>
                       </div>
-                    ) : null}
-                  </div>
 
-                  <div className="min-w-0 border-l border-slate-100 pl-2 text-left leading-tight sm:border-0 sm:pl-0 sm:text-center">
-                    <span className="mb-1 block text-[10px] font-bold text-slate-500 sm:hidden">
-                      持有收益{columnDate ? ` ${columnDate}` : ""}
-                    </span>
-                    <div className={`whitespace-nowrap text-xs font-black tracking-tight tabular-nums sm:text-[13px] sm:tracking-normal ${cnProfitClass(holdingProfit)}`}>
-                      {formatSignedMoney(holdingProfit)}
-                    </div>
-                    {holdingReturn != null ? (
-                      <div className={`mt-1 whitespace-nowrap text-[11px] font-semibold tracking-tight tabular-nums sm:mt-0 sm:text-[10px] sm:tracking-normal ${cnProfitClass(holdingReturn)}`}>
-                        {isHoldingReturnEstimated(holding) ? "≈" : ""}
-                        {formatSignedPercent(holdingReturn)}
+                      <div
+                        className="holdings-metric-cell"
+                        title={
+                          sectorLabel !== "—"
+                            ? isEstimateFallbackMeta(sectorMeta)
+                              ? `${sectorLabel}（无真实关联板块行情，当前用天天基金净值估值代替）`
+                              : sectorLabel
+                            : undefined
+                        }
+                      >
+                        <div className={`whitespace-nowrap text-xs font-black tabular-nums sm:text-[13px] ${cnProfitClass(sectorReturn)}`}>
+                          {formatSignedPercent(sectorReturn)}
+                        </div>
+                        {sectorLabel !== "—" ? (
+                          <div className="mt-0.5 flex min-w-0 items-center justify-center gap-1">
+                            {isEstimateFallbackMeta(sectorMeta) ? (
+                              <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-1 py-0 text-[8px] font-bold leading-4 text-amber-600">
+                                估值
+                              </span>
+                            ) : null}
+                            <span className="truncate text-[10px] font-semibold text-slate-500">{sectorLabel}</span>
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
+
+                      <div className="holdings-metric-cell">
+                        <div className={`whitespace-nowrap text-xs font-black tabular-nums sm:text-[13px] ${cnProfitClass(holdingProfit)}`}>
+                          {formatSignedMoney(holdingProfit)}
+                        </div>
+                        {holdingReturn != null ? (
+                          <div className={`mt-0.5 whitespace-nowrap text-[10px] font-semibold tabular-nums ${cnProfitClass(holdingReturn)}`}>
+                            {isHoldingReturnEstimated(holding) ? "≈" : ""}
+                            {formatSignedPercent(holdingReturn)}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="holdings-metric-cell">
+                        <div className="whitespace-nowrap text-xs font-black tabular-nums text-slate-800 sm:text-[13px]">
+                          {amountsHidden ? "****" : formatPlainPercent(weight)}
+                        </div>
+                      </div>
+                      <div className="holdings-metric-cell">
+                        <div className="whitespace-nowrap text-xs font-black tabular-nums text-[var(--brand)] sm:text-[13px]">
+                          {amountsHidden ? "****" : shares != null ? formatPlainMoney(shares) : "—"}
+                        </div>
+                      </div>
+                      <div className="holdings-metric-cell">
+                        <div className="whitespace-nowrap text-xs font-black tabular-nums text-[var(--brand)] sm:text-[13px]">
+                          {amountsHidden ? "****" : formatHoldingUnitCost(unitCost)}
+                        </div>
+                      </div>
+                      <div className="holdings-metric-cell">
+                        <div className="whitespace-nowrap text-xs font-semibold tabular-nums text-slate-600 sm:text-[13px]">
+                          {formatHoldingDays(holdingDays)}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </button>
               </li>
             );
           })}
         </ul>
+        </div>
 
         {onAddHolding ? (
           <div className="flex border-t border-slate-100">

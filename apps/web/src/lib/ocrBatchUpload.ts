@@ -5,6 +5,12 @@ import { recordedTransactionKey } from "@/lib/tradeConfirmDates";
 /** 一次相册多选上限。超出后仍识别前 N 张，并提示用户继续上传剩余截图。 */
 export const MAX_OCR_IMAGES = 20;
 
+/**
+ * 批量识别并发数。qwen-vl-ocr 一次请求只应塞一张图（多图会混成一份文本，
+ * 打乱支付宝多列版式解析），所以加速靠多路单图请求并行，而不是把截图拼进一次调用。
+ */
+export const OCR_UPLOAD_CONCURRENCY = 4;
+
 export type TransactionSyncPlan = "apply_position" | "markers_only";
 
 export type ImageFileSelection = {
@@ -168,10 +174,45 @@ export function ocrProgressLabel(
   if (!isUploading) {
     return idleLabel;
   }
-  if (progress && progress.total > 1) {
+  if (progress && progress.total > 1 && progress.current > 0) {
     return `识别中 ${progress.current}/${progress.total}`;
   }
   return "识别中...";
+}
+
+/** 有限并发地跑 mapper，结果按输入顺序返回（失败也占位，不打乱合并顺序）。 */
+export async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+  onProgress?: (done: number, total: number) => void,
+): Promise<PromiseSettledResult<R>[]> {
+  const total = items.length;
+  const results = new Array<PromiseSettledResult<R>>(total);
+  if (total === 0) {
+    return results;
+  }
+  const limit = Math.max(1, Math.min(concurrency, total));
+  let nextIndex = 0;
+  let done = 0;
+
+  const runWorker = async () => {
+    while (nextIndex < total) {
+      const index = nextIndex;
+      nextIndex += 1;
+      try {
+        const value = await mapper(items[index] as T, index);
+        results[index] = { status: "fulfilled", value };
+      } catch (reason) {
+        results[index] = { status: "rejected", reason };
+      }
+      done += 1;
+      onProgress?.(done, total);
+    }
+  };
+
+  await Promise.all(Array.from({ length: limit }, () => runWorker()));
+  return results;
 }
 
 function holdingNeedsFundCode(holding: Holding): boolean {

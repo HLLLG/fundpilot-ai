@@ -1,10 +1,11 @@
 """全用户共享市场快照的后台刷新。
 
 A 股与美股交易时段独立判定：
-- A 股活跃（9:30–15:00 intraday/pre_close）：每 20min 刷新
-- 基金涨跌分布：交易日开盘后每 15min，其他时段每 30min 刷新/检查
+- A 股活跃（9:30–15:00 intraday/pre_close）：每 20min 刷新指数与主题板块
+- 主题板块：收盘后锁一次收盘价；已对齐有效交易日则周末/盘前不再打源
+- 基金涨跌分布：交易日盘中每 15min；收盘后等官方净值每 30min；已对齐有效交易日的官方净值不再打源
 - 美股活跃（盘前/盘中/盘后）：每 20min 刷新
-- 各自非活跃时段：每 3h 静默刷新一次（沿用 stale 缓存，避免用户请求打源）
+- A 股 / 美股指数休市：不再定时打源，沿用收盘缓存，等下一活跃时段再更新
 """
 
 from __future__ import annotations
@@ -44,16 +45,26 @@ def _refresh_enabled() -> bool:
     )
 
 
-def _live_interval_seconds() -> float:
+def live_refresh_interval_seconds() -> float:
+    """盘中 / 美股活跃：与 ``theme_board_refresh_interval_seconds`` 对齐（默认 20min）。"""
     return float(max(60, int(get_settings().theme_board_refresh_interval_seconds)))
 
 
-def _idle_interval_seconds() -> float:
+def idle_refresh_interval_seconds() -> float:
+    """休市：与 ``market_shared_idle_interval_seconds`` 对齐（默认 3h）。"""
     settings = get_settings()
     idle = getattr(settings, "market_shared_idle_interval_seconds", None)
     if idle is None:
         idle = settings.theme_board_refresh_idle_interval_seconds
     return float(max(300, int(idle)))
+
+
+def _live_interval_seconds() -> float:
+    return live_refresh_interval_seconds()
+
+
+def _idle_interval_seconds() -> float:
+    return idle_refresh_interval_seconds()
 
 
 def _poll_seconds() -> float:
@@ -65,11 +76,35 @@ def _poll_seconds() -> float:
     return min(_POLL_CAP_SECONDS, _live_interval_seconds(), float(breadth_interval))
 
 
-def refresh_a_share_market_snapshots() -> None:
-    """刷新 A 股主题板块快照。"""
+def _theme_board_is_settled() -> bool:
+    from app.services.theme_board_snapshot import (
+        get_theme_board_snapshot_cache_only,
+        theme_board_snapshot_is_settled,
+    )
+
+    return theme_board_snapshot_is_settled(
+        get_theme_board_snapshot_cache_only(),
+        build_trading_session(),
+    )
+
+
+def refresh_a_share_market_snapshots(*, refresh_cn_index: bool | None = None) -> None:
+    """刷新 A 股主题板块；宽基指数只在盘中或启动预热时打源。"""
+    from app.services.cn_index_overview import get_cn_index_overview
     from app.services.theme_board_snapshot import refresh_theme_board_snapshot
 
-    refresh_theme_board_snapshot()
+    session_kind = str(build_trading_session().get("session_kind") or "")
+    if not _theme_board_is_settled():
+        refresh_theme_board_snapshot()
+    should_refresh_cn = (
+        True
+        if refresh_cn_index is True
+        else False
+        if refresh_cn_index is False
+        else session_kind in _A_SHARE_LIVE_SESSIONS
+    )
+    if should_refresh_cn:
+        get_cn_index_overview(force_refresh=True)
 
 
 def _try_acquire_market_breadth_lease(*, ttl_seconds: float) -> bool:
@@ -145,7 +180,7 @@ def run_startup_market_refresh() -> None:
         refresh_fund_return_distribution_snapshot()
         _last_fund_return_distribution_refresh_at = now
     if get_settings().theme_board_refresh_enabled:
-        refresh_a_share_market_snapshots()
+        refresh_a_share_market_snapshots(refresh_cn_index=True)
         _last_a_share_refresh_at = now
     refresh_market_breadth_snapshot()
     _last_market_breadth_refresh_at = now
@@ -160,11 +195,12 @@ def _maybe_refresh_a_share(now: float) -> None:
     if not get_settings().theme_board_refresh_enabled:
         return
     session_kind = build_trading_session().get("session_kind", "")
-    interval = (
-        _live_interval_seconds()
-        if session_kind in _A_SHARE_LIVE_SESSIONS
-        else _idle_interval_seconds()
-    )
+    if session_kind in _A_SHARE_LIVE_SESSIONS:
+        interval = _live_interval_seconds()
+    elif _theme_board_is_settled():
+        return
+    else:
+        interval = 0.0
     if now - _last_a_share_refresh_at < interval:
         return
     refresh_a_share_market_snapshots()
@@ -198,29 +234,44 @@ def _maybe_refresh_market_breadth(now: float) -> None:
     )
 
 
+def _is_fund_distribution_live_session(session: dict) -> bool:
+    phase = str(session.get("market_phase") or "")
+    return bool(
+        session.get("is_trading_day")
+        and session.get("effective_trade_date") == session.get("calendar_date")
+        and str(session.get("session_kind") or "") != "trading_day_pre_open"
+        and phase in {"continuous", "lunch_break"}
+    )
+
+
+def fund_distribution_refresh_interval_seconds(session: dict) -> float:
+    """交易日盘中 15 分钟；收盘后等官方净值 30 分钟；非交易日不再按闲时刷同一份收盘数据。"""
+    if _is_fund_distribution_live_session(session):
+        return _FUND_DISTRIBUTION_LIVE_INTERVAL_SECONDS
+    return _FUND_DISTRIBUTION_IDLE_INTERVAL_SECONDS
+
+
 def _maybe_refresh_fund_return_distribution(now: float) -> None:
     global _last_fund_return_distribution_refresh_at
     if not get_settings().fund_return_distribution_refresh_enabled:
         return
+    from app.services.fund_return_distribution import (
+        build_fund_return_distribution,
+        fund_return_distribution_is_settled,
+    )
+
     session = build_trading_session()
-    phase = str(session.get("market_phase") or "")
-    current_trade_day_after_open = bool(
-        session.get("is_trading_day")
-        and session.get("effective_trade_date") == session.get("calendar_date")
-        and str(session.get("session_kind") or "") != "trading_day_pre_open"
-    )
-    interval = (
-        _FUND_DISTRIBUTION_LIVE_INTERVAL_SECONDS
-        if current_trade_day_after_open and phase in {"continuous", "lunch_break"}
-        else _FUND_DISTRIBUTION_IDLE_INTERVAL_SECONDS
-    )
+    cached = build_fund_return_distribution(force_refresh=False)
+    if fund_return_distribution_is_settled(cached, session):
+        return
+    interval = fund_distribution_refresh_interval_seconds(session)
     if now - _last_fund_return_distribution_refresh_at < interval:
         return
     refresh_fund_return_distribution_snapshot()
     _last_fund_return_distribution_refresh_at = now
     logger.debug(
         "market shared fund distribution refresh done phase=%s interval=%ss",
-        phase,
+        session.get("market_phase"),
         int(interval),
     )
 
@@ -230,11 +281,9 @@ def _maybe_refresh_us(now: float) -> None:
     if not get_settings().theme_board_refresh_enabled:
         return
     session_kind = detect_us_session().get("session_kind", "")
-    interval = (
-        _live_interval_seconds()
-        if session_kind in _US_LIVE_SESSIONS
-        else _idle_interval_seconds()
-    )
+    if session_kind not in _US_LIVE_SESSIONS:
+        return
+    interval = _live_interval_seconds()
     if now - _last_us_refresh_at < interval:
         return
     refresh_us_market_snapshot()

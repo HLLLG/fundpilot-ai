@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   acceptUsMarketFresh,
+  formatUsEtClock,
+  formatUsIndexCaption,
+  US_INDEX_LIVE_REFRESH_INTERVAL_MS,
   US_SESSION_LABEL,
   usRefreshIntervalMs,
 } from "@/lib/usMarketOverview";
@@ -9,8 +12,7 @@ import {
 // 从函数签名推导参数类型，避免依赖尚未在 api.ts 落地的 UsMarketSnapshot 类型（任务 9.1）。
 type UsMarketSnapshotArg = Parameters<typeof acceptUsMarketFresh>[0];
 
-const LIVE_INTERVAL_MS = 1_200_000;
-const IDLE_INTERVAL_MS = 10_800_000;
+const LIVE_INTERVAL_MS = US_INDEX_LIVE_REFRESH_INTERVAL_MS;
 
 function makeSnapshot(available: boolean): UsMarketSnapshotArg {
   return { available } as UsMarketSnapshotArg;
@@ -30,15 +32,14 @@ describe("usRefreshIntervalMs", () => {
     expect(usRefreshIntervalMs("after_hours")).toBe(LIVE_INTERVAL_MS);
   });
 
-  // 休市低频刷新，避免用户请求打源。
-  it("returns the idle interval for closed", () => {
-    expect(usRefreshIntervalMs("closed")).toBe(IDLE_INTERVAL_MS);
+  it("does not poll while the US session is closed", () => {
+    expect(usRefreshIntervalMs("closed")).toBeNull();
+    expect(usRefreshIntervalMs(undefined)).toBeNull();
   });
 
-  it("keeps live-session intervals shorter than rest-session intervals", () => {
+  it("keeps the same live interval across active sessions", () => {
     expect(usRefreshIntervalMs("pre_market")).toBe(usRefreshIntervalMs("regular"));
     expect(usRefreshIntervalMs("after_hours")).toBe(usRefreshIntervalMs("regular"));
-    expect(usRefreshIntervalMs("regular")).toBeLessThan(usRefreshIntervalMs("closed"));
   });
 });
 
@@ -50,6 +51,42 @@ describe("US_SESSION_LABEL", () => {
       after_hours: "盘后",
       closed: "休市",
     });
+  });
+});
+
+describe("formatUsEtClock", () => {
+  it("prints the New York wall-clock date and hour only", () => {
+    // 北京 14:19 = UTC 06:19 = 美东夏令时 02 时
+    expect(formatUsEtClock(new Date("2026-08-16T06:19:00.000Z"))).toBe(
+      "2026-08-16 02时 ET",
+    );
+  });
+
+  it("keeps the Eastern calendar date when Beijing has already rolled over", () => {
+    // 北京 10:00 = UTC 02:00 = 美东夏令时前一天 22 时
+    expect(formatUsEtClock(new Date("2026-08-17T02:00:00.000Z"))).toBe(
+      "2026-08-16 22时 ET",
+    );
+  });
+});
+
+describe("formatUsIndexCaption", () => {
+  it("joins session label with the snapshot collection hour", () => {
+    expect(
+      formatUsIndexCaption({
+        session_kind: "closed",
+        updated_at: "2026-08-16T02:19:00-04:00",
+      }),
+    ).toBe("休市 · 2026-08-16 02时 ET");
+  });
+
+  it("falls back to et_date when the snapshot has no collection time", () => {
+    expect(
+      formatUsIndexCaption({
+        session_kind: "closed",
+        et_date: "2026-08-16",
+      }),
+    ).toBe("休市 · 2026-08-16 ET");
   });
 });
 

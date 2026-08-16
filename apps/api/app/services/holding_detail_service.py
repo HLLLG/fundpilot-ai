@@ -276,7 +276,7 @@ def build_holding_detail(
     if total_assets is None:
         total_assets = sum(item.holding_amount for item in holdings) or None
 
-    return HoldingDetailResponse(
+    response = HoldingDetailResponse(
         index=index,
         holding=resolved,
         holding_shares=holding_shares,
@@ -291,6 +291,8 @@ def build_holding_detail(
         fund_code_source=fund_code_source,
         provenance=provenance,
     )
+    _remember_holding_detail_cache(resolved, response)
+    return response
 
 
 def _cost_basis(holding: Holding) -> float | None:
@@ -325,6 +327,157 @@ def _yesterday_profit_from_snapshots(
                 if daily_profit is not None:
                     return round(float(daily_profit), 2)
     return None
+
+
+def resolve_holding_list_metrics(
+    holding: Holding,
+    profile: FundProfile | None,
+) -> tuple[float | None, float | None, int | None]:
+    """列表用份额/成本/天数：详情缓存 > 档案 > 净值缓存推算。不打外网、不扫快照。"""
+    shares: float | None = None
+    cost: float | None = None
+    days: int | None = None
+
+    cached = _list_metrics_from_detail_cache(holding)
+    if cached is not None:
+        shares, cost, days = cached
+
+    if shares is None and profile is not None:
+        shares = profile.holding_shares
+    if cost is None and profile is not None:
+        cost = profile.holding_cost
+
+    if shares and shares > 0:
+        inferred = _infer_purchase_unit_cost(holding, shares)
+        if inferred is not None and inferred > 0:
+            if cost is None or _is_imputed_market_unit_cost(cost, holding, shares):
+                cost = inferred
+
+    if shares is None:
+        shares = _shares_from_cached_nav(holding)
+
+    if cost is None and shares and shares > 0:
+        cost_basis = _cost_basis(holding)
+        if cost_basis is not None:
+            cost = round(cost_basis / shares, 4)
+
+    if days is None:
+        days = resolve_holding_days_for_list(profile, holding)
+
+    return shares, cost, days
+
+
+def resolve_holding_days_for_list(
+    profile: FundProfile | None,
+    holding: Holding,
+) -> int | None:
+    """列表用持有天数：不扫快照，避免每次 hydrate 持仓都全表回放。"""
+    days, _source = _resolve_holding_days(profile, holding, snapshot_loader=lambda: [])
+    return days
+
+
+def _holding_amount_for_metrics(holding: Holding) -> float:
+    amount = (
+        holding.settled_holding_amount
+        if holding.settled_holding_amount is not None
+        else holding.holding_amount
+    )
+    return float(amount or 0)
+
+
+def _list_metrics_from_detail_cache(
+    holding: Holding,
+) -> tuple[float | None, float | None, int | None] | None:
+    code = (holding.fund_code or "").strip()
+    if not code or code == "000000":
+        return None
+    from app.request_context import try_get_request_user_id
+    from app.services.holding_detail_cache import (
+        get_cached_holding_detail,
+        holding_detail_fingerprint,
+    )
+
+    if try_get_request_user_id() is None:
+        return None
+    payload = get_cached_holding_detail(
+        code,
+        holding_detail_fingerprint(
+            fund_code=code,
+            holding_amount=_holding_amount_for_metrics(holding),
+        ),
+    )
+    if not payload:
+        return None
+
+    def _as_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _as_int(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    shares = _as_float(payload.get("holding_shares"))
+    cost = _as_float(payload.get("holding_cost"))
+    days = _as_int(payload.get("holding_days"))
+    if shares is None and cost is None and days is None:
+        return None
+    return shares, cost, days
+
+
+def _shares_from_cached_nav(holding: Holding) -> float | None:
+    code = (holding.fund_code or "").strip()
+    if not code or code == "000000":
+        return None
+    amount = _holding_amount_for_metrics(holding)
+    if amount <= 0:
+        return None
+    from app.services.fund_data import FundDataService
+    from app.services.fund_nav_service import get_latest_unit_nav
+
+    nav = get_latest_unit_nav(code, allow_fetch=False)
+    if nav is None or nav <= 0:
+        history = FundDataService().get_nav_history(
+            code,
+            holding.fund_name,
+            trading_days=1,
+            cache_only=True,
+        )
+        if history.source == "akshare" and history.latest_nav and history.latest_nav > 0:
+            nav = history.latest_nav
+    if nav is None or nav <= 0:
+        return None
+    return round(amount / nav, 2)
+
+
+def _remember_holding_detail_cache(holding: Holding, response: HoldingDetailResponse) -> None:
+    code = (holding.fund_code or "").strip()
+    if not code or code == "000000":
+        return
+    from app.request_context import try_get_request_user_id
+    from app.services.holding_detail_cache import (
+        holding_detail_fingerprint,
+        save_cached_holding_detail,
+    )
+
+    if try_get_request_user_id() is None:
+        return
+    save_cached_holding_detail(
+        code,
+        holding_detail_fingerprint(
+            fund_code=code,
+            holding_amount=_holding_amount_for_metrics(holding),
+        ),
+        response.model_dump(mode="json"),
+    )
 
 
 def _resolve_holding_days(

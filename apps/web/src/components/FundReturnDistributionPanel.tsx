@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { BarChart3, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import {
   fetchFundReturnDistribution,
   fetchTradingSession,
@@ -15,40 +15,100 @@ import {
 } from "@/lib/storage";
 
 const CACHE_KEY = "diagnostics:fund-return-distribution";
-const STALE_MS = 15 * 60_000;
-const REFRESH_INTERVAL_MS = 15 * 60_000;
+/** 官方净值周末也不会变；盘中更新靠下面的交易日轮询强制刷新。 */
+const STALE_MS = 6 * 60 * 60_000;
+const TRADING_DAY_POLL_MS = 15 * 60_000;
+const SESSION_RECHECK_MS = 30 * 60_000;
 const UNAVAILABLE_RETRY_MS = 30_000;
 const MAX_UNAVAILABLE_RETRIES = 4;
 
-type DistributionRefreshSession = {
+export type DistributionRefreshSession = {
   is_trading_day?: boolean;
   session_kind?: string;
   calendar_date?: string;
   effective_trade_date?: string;
 };
 
-/**
- * 当前交易日开盘后（含午休、收盘后）继续检查当日分布，直到同日官方净值就绪。
- * 这只触发轻量 API 缓存读取；全量外源聚合由后端后台线程承担。
- */
-export function shouldRefreshCurrentTradeDayDistribution(
+const UPDATE_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+export function hasSettledOfficialDistribution(
   session: DistributionRefreshSession | null | undefined,
   data: FundReturnDistribution | null | undefined,
 ): boolean {
-  if (
-    !session?.is_trading_day ||
-    !session.effective_trade_date ||
-    session.effective_trade_date !== session.calendar_date ||
-    session.session_kind === "trading_day_pre_open" ||
-    data == null
-  ) {
+  return Boolean(
+    data?.available &&
+      data.source_mode === "official_nav" &&
+      session?.effective_trade_date &&
+      data.as_of_date === session.effective_trade_date,
+  );
+}
+
+/**
+ * 交易日开盘后继续检查，直到当日官方净值就绪。
+ * 非交易日 / 盘前：已有上一交易日官方净值就不再请求，避免周末反复拿到同一份收盘数据。
+ */
+export function shouldRefreshFundReturnDistribution(
+  session: DistributionRefreshSession | null | undefined,
+  data: FundReturnDistribution | null | undefined,
+): boolean {
+  if (!session?.effective_trade_date) {
     return false;
   }
-  return !(
-    data.source_mode === "official_nav" &&
-    data.as_of_date === session.effective_trade_date &&
-    data.available
-  );
+  if (hasSettledOfficialDistribution(session, data)) {
+    return false;
+  }
+  const idleSession =
+    !session.is_trading_day || session.session_kind === "trading_day_pre_open";
+  if (idleSession) {
+    return !(data?.available && data.source_mode === "official_nav");
+  }
+  return true;
+}
+
+export function fundReturnDistributionPollMs(
+  session: DistributionRefreshSession | null | undefined,
+  data: FundReturnDistribution | null | undefined,
+): number {
+  return shouldRefreshFundReturnDistribution(session, data)
+    ? TRADING_DAY_POLL_MS
+    : SESSION_RECHECK_MS;
+}
+
+export function formatFundReturnDistributionUpdatedAt(
+  data: FundReturnDistribution | null | undefined,
+): string | null {
+  if (!data?.available) {
+    return null;
+  }
+  if (data.source_mode === "official_nav" && data.as_of_date) {
+    return `更新：${data.as_of_date} 15:00`;
+  }
+  const raw = data.as_of_datetime || data.fetched_at || data.as_of_date;
+  if (!raw) {
+    return null;
+  }
+  const formatted = formatShanghaiDateTime(raw);
+  return formatted ? `更新：${formatted}` : null;
+}
+
+function formatShanghaiDateTime(raw: string): string | null {
+  const ms = Date.parse(raw);
+  if (Number.isFinite(ms)) {
+    const parts = UPDATE_TIME_FORMATTER.formatToParts(new Date(ms));
+    const pick = (type: Intl.DateTimeFormatPartTypes) =>
+      parts.find((part) => part.type === type)?.value ?? "";
+    return `${pick("year")}-${pick("month")}-${pick("day")} ${pick("hour")}:${pick("minute")}`;
+  }
+  const dateOnly = raw.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(dateOnly) ? `${dateOnly} 15:00` : null;
 }
 
 const BINS: Array<{
@@ -73,7 +133,6 @@ const BAR_TONE = {
   up: "bg-rose-500",
 } as const;
 
-// formatter 提到模块作用域：这个函数会按九档分布逐格调用。输出格式不变。
 const COUNT_FORMATTER = new Intl.NumberFormat("zh-CN");
 
 function formatCount(value: number | null | undefined): string {
@@ -97,7 +156,7 @@ function DistributionContent({ data }: { data: FundReturnDistribution }) {
 
   return (
     <>
-      <div className="-mx-1 mt-5 overflow-x-auto px-1 pb-1">
+      <div className="-mx-1 mt-4 overflow-x-auto px-1 pb-1">
         <div className="min-w-[610px]">
           <div
             className="grid h-44 grid-cols-9 items-end gap-2 border-b border-slate-200 px-1"
@@ -118,7 +177,7 @@ function DistributionContent({ data }: { data: FundReturnDistribution }) {
                     />
                   </div>
                   <span className="mt-2 whitespace-nowrap text-[10px] font-semibold tabular-nums text-slate-500">
-                    {item.label}%
+                    {item.label}
                   </span>
                 </div>
               );
@@ -127,37 +186,24 @@ function DistributionContent({ data }: { data: FundReturnDistribution }) {
         </div>
       </div>
 
-      <div className="mt-5 grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-        <div className="flex items-baseline gap-2 text-emerald-700">
-          <span className="text-xs font-bold">下跌</span>
-          <strong className="font-serif text-2xl tabular-nums">{formatCount(decline)}</strong>
-          <span className="text-xs font-semibold">{ratio(decline, total).toFixed(1)}%</span>
+      <div className="mt-4 flex items-center gap-3">
+        <div className="shrink-0 text-emerald-700">
+          <span className="text-xs font-bold">下跌</span>{" "}
+          <strong className="text-sm font-bold tabular-nums">{formatCount(decline)}</strong>
         </div>
         <div
-          className="flex h-3 min-w-48 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200"
+          className="flex h-2.5 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-100"
           aria-label={`下跌${formatCount(decline)}只，平盘${formatCount(flat)}只，上涨${formatCount(advance)}只`}
         >
           <span className="bg-emerald-500" style={{ width: `${ratio(decline, total)}%` }} />
           <span className="bg-slate-300" style={{ width: `${ratio(flat, total)}%` }} />
           <span className="bg-rose-500" style={{ width: `${ratio(advance, total)}%` }} />
         </div>
-        <div className="flex items-baseline justify-start gap-2 text-rose-700 sm:justify-end">
+        <div className="shrink-0 text-rose-700">
+          <strong className="text-sm font-bold tabular-nums">{formatCount(advance)}</strong>{" "}
           <span className="text-xs font-bold">上涨</span>
-          <strong className="font-serif text-2xl tabular-nums">{formatCount(advance)}</strong>
-          <span className="text-xs font-semibold">{ratio(advance, total).toFixed(1)}%</span>
         </div>
       </div>
-
-      <p className="mt-4 text-xs leading-5 text-slate-500">
-        统计 {formatCount(total)} 个有效基金份额代码；A/C/E 等份额分别计数。
-        {data.missing_count ? `另有 ${formatCount(data.missing_count)} 只缺少当日增长率，未纳入柱状图。` : ""}
-        {data.coverage_percent != null ? ` 数据覆盖率 ${data.coverage_percent.toFixed(1)}%。` : ""}
-      </p>
-      {data.message ? (
-        <p className="mt-2 text-xs leading-5 text-amber-700" role="note">
-          {data.message}
-        </p>
-      ) : null}
     </>
   );
 }
@@ -169,6 +215,7 @@ export function FundReturnDistributionPanel() {
     staleTimeMs: STALE_MS,
     storage: "session",
     bootstrap: () => loadFundReturnDistributionCache(),
+    keepPreviousUnless: (fresh) => Boolean(fresh.available),
   });
   const dataRef = useRef(data);
   const unavailableRetryCountRef = useRef(0);
@@ -177,15 +224,12 @@ export function FundReturnDistributionPanel() {
     dataRef.current = data;
   }, [data]);
 
-  // 拉到的最新数据回写 localStorage，供下次冷启动秒开。
   useEffect(() => {
     if (data?.available && !data.client_cached) {
       saveFundReturnDistributionCache(data);
     }
   }, [data]);
 
-  // 后端进程刚启动时预热可能仍在进行；短轮询只读服务端缓存，不会把外源聚合
-  // 压到当前用户请求上。最多重试两分钟，随后交回常规定时器。
   useEffect(() => {
     if (data == null || data.available) {
       unavailableRetryCountRef.current = 0;
@@ -201,34 +245,39 @@ export function FundReturnDistributionPanel() {
     return () => window.clearTimeout(timer);
   }, [data, refresh]);
 
-  // 15 分钟定时 + visibility：开盘后持续检查同交易日缓存，官方净值就绪后停刷。
   useEffect(() => {
     let timer: number | null = null;
     const stop = () => {
       if (timer != null) {
-        window.clearInterval(timer);
+        window.clearTimeout(timer);
         timer = null;
       }
     };
-    const tick = async () => {
+    const scheduleNext = (session?: DistributionRefreshSession | null) => {
+      stop();
+      timer = window.setTimeout(() => {
+        void runTick();
+      }, fundReturnDistributionPollMs(session, dataRef.current));
+    };
+    const runTick = async () => {
       try {
         const session = await fetchTradingSession();
-        if (shouldRefreshCurrentTradeDayDistribution(session, dataRef.current)) {
+        if (shouldRefreshFundReturnDistribution(session, dataRef.current)) {
           await refresh();
         }
-        // 盘前/非交易日，或当日官方净值已就绪：跳过请求，保留缓存展示。
+        if (!document.hidden) {
+          scheduleNext(session);
+        }
       } catch {
-        // trading-session 拉取失败：保守发一次，宁可多请求也不空跑掉实时性。
-        if (dataRef.current != null) {
+        if (
+          dataRef.current == null ||
+          (dataRef.current.available && dataRef.current.source_mode !== "official_nav")
+        ) {
           await refresh();
         }
-      }
-    };
-    const start = () => {
-      if (timer == null) {
-        timer = window.setInterval(() => {
-          void tick();
-        }, REFRESH_INTERVAL_MS);
+        if (!document.hidden) {
+          scheduleNext(null);
+        }
       }
     };
     const handleVisibility = () => {
@@ -236,51 +285,30 @@ export function FundReturnDistributionPanel() {
         stop();
         return;
       }
-      void tick();
-      start();
+      void runTick();
     };
     if (!document.hidden) {
-      void tick();
-      start();
+      void runTick();
     }
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
       stop();
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [refresh]);
+  }, [refresh, data?.source_mode, data?.as_of_date, data?.available]);
 
-  const isIntraday = data?.source_mode === "intraday_estimate";
-  const intradayAsOf = data?.as_of_datetime ?? data?.as_of_date;
-  const asOfLabel = isIntraday
-    ? intradayAsOf
-      ? `实时估值 · 截至 ${intradayAsOf}`
-      : "实时估值"
-    : data?.as_of_date
-      ? `官方净值 · 截至 ${data.as_of_date}`
-      : "正在确认净值日期";
-  const cacheLabel = data?.client_cached ? " · 本地缓存" : data?.stale ? " · 上次成功统计" : "";
+  const updatedAt = formatFundReturnDistributionUpdatedAt(data);
 
   return (
-    <section className="mt-4 min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-200/90 bg-[#fbfaf7] px-4 py-4 sm:px-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <div className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-[#f4ead2]">
-            <BarChart3 size={18} aria-hidden />
-          </div>
-          <div>
-            <h4 className="text-base font-black text-slate-950">基金涨跌分布</h4>
-            <p className="mt-1 text-xs leading-5 text-slate-500">
-              {asOfLabel}
-              {cacheLabel}
-            </p>
-          </div>
-        </div>
-        {revalidating ? (
-          <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500" role="status">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />更新中
-          </span>
-        ) : null}
+    <section className="glass-panel min-w-0 max-w-full overflow-hidden rounded-[24px] p-5">
+      <div className="flex items-start justify-between gap-3">
+        <h3 className="text-lg font-black text-slate-950">基金涨跌分布</h3>
+        <p className="inline-flex shrink-0 items-center gap-1.5 pt-1 text-right text-xs text-slate-400">
+          {revalidating ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          ) : null}
+          <span>{updatedAt}</span>
+        </p>
       </div>
 
       {loading && !data ? (

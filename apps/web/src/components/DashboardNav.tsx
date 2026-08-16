@@ -30,7 +30,7 @@ type NavTab = {
  */
 const NAV_TABS: NavTab[] = [
   { id: "holdings", label: "持仓", mobileLabel: "持仓", icon: LayoutList },
-  { id: "market", label: "市场", mobileLabel: "市场", icon: Activity },
+  { id: "market", label: "行情", mobileLabel: "行情", icon: Activity },
   { id: "discovery", label: "发现", mobileLabel: "发现", icon: Search },
   { id: "report", label: "日报", mobileLabel: "日报", icon: FileText },
   { id: "me", label: "我的", mobileLabel: "我的", icon: UserRound },

@@ -16,6 +16,11 @@
       "secid": "90.BK1128",
       "source_code": "BK1128"
     },
+    "CXO": {
+      "live_name": "医疗研发外包",
+      "secid": "90.BK1600",
+      "source_code": "BK1600"
+    },
     "MLCC": {
       "live_name": "MLCC",
       "secid": "90.BK0890",
@@ -115,6 +120,11 @@
       "live_name": "基础化工",
       "secid": "90.BK1206",
       "source_code": "BK1206"
+    },
+    "油气": {
+      "live_name": "油气资源",
+      "secid": "2.931248",
+      "source_code": "931248"
     },
     "医疗": {
       "live_name": "中证医疗",
