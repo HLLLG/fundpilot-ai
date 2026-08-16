@@ -42,7 +42,6 @@ function status(
       hard_gate_blocked_percent: 100,
       automatic_promotion_allowed: false,
     },
-    decision_quality: { status: "collecting" },
     milestones: [],
     blockers: [
       {

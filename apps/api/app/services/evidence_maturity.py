@@ -14,13 +14,6 @@ from typing import Any
 
 from app.background_worker import inspect_worker_health
 from app.database import list_discovery_report_decision_diagnostics
-from app.services.decision_quality_snapshot import (
-    MIN_MANUAL_REVIEW_LABEL_COVERAGE_PERCENT,
-    MIN_MANUAL_REVIEW_MATURE_DECISION_DAYS,
-    MIN_SHADOW_MATURE_DECISION_DAYS,
-    DecisionQualitySnapshotError,
-    read_latest_decision_quality_snapshot,
-)
 from app.services.decision_score_shadow import build_decision_score_shadow_digest
 from app.services.factor_ic_snapshot import build_factor_ic_status
 from app.services.factor_ic_nav_observation import (
@@ -753,115 +746,6 @@ def _nav_observation_projection(
     return projection, alerts
 
 
-def _decision_quality_projection(
-    user_id: int,
-    current: datetime,
-) -> tuple[dict[str, Any], list[dict[str, str]]]:
-    alerts: list[dict[str, str]] = []
-    try:
-        snapshot = read_latest_decision_quality_snapshot(user_id=user_id)
-    except DecisionQualitySnapshotError:
-        snapshot = None
-        alerts.append(
-            _alert(
-                "decision_quality_read_failed",
-                "warning",
-                "决策质量快照读取失败",
-                "不可变快照无法安全验证，本次不展示推断值。",
-                "检查每日 evaluation、主存储和内容完整性回执。",
-            )
-        )
-    if snapshot is None:
-        projection = {
-            "status": "collecting",
-            "snapshot_available": False,
-            "evaluation_as_of": None,
-            "snapshot_age_days": None,
-            "readiness_status": "insufficient_data",
-            "mature_decision_day_count": None,
-            "minimum_shadow_mature_decision_days": MIN_SHADOW_MATURE_DECISION_DAYS,
-            "minimum_manual_review_mature_decision_days": (
-                MIN_MANUAL_REVIEW_MATURE_DECISION_DAYS
-            ),
-            "formal_label_coverage_percent": None,
-            "minimum_manual_review_label_coverage_percent": (
-                MIN_MANUAL_REVIEW_LABEL_COVERAGE_PERCENT
-            ),
-            "maturity_progress_percent": None,
-            "input_counts": {},
-            "automatic_promotion_allowed": False,
-        }
-        if not alerts:
-            alerts.append(
-                _alert(
-                    "decision_quality_snapshot_empty",
-                    "info",
-                    "决策质量尚无预计算快照",
-                    "没有历史冻结样本时不会即时重算，也不会用 0 代替缺失。",
-                    "等待每日结算与 evaluation 任务生成首个快照。",
-                )
-            )
-        return projection, alerts
-
-    readiness = snapshot.get("readiness")
-    readiness_map = readiness if isinstance(readiness, Mapping) else {}
-    readiness_status = str(readiness_map.get("status") or "insufficient_data")
-    mature_days = _nonnegative_int(readiness_map.get("mature_decision_day_count"))
-    shadow_target = (
-        _nonnegative_int(readiness_map.get("minimum_shadow_mature_decision_days"))
-        or MIN_SHADOW_MATURE_DECISION_DAYS
-    )
-    manual_target = (
-        _nonnegative_int(
-            readiness_map.get("minimum_manual_review_mature_decision_days")
-        )
-        or MIN_MANUAL_REVIEW_MATURE_DECISION_DAYS
-    )
-    label_target = (
-        _optional_number(
-            readiness_map.get("minimum_manual_review_label_coverage_percent")
-        )
-        or float(MIN_MANUAL_REVIEW_LABEL_COVERAGE_PERCENT)
-    )
-    label_coverage = _optional_number(
-        readiness_map.get("formal_label_coverage_percent")
-    )
-    age = _age_days(snapshot.get("evaluation_as_of"), current)
-    status = (
-        "manual_review_ready"
-        if readiness_status == "ready_for_manual_review"
-        else "shadow"
-        if readiness_status in {"shadow_evaluation", "shadow_only"}
-        else "collecting"
-    )
-    projection = {
-        "status": status,
-        "snapshot_available": True,
-        "evaluation_as_of": snapshot.get("evaluation_as_of"),
-        "snapshot_age_days": age,
-        "readiness_status": readiness_status,
-        "mature_decision_day_count": mature_days,
-        "minimum_shadow_mature_decision_days": shadow_target,
-        "minimum_manual_review_mature_decision_days": manual_target,
-        "formal_label_coverage_percent": label_coverage,
-        "minimum_manual_review_label_coverage_percent": label_target,
-        "maturity_progress_percent": _progress(mature_days, manual_target),
-        "input_counts": snapshot.get("input_counts") or {},
-        "automatic_promotion_allowed": False,
-    }
-    if age is not None and age > 2:
-        alerts.append(
-            _alert(
-                "decision_quality_snapshot_stale",
-                "warning",
-                "决策质量快照已滞后",
-                f"最近评估快照距今 {age} 个自然日。",
-                "检查每日 outcome settlement 与 quality evaluation workflow。",
-            )
-        )
-    return projection, alerts
-
-
 def build_evidence_maturity_status(
     *,
     user_id: int,
@@ -869,6 +753,7 @@ def build_evidence_maturity_status(
 ) -> dict[str, Any]:
     """Build one bounded, redacted and side-effect-free evidence status."""
 
+    _ = user_id
     current = _utc_now(now)
     worker, worker_alerts = _worker_projection()
     universe, factor_ic, factor_alerts = _factor_projection(current)
@@ -891,13 +776,11 @@ def build_evidence_maturity_status(
                 "检查荐基报告存储与 shadow 制品契约。",
             )
         ]
-    decision_quality, quality_alerts = _decision_quality_projection(user_id, current)
     alerts = (
         worker_alerts
         + factor_alerts
         + nav_alerts
         + score_alerts
-        + quality_alerts
     )
     order = {"critical": 0, "warning": 1, "info": 2}
     alerts.sort(key=lambda item: (order.get(item["severity"], 9), item["code"]))
@@ -913,7 +796,6 @@ def build_evidence_maturity_status(
             factor_ic,
             nav_observation,
             decision_score,
-            decision_quality,
         )
     ):
         overall = "collecting"
@@ -951,15 +833,6 @@ def build_evidence_maturity_status(
                 detail="只能向前追加采集，历史修订时点无法回填。",
             ),
             _blocker_entry(
-                code="decision_quality_manual_review",
-                label="决策质量成熟决策日",
-                classified=_accumulation_blocker(
-                    status=decision_quality.get("status"),
-                    age_days=decision_quality.get("snapshot_age_days"),
-                ),
-                detail="标签要求结局观察已终局且成熟，由前瞻窗口结算驱动。",
-            ),
-            _blocker_entry(
                 code="decision_score_hard_gate",
                 label="DecisionScore 硬门（先于所有维度）",
                 classified=decision_score.get("hard_gate_blocker") or {},
@@ -994,7 +867,6 @@ def build_evidence_maturity_status(
         "factor_ic": factor_ic,
         "nav_observation": nav_observation,
         "decision_score_shadow": decision_score,
-        "decision_quality": decision_quality,
         "milestones": [
             {
                 "code": "pit_membership_minimum",
@@ -1023,18 +895,6 @@ def build_evidence_maturity_status(
                 "progress_percent": factor_ic.get("economic_progress_percent_60d"),
                 "theoretical_minimum_trading_days": THEORETICAL_LONG_TRADING_DAYS,
                 "theoretical_minimum_months": 19.5,
-            },
-            {
-                "code": "decision_quality_manual_review",
-                "label": "决策质量人工复核门槛",
-                "observed": decision_quality.get("mature_decision_day_count"),
-                "required": decision_quality.get(
-                    "minimum_manual_review_mature_decision_days"
-                ),
-                "unit": "mature_decision_days",
-                "progress_percent": decision_quality.get(
-                    "maturity_progress_percent"
-                ),
             },
         ],
         "blockers": blockers,

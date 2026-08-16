@@ -65,23 +65,6 @@ def _universe_history(**_kwargs) -> dict:
     }
 
 
-def _quality_snapshot(*, user_id: int) -> dict:
-    assert user_id == 7
-    return {
-        "evaluation_as_of": "2026-07-18T00:00:00+00:00",
-        "readiness": {
-            "status": "insufficient_data",
-            "mature_decision_day_count": 0,
-            "formal_label_coverage_percent": None,
-            "minimum_shadow_mature_decision_days": 20,
-            "minimum_manual_review_mature_decision_days": 60,
-            "minimum_manual_review_label_coverage_percent": 80,
-        },
-        "input_counts": {"decision_event_count": 4},
-        "automatic_promotion_allowed": False,
-    }
-
-
 def _nav_observation_status() -> dict:
     return {
         "status": "collecting",
@@ -116,11 +99,6 @@ def _patch_sources(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         evidence_maturity,
-        "read_latest_decision_quality_snapshot",
-        _quality_snapshot,
-    )
-    monkeypatch.setattr(
-        evidence_maturity,
         "read_nav_observation_status",
         _nav_observation_status,
     )
@@ -146,8 +124,6 @@ def test_maturity_projection_distinguishes_missing_from_zero(monkeypatch) -> Non
     assert result["decision_score_shadow"]["artifact_count"] == 0
     assert result["decision_score_shadow"]["model_version"] == "decision_score.v3"
     assert result["decision_score_shadow"]["scored_coverage_percent"] is None
-    assert result["decision_quality"]["mature_decision_day_count"] == 0
-    assert result["decision_quality"]["formal_label_coverage_percent"] is None
     assert result["milestones"][1]["theoretical_minimum_months"] == 17.5
     assert any(
         alert["code"] == "nav_observation_pit_collecting"

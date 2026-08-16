@@ -19,9 +19,7 @@ DECISION_EVENT_SCHEMA_VERSION = "decision_event.v2"
 OUTCOME_OBSERVATION_SCHEMA_VERSION = "outcome_observation.v2"
 POLICY_VERSION = "decision_policy.2026-07.v5"
 FEE_MODEL_VERSION = "fee_assumption.initial_principal_haircut.v1"
-# 报告**没有冻结 prompt 出处**时（A2 之前的历史报告，以及
-# `outcome_settlement._rebuild_report_from_frozen_events` 把 analysis_facts 清空后重建的
-# 报告）用的兜底标签。
+# 报告**没有冻结 prompt 出处**时（A2 之前的历史报告）用的兜底标签。
 #
 # 这两个常量以前写的是当时的真实模板号（`analysis_prompt.2026-07.v4` /
 # `discovery_prompt.2026-07.v4`），于是长出两个毛病：

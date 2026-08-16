@@ -280,23 +280,6 @@ def _patch_sources(monkeypatch, *, reports: list[dict]) -> None:
     )
     monkeypatch.setattr(
         evidence_maturity,
-        "read_latest_decision_quality_snapshot",
-        lambda *, user_id: {
-            "evaluation_as_of": "2026-08-11T00:00:00+00:00",
-            "readiness": {
-                "status": "insufficient_data",
-                "mature_decision_day_count": 8,
-                "formal_label_coverage_percent": 5.3,
-                "minimum_shadow_mature_decision_days": 20,
-                "minimum_manual_review_mature_decision_days": 60,
-                "minimum_manual_review_label_coverage_percent": 80,
-            },
-            "input_counts": {"decision_event_count": 173},
-            "automatic_promotion_allowed": False,
-        },
-    )
-    monkeypatch.setattr(
-        evidence_maturity,
         "list_discovery_report_decision_diagnostics",
         lambda **_kwargs: reports,
     )

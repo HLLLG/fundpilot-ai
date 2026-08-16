@@ -23,7 +23,6 @@ _PUBLIC_EXACT = {
     "/api/internal/factor-ic-universe-snapshots",
     "/api/internal/factor-ic-nav-observations",
     "/api/internal/factor-ic-nav-observations/query",
-    "/api/internal/decision-quality/evaluations/latest",
     "/docs",
     "/redoc",
     "/openapi.json",

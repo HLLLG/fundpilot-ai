@@ -30,8 +30,6 @@ apps/sector-relay
 apps/api/.venv
 apps/api/tests
 apps/api/scripts/*
-!apps/api/scripts/settle_pending_outcomes.py
-!apps/api/scripts/evaluate_decision_quality.py
 !apps/api/scripts/capture_sector_direction_states.py
 deploy
 scripts

@@ -6,8 +6,7 @@
 `discovery_prompt.2026-08.v14`，所以后者读起来就是"忘了同步"。
 
 但把它们同步到实时模板是**错的**：`_prompt_version()` 只在报告没有冻结 `prompt_contract`
-时才回落到这里（A2 之前的历史报告，以及 `outcome_settlement` 从 frozen events 重建、把
-`analysis_facts` 清空的报告）。给一份根本没记录 prompt 出处的报告贴上今天的模板号是伪造
+时才回落到这里（A2 之前的历史报告）。给一份根本没记录 prompt 出处的报告贴上今天的模板号是伪造
 归因，还会让两个真正不同的 variant 在 `variant_hash` 上撞成同一个。
 
 本文件把正确语义锁住，特别是"不要同步"这一条——它反直觉，只有测试能拦住善意的修复。

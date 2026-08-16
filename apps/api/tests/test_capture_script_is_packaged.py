@@ -29,8 +29,6 @@ API_ROOT = Path(__file__).resolve().parents[1]
 #: 由定时任务/运维通过 `docker compose exec api python scripts/<name>` 调用的脚本。
 #: 新增这类脚本时必须同时更新两份 Dockerfile 与两份 .dockerignore。
 SCHEDULED_SCRIPTS = (
-    "settle_pending_outcomes.py",
-    "evaluate_decision_quality.py",
     "capture_sector_direction_states.py",
 )
 
@@ -81,28 +79,6 @@ def test_capture_workflow_invokes_the_packaged_path() -> None:
     # 容器 WORKDIR 是 /app，脚本落在 /app/scripts/，因此调用侧必须是相对路径而不是
     # apps/api/scripts/...（后者在容器里不存在）。
     assert "apps/api/scripts/capture_sector_direction_states.py" not in workflow
-
-
-def test_outcome_settlement_workflow_keeps_long_ssh_sessions_alive() -> None:
-    """结算必须走脱离 SSH 的 compose exec helper：握手 RST 要重试，空闲 NAT
-    掐线也不能带走 docker exec。"""
-    helper = "scripts/ci/run-lighthouse-compose-exec.sh"
-    workflow = (
-        REPO_ROOT / ".github" / "workflows" / "outcome-settlement.yml"
-    ).read_text(encoding="utf-8")
-    helper_text = (REPO_ROOT / helper).read_text(encoding="utf-8")
-    assert helper in workflow
-    assert workflow.count(helper) == 2
-    assert "python -u scripts/settle_pending_outcomes.py" in workflow
-    assert "python -u scripts/evaluate_decision_quality.py" in workflow
-    assert "apps/api/scripts/settle_pending_outcomes.py" not in workflow
-    assert "ConnectTimeout=15" in helper_text
-    assert "IPQoS=none" in helper_text
-    assert "TCPKeepAlive=yes" in helper_text
-    assert "ServerAliveCountMax=10" in helper_text
-    assert "setsid --fork" in helper_text
-    assert "PYTHONUNBUFFERED=1" in helper_text
-    assert "/srv/fundpilot/deploy.lock" in helper_text
 
 
 # ---------------------------------------------------------------------------

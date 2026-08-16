@@ -272,18 +272,6 @@ if [[ "$worker_ready" != "true" ]]; then
     false
 fi
 
-# A process-level health endpoint cannot detect a broken evaluation contract.
-# Exercise the exact scheduled snapshot command without writing a snapshot
-# before making the new release visible.
-evaluation_as_of="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-"${compose[@]}" exec -T api \
-    python scripts/evaluate_decision_quality.py \
-    --all-users \
-    --evaluation-as-of "$evaluation_as_of" \
-    --window-days 365 \
-    --dry-run \
-    --format summary
-
 mkdir -p "$web_root"
 web_was_activated=true
 rsync -a --delete "$release_web/" "$web_root/"

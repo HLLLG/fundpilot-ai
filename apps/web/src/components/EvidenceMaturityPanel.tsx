@@ -170,7 +170,6 @@ function MaturityContent({ data }: { data: EvidenceMaturityStatus }) {
   const factor = data.factor_ic;
   const navObservation = data.nav_observation;
   const score = data.decision_score_shadow;
-  const quality = data.decision_quality;
   const heartbeatJobs = data.worker.jobs.filter((job) => job.persistent);
   const pitLabel = factor.nav_revision_pit
     ? "完整 NAV-PIT"
@@ -330,38 +329,6 @@ function MaturityContent({ data }: { data: EvidenceMaturityStatus }) {
           <p className="mt-3 text-[11px] leading-5 text-slate-500">
             当前 {score.model_version ?? "影子版本"} 独立累计；旧版本不混算。只比较排序差异，
             不参与线上推荐，也不会自动调权。
-          </p>
-        </article>
-
-        <article className="rounded-xl border border-[var(--line)] bg-white p-3">
-          <div className="flex items-center justify-between gap-2">
-            <h4 className="text-sm font-bold text-slate-900">决策质量前向证据</h4>
-            <StatusTag status={quality.status} />
-          </div>
-          <div className="mt-3">
-            <ProgressLine
-              label="成熟决策日（人工复核门槛）"
-              value={quality.mature_decision_day_count}
-              target={quality.minimum_manual_review_mature_decision_days}
-              percent={quality.maturity_progress_percent}
-            />
-          </div>
-          <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
-            <div>
-              <dt className="text-slate-500">正式标签覆盖</dt>
-              <dd className="mt-0.5 font-bold text-slate-800">
-                <EvidenceValue value={quality.formal_label_coverage_percent} suffix="%" />
-              </dd>
-            </div>
-            <div>
-              <dt className="text-slate-500">最低标签覆盖</dt>
-              <dd className="mt-0.5 font-bold text-slate-800">
-                {quality.minimum_manual_review_label_coverage_percent}%
-              </dd>
-            </div>
-          </dl>
-          <p className="mt-3 text-[11px] leading-5 text-slate-500">
-            达到门槛也只进入人工复核，automatic promotion 始终关闭。
           </p>
         </article>
       </div>

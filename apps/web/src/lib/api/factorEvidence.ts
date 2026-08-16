@@ -186,20 +186,6 @@ export type EvidenceMaturityStatus = {
     component_blockers?: Record<string, EvidenceMaturityBlockerDetail> | null;
     automatic_promotion_allowed: false;
   };
-  decision_quality: {
-    status: string;
-    snapshot_available: boolean;
-    evaluation_as_of?: string | null;
-    snapshot_age_days?: number | null;
-    readiness_status: string;
-    mature_decision_day_count?: number | null;
-    minimum_shadow_mature_decision_days: number;
-    minimum_manual_review_mature_decision_days: number;
-    formal_label_coverage_percent?: number | null;
-    minimum_manual_review_label_coverage_percent: number;
-    maturity_progress_percent?: number | null;
-    automatic_promotion_allowed: false;
-  };
   milestones: EvidenceMaturityMilestone[];
   /** 当前所有非空缺口，以及等待到底有没有用。 */
   blockers?: EvidenceMaturityBlocker[];

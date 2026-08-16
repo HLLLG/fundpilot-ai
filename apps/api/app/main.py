@@ -152,7 +152,6 @@ from app.services.news_freshness import build_news_pipeline_context
 from app.services.news_service import NewsService
 from app.services.portfolio_mutation_guard import PortfolioMutationLockError
 from app.services.trading_session import build_trading_session
-from app.routes.decision_quality import router as decision_quality_router
 from app.routes.factor_evidence import router as factor_evidence_router
 from app.routes.market_diagnostics import router as market_diagnostics_router
 from app.routes.portfolio_risk import router as portfolio_risk_router
@@ -186,7 +185,6 @@ app.add_middleware(
 )
 app.include_router(factor_evidence_router)
 app.include_router(market_diagnostics_router)
-app.include_router(decision_quality_router)
 app.include_router(portfolio_risk_router)
 app.include_router(admin_users_router)
 app.include_router(performance_router)

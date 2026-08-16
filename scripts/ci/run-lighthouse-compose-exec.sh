@@ -13,11 +13,10 @@
 # 4. Handshake retries must snapshot the heredoc (run #38). `set -e` plus
 #    consuming stdin on the first 255 would skip retries or send an empty
 #    remote script. Snapshot stdin and keep looping on transport errors.
-# 5. A live `deploy.sh` attached to SSH (build + 365-day quality dry-run)
-#    blocks later banner exchange (settlement #40). `--host` detaches that
-#    script the same way compose exec is detached.
+# 5. A live `deploy.sh` attached to SSH can block later banner exchange.
+#    `--host` detaches that script the same way compose exec is detached.
 #
-# Settlement is idempotent; the poll loop never relaunches a live job.
+# Remote jobs are polled by pid; the loop never relaunches a live job.
 set -euo pipefail
 
 : "${SSH_KEY_PATH:?SSH_KEY_PATH is empty}"
@@ -33,8 +32,8 @@ fi
 
 if [[ $# -lt 2 ]]; then
   echo "usage: $0 [--host] <job-name> <remote-argv...>" >&2
-  echo "example: $0 outcome-settlement python -u scripts/settle_pending_outcomes.py" >&2
   echo "example: $0 --host lighthouse-deploy /tmp/fundpilot-deploy.sh <sha>" >&2
+  echo "example: $0 sector-capture python -u scripts/capture_sector_direction_states.py" >&2
   exit 64
 fi
 
