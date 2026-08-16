@@ -1,0 +1,22 @@
+scripts/ci/open-lighthouse-api-tunnel.sh
+  s_8318f6c8d1f5e9::t_787ae2505ee09f 38
+  s_8318f6c8d1f5e9::t_f57eb62362afb3 6-10
+apps/api/tests/test_factor_ic_ssh_tunnel.py
+  s_8318f6c8d1f5e9::t_ff56ce5fb773af 19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "944bc3f3214603ef00f06ff62826cba7ae66d0b8",
+  "prompts": {},
+  "sessions": {
+    "s_8318f6c8d1f5e9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c77ff2e6-543d-41fb-ab5b-cbe7235ea92a",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
