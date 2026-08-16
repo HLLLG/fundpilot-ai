@@ -58,7 +58,9 @@
 | 模式 | 说明 |
 |------|------|
 | 快速 | Flash；仅基于已生成日报与历史对话作答。 |
-| 深度 | Pro；可按需查当前持仓、报告依据、基金目录、方向账本或新闻，也可在你明确要求时触发既有日报/荐基任务。仓位比例与质量门仍由原流水线决定。追问、日报任务与荐基任务的节点轨迹可在报告诊断「管线轨迹」查看。 |
+| 深度 | Pro；可按需查当前持仓、报告依据、基金目录、方向账本或新闻，也可在你明确要求时触发既有日报/荐基任务。仓位比例与质量门仍由原流水线决定。 |
+
+**管线轨迹（可观测、不改决策权）：** 深度追问、日报任务与荐基任务的节点回放写在报告诊断「管线轨迹」。落库只记节点名、归属（代码 / 模型工人 / 追问工具循环）和阶段计数，不含 Prompt、持仓或工具原文。主报告生成仍由原流水线决定仓位与质量门；LangGraph 只负责编排与回放。关闭：`FUND_AI_LANGGRAPH_ENABLED=false`。完整契约见 [项目上下文](docs/PROJECT_CONTEXT.md#报告追问快速-vs-深度)。
 
 ## 推荐基金
 
@@ -200,6 +202,8 @@ DeepSeek 请求会复用进程级连接池；仅在 TCP/TLS 尚未建立时自�
 | `FUND_AI_NEWS_SOURCES` | 新闻源：`eastmoney`、`announcement`、`macro` |
 | `FUND_AI_NEWS_SUMMARIZE` | 是否用 Flash 按主题生成 `topic_briefs` |
 | `FUND_AI_NEWS_MACRO_TOPIC` | 宏观主题检索词（如上证指数） |
+| `FUND_AI_LANGGRAPH_ENABLED` | 默认 `true`。追问 / 日报 Job / 荐基 Job 走 LangGraph 编排；`false` 回线性实现，不改仓位与质量门 |
+| `FUND_AI_LANGGRAPH_RUN_RETENTION_DAYS` | 节点轨迹保留天数，默认 14 |
 
 ## 安装
 
