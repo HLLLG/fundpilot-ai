@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowDown, Loader2, MessageCircle, Send, Sparkles, Zap } from "lucide-react";
 import type { AnalysisMode, DiscoveryChatMessage } from "@/lib/api";
 import { ChatMarkdown } from "@/components/ChatMarkdown";
+import { emitAgentJobStarted } from "@/lib/agentJobEvents";
 import { fetchDiscoveryChatHistory, streamDiscoveryChat } from "@/lib/api";
 import { loadReportChatMode, saveReportChatMode } from "@/lib/storage";
 import { useChatAutoScroll } from "@/lib/useChatAutoScroll";
@@ -33,6 +34,7 @@ export function DiscoveryChatPanel({
   const [chatMode, setChatMode] = useState<AnalysisMode>("fast");
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [statusHint, setStatusHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const localMessageIdRef = useRef(0);
   const {
@@ -85,6 +87,7 @@ export function DiscoveryChatPanel({
     const trimmed = text.trim();
     if (!trimmed || isStreaming) return;
     setError(null);
+    setStatusHint(null);
     setIsStreaming(true);
     pinToBottomForSend();
     const draftId = allocLocalMessageId("draft");
@@ -109,7 +112,14 @@ export function DiscoveryChatPanel({
     setInput("");
     try {
       await streamDiscoveryChat(reportId, trimmed, chatMode, (event) => {
+        if (event.type === "status") {
+          setStatusHint(event.content);
+        }
+        if (event.type === "job_started" && event.job_id && event.job_kind) {
+          emitAgentJobStarted({ jobKind: event.job_kind, jobId: event.job_id });
+        }
         if (event.type === "token") {
+          setStatusHint(null);
           setMessages((prev) =>
             prev.map((item) =>
               item.id === draftId ? { ...item, content: item.content + event.content } : item,
@@ -117,6 +127,7 @@ export function DiscoveryChatPanel({
           );
         }
         if (event.type === "done") {
+          setStatusHint(null);
           setMessages((prev) =>
             prev.map((item) => (item.id === draftId ? { ...event.message, pending: false } : item)),
           );
@@ -196,6 +207,9 @@ export function DiscoveryChatPanel({
             )}
           </div>
         ))}
+        {statusHint ? (
+          <p className="text-center text-[11px] text-slate-500">{statusHint}</p>
+        ) : null}
         </div>
 
         {showScrollToBottom ? (

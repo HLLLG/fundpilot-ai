@@ -207,3 +207,53 @@ export async function fetchSectorSignalBacktest(
   }
   return response.json();
 }
+
+
+export type GraphOwner = "code" | "worker" | "agent" | string;
+
+export type GraphRunEvent = {
+  seq: number;
+  event_type: string;
+  node?: string | null;
+  owner?: GraphOwner | null;
+  payload?: Record<string, unknown>;
+  created_at: string;
+};
+
+export type GraphRun = {
+  schema_version?: string;
+  id: string;
+  graph_name: string;
+  status: string;
+  thread_id: string;
+  summary?: Record<string, unknown>;
+  error?: string | null;
+  created_at: string;
+  updated_at: string;
+  events?: GraphRunEvent[];
+};
+
+export async function fetchGraphRuns(limit = 12, graphName?: string): Promise<GraphRun[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (graphName) {
+    params.set("graph_name", graphName);
+  }
+  const response = await apiFetch(`${API_BASE}/api/diagnostics/graph-runs?${params.toString()}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  const body = (await response.json()) as { runs?: GraphRun[] };
+  return body.runs ?? [];
+}
+
+export async function fetchGraphRun(runId: string): Promise<GraphRun> {
+  const response = await apiFetch(`${API_BASE}/api/diagnostics/graph-runs/${runId}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+}

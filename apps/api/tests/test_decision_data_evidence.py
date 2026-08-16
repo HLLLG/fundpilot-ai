@@ -972,6 +972,14 @@ def test_blocked_report_chat_prompts_forbid_recreating_executable_advice():
     assert "不得自行换算或补写固定金额、真实份额" in percentage_prompt
     assert "不得给出买入、加仓" in discovery_prompt
 
+    agent_prompt = _report_chat_system_prompt(
+        "日报",
+        news_tool_enabled=True,
+        agent_tools_enabled=True,
+    )
+    assert "confirm=true" in agent_prompt
+    assert "不能改仓位百分比" in agent_prompt
+
 
 def test_async_analysis_keeps_original_client_holdings_for_worker_mismatch_audit(monkeypatch):
     from app import main

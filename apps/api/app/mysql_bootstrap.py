@@ -1805,6 +1805,35 @@ def _ensure_mysql_schema_locked(
             INDEX idx_ops_route_hours_bucket (bucket_start)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
+        """
+        CREATE TABLE IF NOT EXISTS langgraph_runs (
+            id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            userId BIGINT NOT NULL,
+            graph_name VARCHAR(64) NOT NULL,
+            status VARCHAR(16) NOT NULL,
+            thread_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            summary TEXT NULL,
+            error VARCHAR(240) NULL,
+            created_at VARCHAR(64) NOT NULL,
+            updated_at VARCHAR(64) NOT NULL,
+            PRIMARY KEY (id),
+            INDEX idx_langgraph_runs_user_created (userId, created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS langgraph_run_events (
+            id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            run_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            seq INT NOT NULL,
+            event_type VARCHAR(32) NOT NULL,
+            node VARCHAR(64) NULL,
+            owner VARCHAR(16) NULL,
+            payload TEXT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            PRIMARY KEY (id),
+            INDEX idx_langgraph_run_events_run_seq (run_id, seq)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
     ]
     for statement in statements:
         cursor.execute(statement)

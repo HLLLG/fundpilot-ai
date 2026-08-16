@@ -61,6 +61,11 @@ from app.services.stream_session_store import (
     set_stream_session_stage,
 )
 from app.services.decision_clock import capture_decision_clock
+from app.services.langgraph_trace import (
+    begin_stream_run,
+    finish_stream_run,
+    try_get_stream_recorder,
+)
 from app.services.decision_time_call import (
     call_with_optional_time,
     prefetch_fund_announcements_compat,
@@ -92,6 +97,8 @@ def stream_analysis(
     decision_at = decision_clock.decision_at
     session = create_stream_session()
     started_at = time.monotonic()
+    recorder = begin_stream_run("daily_report_stream")
+    stream_status = "failed"
     try:
         raise_if_stream_cancelled(stop)
         preflight = resolve_portfolio_preflight(
@@ -434,6 +441,7 @@ def stream_analysis(
     except Exception as exc:  # noqa: BLE001
         yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}
     finally:
+        finish_stream_run(recorder, stream_status)
         delete_stream_session(session.session_id)
         reset_request_user_id(ctx_token)
 
@@ -446,6 +454,9 @@ def _emit_stage(
     started_at: float | None = None,
 ) -> dict[str, Any]:
     set_stream_session_stage(session_id, stage)
+    recorder = try_get_stream_recorder()
+    if recorder is not None:
+        recorder.stage(stage)
     return _stage(stage, label, started_at=started_at)
 
 
@@ -610,6 +621,9 @@ def _stage(
 
 
 def _done(report: Report) -> dict[str, Any]:
+    recorder = try_get_stream_recorder()
+    if recorder is not None:
+        recorder.mark_completed()
     return {
         "type": "done",
         "report_id": report.id,

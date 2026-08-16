@@ -18,6 +18,19 @@ def run_analysis(
     request: AnalysisRequest,
     on_progress: ProgressCallback | None = None,
 ) -> Report:
+    from app.config import get_settings
+
+    if getattr(get_settings(), "langgraph_enabled", True):
+        from app.services.graphs.daily_report import run_daily_report_graph
+
+        return run_daily_report_graph(request, on_progress)
+    return run_analysis_linear(request, on_progress)
+
+
+def run_analysis_linear(
+    request: AnalysisRequest,
+    on_progress: ProgressCallback | None = None,
+) -> Report:
     decision_clock = capture_decision_clock()
     preflight = resolve_portfolio_preflight(
         request.holdings,

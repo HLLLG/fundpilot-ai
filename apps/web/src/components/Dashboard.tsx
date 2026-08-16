@@ -115,6 +115,7 @@ import { InlineNotice } from "@/components/InlineNotice";
 import { activeAnalysisRolePrompt } from "@/lib/analysisPrompt";
 import { resolveReportProviderStatus } from "@/lib/reportPresentation";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
+import { subscribeAgentJobStarted } from "@/lib/agentJobEvents";
 import {
   deleteDailyReportDetailCache,
   isDailyReportDetailCacheFresh,
@@ -427,6 +428,16 @@ export function Dashboard() {
       return result?.holdings;
     },
   });
+
+  useEffect(() => {
+    return subscribeAgentJobStarted((event) => {
+      if (event.jobKind === "analysis") {
+        setActiveJobId(event.jobId);
+        return;
+      }
+      setDiscoveryJobId(event.jobId);
+    });
+  }, []);
 
   const loadHistory = useCallback(async (options?: { force?: boolean }): Promise<Report[] | null> => {
     const userId = user?.id;
