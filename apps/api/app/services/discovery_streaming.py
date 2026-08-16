@@ -57,6 +57,11 @@ from app.services.discovery_facts import build_discovery_facts
 from app.services.discovery_judge import judge_parsed_discovery_report
 from app.services.discovery_offline import build_offline_discovery_report
 from app.services.discovery_pipeline import DISCOVERY_JOB_STAGES
+from app.services.langgraph_trace import (
+    begin_stream_run,
+    finish_stream_run,
+    try_get_stream_recorder,
+)
 from app.services.discovery_sector_opportunity import (
     build_sector_divergence_map_for_opportunities,
     build_sector_flow_map_for_opportunities,
@@ -187,6 +192,7 @@ def _stream_discovery(
     ctx_token = set_request_user_id(user_id)
     settings = get_settings()
     runtime = resolve_analysis_runtime(settings, request.analysis_mode)
+    recorder = begin_stream_run("discovery_scan_stream")
     try:
         raise_if_stream_cancelled(stop)
         yield _stage("connected", started_at=started_at)
@@ -871,6 +877,7 @@ def _stream_discovery(
     except Exception as exc:  # noqa: BLE001
         yield {"type": "error", "message": f"{type(exc).__name__}: {exc}"}
     finally:
+        finish_stream_run(recorder, "failed")
         reset_request_user_id(ctx_token)
 
 
@@ -904,6 +911,9 @@ def _stage(
     *,
     started_at: float | None = None,
 ) -> dict[str, Any]:
+    recorder = try_get_stream_recorder()
+    if recorder is not None:
+        recorder.stage(stage)
     payload: dict[str, Any] = {
         "type": "stage",
         "stage": stage,
@@ -960,6 +970,9 @@ def _prepare_candidate_benchmark_context(
 
 
 def _done(report: FundDiscoveryReport) -> dict[str, Any]:
+    recorder = try_get_stream_recorder()
+    if recorder is not None:
+        recorder.mark_completed()
     return {
         "type": "done",
         "report_id": report.id,

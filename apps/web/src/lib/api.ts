@@ -66,6 +66,8 @@ export type {
 export {
   fetchFundReturnDistribution,
   fetchMarketBreadth,
+  fetchGraphRun,
+  fetchGraphRuns,
   fetchSectorSignalBacktest,
   fetchShadowEscalationDigest,
 } from "@/lib/api/marketDiagnostics";
@@ -86,6 +88,8 @@ export type {
 export type {
   FundReturnDistribution,
   FundReturnDistributionBinKey,
+  GraphRun,
+  GraphRunEvent,
   MarketBreadthSignal,
   SectorSignalBacktest,
   SectorSignalBacktestRule,
@@ -2041,7 +2045,23 @@ type ReportChatStreamEvent =
   | { type: "user_message"; message: ReportChatMessage }
   | { type: "token"; content: string }
   | { type: "status"; content: string }
-  | { type: "done"; message: ReportChatMessage; chat_mode?: ReportChatMode; model?: string }
+  | { type: "job_started"; job_kind?: "analysis" | "discovery"; job_id?: string }
+  | {
+      type: "graph";
+      run_id?: string;
+      graph_name?: string;
+      node?: string;
+      status?: string;
+      owner?: string;
+      label?: string;
+    }
+  | {
+      type: "done";
+      message: ReportChatMessage;
+      chat_mode?: ReportChatMode;
+      model?: string;
+      graph_run_id?: string;
+    }
   | { type: "error"; message: string };
 
 import { getAccessToken, type AuthSession, type AuthUser } from "@/lib/auth";
@@ -2693,7 +2713,23 @@ type DiscoveryChatStreamEvent =
   | { type: "user_message"; message: DiscoveryChatMessage }
   | { type: "token"; content: string }
   | { type: "status"; content: string }
-  | { type: "done"; message: DiscoveryChatMessage; chat_mode?: AnalysisMode; model?: string }
+  | { type: "job_started"; job_kind?: "analysis" | "discovery"; job_id?: string }
+  | {
+      type: "graph";
+      run_id?: string;
+      graph_name?: string;
+      node?: string;
+      status?: string;
+      owner?: string;
+      label?: string;
+    }
+  | {
+      type: "done";
+      message: DiscoveryChatMessage;
+      chat_mode?: AnalysisMode;
+      model?: string;
+      graph_run_id?: string;
+    }
   | { type: "error"; message: string };
 
 export async function streamDiscoveryChat(
@@ -2970,6 +3006,7 @@ export async function streamReportChat(
   handlers: {
     onUserMessage?: (message: ReportChatMessage) => void;
     onStatus?: (content: string) => void;
+    onJobStarted?: (job: { jobKind: "analysis" | "discovery"; jobId: string }) => void;
     onToken: (chunk: string) => void;
     onDone: (message: ReportChatMessage) => void;
     onError?: (message: string) => void;
@@ -3012,6 +3049,14 @@ export async function streamReportChat(
           handlers.onUserMessage?.(event.message);
         } else if (event.type === "status") {
           handlers.onStatus?.(event.content);
+        } else if (event.type === "job_started") {
+          if (event.job_id && (event.job_kind === "analysis" || event.job_kind === "discovery")) {
+            handlers.onJobStarted?.({ jobKind: event.job_kind, jobId: event.job_id });
+          }
+        } else if (event.type === "graph") {
+          if (event.node && event.status === "completed") {
+            handlers.onStatus?.(`节点 ${event.node} 完成`);
+          }
         } else if (event.type === "token") {
           handlers.onToken(event.content);
         } else if (event.type === "done") {

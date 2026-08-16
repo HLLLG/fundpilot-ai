@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowDown, Download, Gauge, Loader2, MessageCircle, Send, Zap } from "lucide-react";
 import type { ReportChatMessage, ReportChatMode } from "@/lib/api";
 import { ChatMarkdown } from "@/components/ChatMarkdown";
+import { emitAgentJobStarted } from "@/lib/agentJobEvents";
 import { fetchReportChatHistory, fetchReportChatMarkdown, streamReportChat } from "@/lib/api";
 import { loadReportChatMode, saveReportChatMode } from "@/lib/storage";
 import { useChatAutoScroll } from "@/lib/useChatAutoScroll";
@@ -130,6 +131,7 @@ export function ReportChatPanel({
           ]);
         },
         onStatus: (content) => setStatusHint(content),
+        onJobStarted: (job) => emitAgentJobStarted(job),
         onToken: (chunk) => {
           setStatusHint(null);
           const assistantId = draftAssistantId.current;
@@ -248,7 +250,7 @@ export function ReportChatPanel({
               <span
                 className={`block text-[9px] font-semibold ${chatMode === "deep" ? "text-[#f4ead4]/80" : "text-[var(--muted)]"}`}
               >
-                Pro · 可拉新闻
+                Pro · 可查证/触发任务
               </span>
             </span>
           </button>

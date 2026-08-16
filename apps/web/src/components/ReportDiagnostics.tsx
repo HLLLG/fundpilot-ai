@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 
+import { GraphRunsPanel } from "@/components/GraphRunsPanel";
 import { NewsPreviewPanel } from "@/components/NewsPreviewPanel";
 import { RecommendationAccuracyPanel } from "@/components/RecommendationAccuracyPanel";
 import { SectorSignalBacktestPanel } from "@/components/SectorSignalBacktestPanel";
@@ -27,6 +28,7 @@ export function ReportDiagnostics({ holdings, profile }: ReportDiagnosticsProps)
 
   return (
     <div className="grid gap-4" data-testid="diagnostics-content">
+      <GraphRunsPanel />
       <ShadowEscalationDigestCard />
       <NewsPreviewPanel holdings={holdings} profile={profile} />
       <RecommendationAccuracyPanel />

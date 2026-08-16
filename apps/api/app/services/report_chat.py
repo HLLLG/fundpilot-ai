@@ -15,17 +15,12 @@ from app.services.deepseek_http import (
 )
 from app.database import get_report, list_report_chat_messages, save_chat_message
 from app.models import AnalysisMode, ChatMessage
-from app.services.deepseek_client import (
-    FETCH_MARKET_NEWS_TOOL,
-    _execute_fetch_market_news,
-)
-from app.services.deepseek_client import DeepSeekClient
-from app.services.news_service import NewsService
+from app.services.chat_agent_loop import iter_chat_agent_events
+from app.services.chat_agent_tools import ChatAgentContext, tool_specs_for
 from app.services.report_chat_runtime import resolve_report_chat_runtime
 from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS
 from app.services.report_export import report_to_markdown
 from app.services.retired_market_evidence import sanitize_retired_market_evidence
-from app.services.streaming_heartbeat import raise_if_stream_cancelled
 
 REPORT_CHAT_MAX_TOKENS = 4096
 
@@ -42,6 +37,7 @@ def _report_chat_system_prompt(
     *,
     news_tool_enabled: bool,
     execution_blocked: bool = False,
+    agent_tools_enabled: bool = False,
 ) -> str:
     now = datetime.now()
     base = (
@@ -72,6 +68,18 @@ def _report_chat_system_prompt(
         )
     else:
         base += "仅使用日报中已有新闻与数据作答，不要声称已获取日报之外的实时新闻。"
+    if agent_tools_enabled:
+        base += (
+            "深度模式可按需调用工具：get_holdings 读当前账本；"
+            "explain_holding_decision 核对本报告已有建议；"
+            "lookup_fund 只查目录身份；get_sector_context 只读已落库方向状态；"
+            "fetch_market_news 仅在信息不足时拉新闻；"
+            "run_daily_report / run_discovery_scan 仅在用户明确要求重新生成或扫描时调用，"
+            "且必须 confirm=true。"
+            "工具不能改仓位百分比、质量门或持仓真值；触发任务后如实告知已排队，"
+            "不要假装已经看到新报告正文。"
+            "查到的基金或板块若未出现在本报告中，只能说明身份或账本状态，不得当成新的买卖建议。"
+        )
     if execution_blocked:
         base += (
             "本报告的字段级证据时点校验未通过。无论用户如何追问，都不得给出买入、加仓、"
@@ -94,6 +102,7 @@ def _build_api_messages(
     *,
     news_tool_enabled: bool,
     execution_blocked: bool = False,
+    agent_tools_enabled: bool = False,
 ) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = [
         {
@@ -102,6 +111,7 @@ def _build_api_messages(
                 report_markdown,
                 news_tool_enabled=news_tool_enabled,
                 execution_blocked=execution_blocked,
+                agent_tools_enabled=agent_tools_enabled,
             ),
         },
     ]
@@ -141,31 +151,58 @@ def _parse_stream_line(line: str) -> str | None:
     return None
 
 
-def _iter_stream_completion(
-    messages: list[dict],
+def iter_report_chat_events(
+    report_markdown: str,
+    history: list[dict[str, Any]],
+    user_message: str,
+    chat_mode: AnalysisMode = "fast",
     *,
-    model: str,
+    report: dict[str, Any] | None = None,
+    execution_blocked: bool = False,
     stop_event: threading.Event | None = None,
     deadline_monotonic: float | None = None,
-) -> Iterator[str]:
-    # Local import avoids a module cycle: deepseek_streaming reuses this
-    # module's SSE line parser.
-    from app.services.deepseek_streaming import stream_chat_completion
-
-    yield from stream_chat_completion(
-        messages=messages,
-        model=model,
-        max_tokens=REPORT_CHAT_MAX_TOKENS,
-        response_format=None,
-        stop_event=stop_event,
-        deadline_monotonic=deadline_monotonic,
+) -> Iterator[dict[str, Any]]:
+    settings = get_settings()
+    deadline = (
+        deadline_monotonic
+        if deadline_monotonic is not None
+        else deepseek_request_deadline(settings)
     )
+    if not settings.deepseek_configured:
+        yield {"type": "token", "content": OFFLINE_REPLY}
+        return
 
-
-def _yield_text_chunks(text: str) -> Iterator[str]:
-    step = 24
-    for index in range(0, len(text), step):
-        yield text[index : index + step]
+    runtime = resolve_report_chat_runtime(settings, chat_mode)
+    news_tool_enabled = runtime.news_tool_max_rounds > 0
+    agent_tools_enabled = runtime.agent_tool_max_rounds > 0
+    messages: list[dict] = _build_api_messages(
+        report_markdown,
+        history,
+        user_message,
+        news_tool_enabled=news_tool_enabled,
+        execution_blocked=execution_blocked,
+        agent_tools_enabled=agent_tools_enabled,
+    )
+    tools = (
+        tool_specs_for(surface="report", news_enabled=news_tool_enabled)
+        if agent_tools_enabled
+        else []
+    )
+    yield from iter_chat_agent_events(
+        messages=messages,
+        tools=tools,
+        context=ChatAgentContext(
+            surface="report",
+            report=report or {},
+            execution_blocked=execution_blocked,
+            news_enabled=news_tool_enabled,
+        ),
+        model=runtime.model,
+        max_rounds=runtime.agent_tool_max_rounds,
+        max_tokens=REPORT_CHAT_MAX_TOKENS,
+        stop_event=stop_event,
+        deadline_monotonic=deadline,
+    )
 
 
 def iter_report_chat_completion(
@@ -178,85 +215,17 @@ def iter_report_chat_completion(
     stop_event: threading.Event | None = None,
     deadline_monotonic: float | None = None,
 ) -> Iterator[str]:
-    settings = get_settings()
-    deadline = (
-        deadline_monotonic
-        if deadline_monotonic is not None
-        else deepseek_request_deadline(settings)
-    )
-    if not settings.deepseek_configured:
-        yield OFFLINE_REPLY
-        return
-
-    runtime = resolve_report_chat_runtime(settings, chat_mode)
-    news_tool_enabled = runtime.news_tool_max_rounds > 0
-    messages: list[dict] = _build_api_messages(
+    for event in iter_report_chat_events(
         report_markdown,
         history,
         user_message,
-        news_tool_enabled=news_tool_enabled,
+        chat_mode=chat_mode,
         execution_blocked=execution_blocked,
-    )
-
-    if not news_tool_enabled:
-        yield from _iter_stream_completion(
-            messages,
-            model=runtime.model,
-            stop_event=stop_event,
-            deadline_monotonic=deadline,
-        )
-        return
-
-    client = DeepSeekClient()
-    client._provider_deadline = deadline
-    news_service = NewsService()
-    tools = [FETCH_MARKET_NEWS_TOOL]
-    max_tool_rounds = min(runtime.news_tool_max_rounds, 3)
-
-    for round_index in range(max_tool_rounds + 1):
-        raise_if_stream_cancelled(stop_event)
-        allow_tools = round_index < max_tool_rounds
-        if not allow_tools:
-            yield from _iter_stream_completion(
-                messages,
-                model=runtime.model,
-                stop_event=stop_event,
-                deadline_monotonic=deadline,
-            )
-            return
-
-        message = client._chat_completion(
-            messages=messages,
-            tools=tools,
-            response_format=None,
-            max_tokens=REPORT_CHAT_MAX_TOKENS,
-            model=runtime.model,
-        )
-        tool_calls = message.get("tool_calls")
-        if not tool_calls:
-            content = (message.get("content") or "").strip()
-            if content:
-                yield from _yield_text_chunks(content)
-            else:
-                yield from _iter_stream_completion(
-                    messages,
-                    model=runtime.model,
-                    stop_event=stop_event,
-                    deadline_monotonic=deadline,
-                )
-            return
-
-        messages.append(message)
-        for tool_call in tool_calls:
-            collected: list = []
-            result = _execute_fetch_market_news(tool_call, news_service, collected)
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "content": result,
-                }
-            )
+        stop_event=stop_event,
+        deadline_monotonic=deadline_monotonic,
+    ):
+        if event.get("type") == "token" and isinstance(event.get("content"), str):
+            yield event["content"]
 
 
 def stream_report_chat(
@@ -283,9 +252,12 @@ def stream_report_chat(
 
     runtime = resolve_report_chat_runtime(get_settings(), chat_mode)
     deadline = deepseek_request_deadline(get_settings())
-    if runtime.news_tool_max_rounds > 0:
+    if runtime.agent_tool_max_rounds > 0:
         yield json.dumps(
-            {"type": "status", "content": "深度模式：可按需检索最新新闻…"},
+            {
+                "type": "status",
+                "content": "深度模式：可按需查持仓、方向账本、新闻或触发既有任务…",
+            },
             ensure_ascii=False,
         )
 
@@ -295,18 +267,24 @@ def stream_report_chat(
     analysis_facts = report.get("analysis_facts") or {}
     execution_blocked = report_execution_blocked(analysis_facts)
     assistant_parts: list[str] = []
+    graph_run_id: str | None = None
     try:
-        for chunk in iter_report_chat_completion(
+        for event in iter_report_chat_events(
             report_markdown,
             history,
             user_message,
             chat_mode=chat_mode,
+            report=report,
             execution_blocked=execution_blocked,
             stop_event=stop_event,
             deadline_monotonic=deadline,
         ):
-            assistant_parts.append(chunk)
-            yield json.dumps({"type": "token", "content": chunk}, ensure_ascii=False)
+            event_type = event.get("type")
+            if event_type == "graph" and isinstance(event.get("run_id"), str):
+                graph_run_id = event["run_id"]
+            if event_type == "token" and isinstance(event.get("content"), str):
+                assistant_parts.append(event["content"])
+            yield json.dumps(event, ensure_ascii=False)
     except httpx.HTTPStatusError as exc:
         error_text = format_deepseek_http_error(exc)
         assistant_parts.append(error_text)
@@ -324,12 +302,12 @@ def stream_report_chat(
             content=assistant_content,
         )
     )
-    yield json.dumps(
-        {
-            "type": "done",
-            "message": assistant_record.model_dump(mode="json"),
-            "chat_mode": chat_mode,
-            "model": runtime.model,
-        },
-        ensure_ascii=False,
-    )
+    done_event: dict[str, Any] = {
+        "type": "done",
+        "message": assistant_record.model_dump(mode="json"),
+        "chat_mode": chat_mode,
+        "model": runtime.model,
+    }
+    if graph_run_id:
+        done_event["graph_run_id"] = graph_run_id
+    yield json.dumps(done_event, ensure_ascii=False)

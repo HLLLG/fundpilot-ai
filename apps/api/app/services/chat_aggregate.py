@@ -14,6 +14,7 @@ Event shapes produced by the generators / route layer:
 
 * ``{"type": "user_message", "message": {...}}``
 * ``{"type": "status", "content": "..."}``        (ignored)
+* ``{"type": "job_started", "job_kind": "...", "job_id": "..."}``  (ignored)
 * ``{"type": "token", "content": "..."}``          (accumulated)
 * ``{"type": "done", "message": {...}, "chat_mode": ..., "model": ...}``
 * ``{"type": "error", "message": "..."}``          (raises ``ValueError``)
@@ -145,7 +146,7 @@ def aggregate_chat_stream(events: Iterable[Any]) -> AggregatedChat:
             message = event.get("message")
             if isinstance(message, dict):
                 user_message = message
-        # "status" and any unknown event types are intentionally ignored.
+        # "status", "job_started" and any unknown event types are ignored.
 
     return AggregatedChat(
         content="".join(parts),

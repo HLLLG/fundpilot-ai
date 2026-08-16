@@ -110,6 +110,17 @@ def run_discovery(
     request: DiscoveryRequest,
     on_progress: ProgressCallback | None = None,
 ) -> FundDiscoveryReport:
+    if getattr(get_settings(), "langgraph_enabled", True):
+        from app.services.graphs.discovery_scan import run_discovery_graph
+
+        return run_discovery_graph(request, on_progress)
+    return run_discovery_impl(request, on_progress)
+
+
+def run_discovery_impl(
+    request: DiscoveryRequest,
+    on_progress: ProgressCallback | None = None,
+) -> FundDiscoveryReport:
     runtime = resolve_analysis_runtime(get_settings(), request.analysis_mode)
 
     def progress(stage: str) -> None:
@@ -413,7 +424,9 @@ def run_discovery(
     )
     progress("guarding")
     progress("saving")
-    saved = save_discovery_report(report)
+    from app.services.langgraph_trace import apply_current_graph_run
+
+    saved = save_discovery_report(apply_current_graph_run(report))
     # Tests and compatible third-party adapters may provide a minimal
     # DiscoveryClient replacement that predates the optional shadow channel.
     # The champion report must remain authoritative in that case.

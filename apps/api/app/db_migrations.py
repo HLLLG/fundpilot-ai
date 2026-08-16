@@ -2150,6 +2150,52 @@ def _migrate_ops_observability_v23(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_langgraph_runs(connection: sqlite3.Connection) -> None:
+    """Additive node-trace tables. Schema version stays 24."""
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS langgraph_runs (
+            id TEXT NOT NULL PRIMARY KEY,
+            userId INTEGER NOT NULL,
+            graph_name TEXT NOT NULL,
+            status TEXT NOT NULL,
+            thread_id TEXT NOT NULL,
+            summary TEXT,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_langgraph_runs_user_created
+        ON langgraph_runs (userId, created_at DESC)
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS langgraph_run_events (
+            id TEXT NOT NULL PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            node TEXT,
+            owner TEXT,
+            payload TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_langgraph_run_events_run_seq
+        ON langgraph_run_events (run_id, seq)
+        """
+    )
+
+
 def run_migrations(connection: sqlite3.Connection) -> None:
     with _MIGRATION_LOCK:
         _run_migrations_locked(connection)
@@ -2175,6 +2221,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
         _migrate_prompt_shadow_operations(connection)
         _migrate_admin_user_management(connection)
         _migrate_ops_observability_v23(connection)
+        _migrate_langgraph_runs(connection)
         return
 
     connection.execute(
@@ -2252,4 +2299,5 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     _ensure_migration_user(connection)
     _migrate_admin_user_management(connection)
     _migrate_ops_observability_v23(connection)
+    _migrate_langgraph_runs(connection)
     _set_schema_version(connection, SCHEMA_VERSION)

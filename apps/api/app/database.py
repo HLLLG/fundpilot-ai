@@ -404,6 +404,9 @@ def get_auth_principal(
 
 
 def save_report(report: Report) -> Report:
+    from app.services.langgraph_trace import apply_current_graph_run
+
+    report = apply_current_graph_run(report)
     user_id = _uid()
     quality_artifacts: list[dict[str, Any]] = []
     with _connect() as connection:
@@ -2266,6 +2269,9 @@ def list_fund_primary_sectors_global(*, limit: int = 5000) -> list[dict[str, Any
 
 
 def save_discovery_report(report: FundDiscoveryReport) -> FundDiscoveryReport:
+    from app.services.langgraph_trace import apply_current_graph_run
+
+    report = apply_current_graph_run(report)
     user_id = _uid()
     quality_artifacts: list[dict[str, Any]] = []
     with _connect() as connection:

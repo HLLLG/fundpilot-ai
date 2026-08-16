@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.services.fund_return_distribution import build_fund_return_distribution
 from app.services.llm_judge_digest import build_llm_judge_digest
 from app.services.market_breadth_signal import build_market_breadth_signal
 from app.services.sector_signal_backtest import build_sector_signal_backtest
+from app.services.langgraph_trace import get_run, list_runs
 from app.services.shadow_escalation_digest import build_shadow_escalation_digest
 
 
@@ -59,6 +60,26 @@ def llm_judge_digest(days: int = 7) -> dict:
 
     lookback = max(1, min(days, 30))
     return build_llm_judge_digest(lookback_days=lookback)
+
+
+@router.get("/graph-runs")
+def graph_runs(limit: int = 20, graph_name: str | None = None) -> dict:
+    """Current-user LangGraph traces. Payloads are redacted node metadata only."""
+
+    bounded = max(1, min(limit, 50))
+    name = (graph_name or "").strip() or None
+    return {
+        "schema_version": "langgraph_trace.v1",
+        "runs": list_runs(graph_name=name, limit=bounded),
+    }
+
+
+@router.get("/graph-runs/{run_id}")
+def graph_run_detail(run_id: str) -> dict:
+    run = get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="graph run not found")
+    return run
 
 
 __all__ = ["router"]

@@ -345,7 +345,7 @@
 | 基金诊断 | AkShare 概况/累计收益；详情页可 AkShare **按名称查码**并持久化 |
 | 分析模式 | 日报/荐基主生成固定深度；历史报告保留原模式；日报/荐基追加提问支持快速 / 深度 |
 | 体验 | Markdown 导出、桌面通知、**Sora 字体 + 中文系统字体栈**（PingFang / HarmonyOS / 雅黑 / Noto）UI；**「静谧蓝海·高级克制」设计语言**（深海蓝 `#2356e0` + 暖金 `#cf9b3e`、毛玻璃 App Bar、会员方案展示区）；**客户端 SWR 缓存**（盈亏分析/详情/业绩走势）；板块刷新 fast 轮询 + accurate 手动；追问侧栏智能滚动 |
-| 报告追问 | SSE + ChatMarkdown；`useChatAutoScroll` 贴底/回到底部 |
+| 报告追问 | SSE + ChatMarkdown；`useChatAutoScroll` 贴底/回到底部；深度模式为有界 Agent 工具面（只读持仓/目录/方向账本/新闻 + 触发既有日报/荐基 Job），不改 Guard 与仓位映射 |
 | 流式报告 | **推荐路径**：`POST /api/analyze/stream`、`POST /api/fund-discovery/stream`（SSE：`stage`/`token`/partial/`done`）；`StreamingAnalysisFloat` + `DiscoveryStreamingFloat`；日报生成前 `followup` 追加 `operator_notes` |
 | 异步任务 | `/api/analyze/async` + `/api/fund-discovery/async`（流式失败回退）；`BackgroundJobsStack` 堆叠双浮层；`GET /api/jobs/{id}`（`job_kind` 区分日报/荐基） |
 | 前端偏好 | localStorage：风控、**日报/荐基 AI 角色 Prompt**、追加提问模式、板块自动刷新 |
@@ -623,6 +623,9 @@ fundpilot-ai/
 │       ├── report_diff.py / report_export.py
 │       ├── report_chat.py         # 追问 SSE + Tool 轮次
 │       ├── report_chat_runtime.py # 追问 fast/deep
+│       ├── chat_agent_tools.py / chat_agent_loop.py / graphs/chat_followup.py
+│       ├── langgraph_trace.py / langgraph_runner.py     # 脱敏节点轨迹
+│       ├── graphs/daily_report.py / graphs/discovery_scan.py
 │       ├── report_chat_export.py  # 对话 Markdown
 │       ├── deepseek_client.py / deepseek_streaming.py / analysis_runtime.py
 │       ├── analyze_pipeline.py / analyze_streaming.py   # 日报同步/异步/流式
@@ -788,16 +791,19 @@ POST /api/fund-discovery/async {
 |---|-------------|-------------|
 | 模型 | `deepseek-v4-flash` | `.env` 中 `FUND_AI_DEEPSEEK_MODEL` |
 | 上下文 | 已生成日报 Markdown + 历史对话 | 同上 |
-| `fetch_market_news` | **关闭** | 按需调用（受 `NEWS_TOOL_MAX_ROUNDS` 限制） |
-| 传输 | SSE：`user_message` → `status`（深度）→ `token` → `done` | 同上 |
+| Agent 工具 | **关闭**（零额外往返） | 最多 3 轮：`get_holdings` / `explain_*` / `lookup_fund` / `get_sector_context` / 可选 `fetch_market_news` / `run_daily_report` / `run_discovery_scan` |
+| `fetch_market_news` | **关闭** | 新闻开关打开时按需调用；主报告生成路径仍为 0 轮 |
+| 传输 | SSE：`user_message` → `status`（深度）→ 可选 `job_started` → `token` → `done` | 同上 |
 | 存储 | SQLite `report_chat_messages`，按 `report_id` | 同上 |
 
-实现：`report_chat_runtime.resolve_report_chat_runtime()`；`POST /api/reports/{id}/chat` body 含 `chat_mode`。
+实现：`chat_agent_tools.py` + `chat_agent_loop.py` + LangGraph `graphs/chat_followup.py`；`report_chat_runtime.resolve_report_chat_runtime()`；`POST /api/reports/{id}/chat` 与荐基追问共用工具循环。Job 工具只排队既有 `create_analysis_job` / `create_discovery_job`，`confirm=true` 才执行；仓位百分比、质量门、PIT 仍由原流水线独占。前端 `job_started` 挂到 Dashboard 已有 Job 浮层。
+
+日报 Job 路径（`run_analysis`）与荐基 Job 路径（`run_discovery`）同样走 LangGraph，便于按节点回放；SSE 流式路径仍用原生成器，但把 stage 写入同一套 `langgraph_runs` 轨迹。回滚：`FUND_AI_LANGGRAPH_ENABLED=false`。轨迹只存节点名、归属（code/worker/agent）和计数，不含 Prompt/持仓/工具原文。查询：`GET /api/diagnostics/graph-runs`。
 
 ```text
 POST /api/reports/{id}/chat  { message, chat_mode }
   → save user message
-  → [deep] 非流式 Tool 轮次（fetch_market_news）
+  → [deep] 非流式 Tool 轮次（只读查询或触发既有 Job）
   → 流式 chat/completions
   → save assistant message
 ```
@@ -839,6 +845,8 @@ POST /api/reports/{id}/chat  { message, chat_mode }
 | GET | `/api/diagnostics/fund-return-distribution` | 后台预热的开放式基金份额九档涨跌分布；交易日开盘后严格为当日估算/当日官方净值，附来源、时间、覆盖与缺失（全用户共享，仍需 JWT） |
 | GET | `/api/diagnostics/shadow-escalation-digest?days=7` | 灰度复盘摘要（M6.3，近 N 天双向 guard 升级触发聚合，`days` 夹在 1~30） |
 | GET | `/api/diagnostics/llm-judge-digest?days=7` | 二次 LLM 审校运行状况（近 N 天，`days` 夹在 1~30）：分母是深度模式报告数（fast 不调审校），给出发起/超时/改写次数与比率、跳过原因分布，以及 `health`（`no_eligible_reports`/`never_attempted`/`degraded_always_timeout`/`degraded_frequent_timeout`/`healthy`）。审校超时会静默降级（确定性 guard 兜底），没有这份摘要就无法区分"正常工作"与"每份报告白付一次调用" |
+| GET | `/api/diagnostics/graph-runs?limit=20&graph_name=` | 当前用户 LangGraph / 流式 stage 轨迹列表（脱敏） |
+| GET | `/api/diagnostics/graph-runs/{id}` | 单次 run 的节点事件（不含 Prompt/持仓） |
 | GET | `/api/diagnostics/factor-ic-status` | 因子 IC 快照新鲜度（需 JWT）：来源、生成/发布时间、有效基金数、回测期数、四因子有效期、30 天过期状态 |
 | GET | `/api/diagnostics/decision-score-shadow?limit=30` | 当前用户最近 1～100 份荐基报告的 DecisionScore v2 影子覆盖、版本隔离、缺失分项、校验状态与 Top-K 差异摘要；不返回候选明细、不自动晋级 |
 | GET | `/api/portfolio/stress-test?lookback_days=252` | 当前完整持仓的固定权重历史压力重放；输出最差 1/5/20 日和历史 95% 单日期望损失，证据不全整包失败关闭，不预测、不自动调仓 |
@@ -1344,7 +1352,7 @@ Workflow：`.github/workflows/ci.yml`（`api` / `web` / `e2e-smoke` 三 job 并�
 1. 改 API：`models.py` → `main.py` → `api.ts` → 组件 → `tests/`。
 2. 改报告结构：同步 `deepseek_client` JSON、`recommendations`、`_offline_report`、`Report` 类型。
 3. 改异步流程：`job_store.py`（后端）→ `JobStatusFloat.tsx`（前端轮询）→ `Dashboard.tsx`（回调）。
-4. 改追问：`report_chat.py` / `report_chat_runtime.py` → `main.py` chat 路由 → `ReportChatPanel.tsx` / `ChatMarkdown.tsx` → `tests/test_report_chat.py`。
+4. 改追问：`chat_agent_tools.py` / `chat_agent_loop.py` / `graphs/chat_followup.py` → `report_chat.py` / `discovery_chat.py` / `report_chat_runtime.py` → `main.py` chat 路由 → `ReportChatPanel.tsx` / `DiscoveryChatPanel.tsx` / `agentJobEvents.ts` → `tests/test_chat_agent_tools.py` / `tests/test_langgraph_graphs.py`。管线轨迹：`langgraph_trace.py` → `GET /api/diagnostics/graph-runs` → `GraphRunsPanel.tsx`。
 5. 改 OCR/估算收益：`ocr_parser.py` → `holding_metrics.py` → `YangjibaoHoldingsBoard.tsx` / `holdingMetrics.ts` → `tests/test_ocr_parser.py`、`tests/fixtures/`。
 6. 改盈亏分析：`portfolio_profit_analysis.py` → `portfolio_snapshot.py` → `GET /api/portfolio/dashboard` → `PortfolioDashboard.tsx` / `ProfitAnalysisTrendChart.tsx` → `tests/test_portfolio_profit_analysis.py`。
 7. 改板块/净值收益：`sector_canonical.py` → `sector_quote_service.py`（板块 + 官方 NAV 写入 daily）→ `fund_nav_service.py` → `holding_estimates.py` / `holdingMetrics.ts` → `YangjibaoHoldingsBoard.tsx` → 相关 tests。

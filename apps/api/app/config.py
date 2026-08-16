@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     # 落库走后台单线程，绝不占用请求线程。测试关掉它并显式调用
     # flush_ops_writes()，让断言不依赖线程调度。
     ops_writer_thread_enabled: bool = True
+    # LangGraph orchestration for chat / daily / discovery. Nodes stay
+    # human-owned except the narrow follow-up tool loop. Rollback:
+    # FUND_AI_LANGGRAPH_ENABLED=false
+    langgraph_enabled: bool = True
+    langgraph_run_retention_days: int = 14
     # Production MySQL bootstrap runs behind a readiness gate so the ASGI
     # process can answer probes while schema verification is in progress.
     startup_bootstrap_background: bool = True
