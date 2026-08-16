@@ -1,0 +1,25 @@
+.github/workflows/deploy-lighthouse.yml
+  s_62a0d05f0b36c2::t_135e290927437c 83,89-120,122-124
+apps/api/tests/test_factor_ic_ssh_tunnel.py
+  s_62a0d05f0b36c2::t_a393d3665f63c0 33-42
+scripts/ci/run-lighthouse-compose-exec.sh
+  s_62a0d05f0b36c2::t_59a44e90a7f8bc 63-74
+  s_62a0d05f0b36c2::t_0c8e045f10d7f5 16-18
+  s_62a0d05f0b36c2::t_ce6ef231e1bbb3 28-33,35,37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "ae9bb42cec13b3849f05d22f0b2d375019fce9ff",
+  "prompts": {},
+  "sessions": {
+    "s_62a0d05f0b36c2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "40423201-7334-4118-9f3b-c2969ddc664c",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
