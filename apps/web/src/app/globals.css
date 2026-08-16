@@ -434,6 +434,8 @@ button:disabled {
   background: #fff;
   padding: 0.625rem 0.875rem;
   color: var(--foreground);
+  /* 显式 16px：iOS Safari 会对小于 16px 的输入框聚焦时强制放大页面。 */
+  font-size: 1rem;
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -1273,6 +1275,11 @@ button:disabled {
 .auth-form-wrap { width:100%; max-width:29rem; }
 .auth-form-register { max-width:32rem; }
 .auth-mobile-brand { display:none; }
+.auth-mobile-brand a {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+}
 .auth-form-pane > .auth-back-link { margin-top:1.25rem; color:var(--muted); font-size:.75rem; }
 .auth-form-wrap label { color:var(--foreground); }
 .auth-form-wrap .input-field { margin-top:.55rem; border-color:var(--line-strong); background:var(--panel-strong); }
@@ -1328,6 +1335,12 @@ button:disabled {
 }
 
 @media (max-width: 767px) {
+  /* 防止 iOS 对 text-sm / 13px 搜索框聚焦时整页放大。 */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="range"]):not([type="file"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
   .landing-masthead { height:4rem; }
   .landing-editorial-hero { gap:2.5rem; padding:3.25rem 0 3.5rem; }
   /* 标题必须允许 CJK 换行。曾经这里写 `word-break:keep-all; overflow-wrap:normal`

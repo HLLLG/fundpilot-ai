@@ -15,11 +15,11 @@ export function UserMenu({ onOpenMe }: UserMenuProps) {
     <button
       type="button"
       onClick={onOpenMe}
-      className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1 pl-1 pr-2.5 shadow-sm transition hover:border-[var(--info-border)] hover:bg-[var(--info-bg)]/80"
+      className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1 pl-1 pr-1 shadow-sm transition hover:border-[var(--info-border)] hover:bg-[var(--info-bg)]/80 lg:pr-2.5"
       aria-label="打开我的"
     >
       <UserAvatar name={displayName} avatarUrl={user?.avatarUrl} size="sm" />
-      <span className="max-w-[5.5rem] truncate text-sm font-bold text-slate-800 sm:max-w-[7.5rem]">
+      <span className="hidden max-w-[7.5rem] truncate text-sm font-bold text-slate-800 lg:inline">
         {displayName}
       </span>
     </button>

@@ -496,7 +496,7 @@ export function YangjibaoHoldingsBoard({
           />
         ) : null}
         <div className="holdings-hero holdings-summary border-b border-[var(--line-strong)] px-4 pb-5 pt-4 sm:px-6 sm:pt-5">
-          <div className="grid gap-4 min-[380px]:grid-cols-[minmax(0,1fr)_auto] min-[380px]:items-end">
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
             <div className="min-w-0">
               <div className="flex min-h-11 items-center">
                 <div className="text-[13px] font-semibold text-slate-500">总资产</div>
@@ -541,7 +541,7 @@ export function YangjibaoHoldingsBoard({
                 </MethodologyNote>
               ) : null}
             </div>
-            <div className="flex items-start justify-self-start min-[380px]:justify-self-end">
+            <div className="flex w-full items-start justify-between sm:w-auto sm:justify-self-end">
               <button
                 type="button"
                 onClick={() => void refresh(true, "accurate")}
@@ -555,7 +555,7 @@ export function YangjibaoHoldingsBoard({
               <button
                 type="button"
                 onClick={() => onOpenAnalysis?.()}
-                className="min-w-0 text-left transition hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)] min-[380px]:text-right"
+                className="min-w-0 text-right transition hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand)]"
                 title="查看盈亏分析"
                 aria-label={
                   quoteTradeDate
@@ -563,8 +563,8 @@ export function YangjibaoHoldingsBoard({
                     : "查看盈亏分析"
                 }
               >
-                <div className="flex h-11 items-center gap-0.5 text-[13px] font-semibold text-slate-500 min-[380px]:justify-end">
-                  <span>
+                <div className="flex h-11 items-center justify-end gap-0.5 text-[13px] font-semibold text-slate-500">
+                  <span className="whitespace-nowrap">
                     当日收益
                     {quoteTradeDate ? ` ${quoteTradeDate}` : ""}
                   </span>
@@ -718,17 +718,21 @@ export function YangjibaoHoldingsBoard({
                   className="holding-ledger-row"
                 >
                   <div className="holdings-fund-cell">
-                    <div className="flex items-center gap-1">
+                    <div className="min-w-0">
                       <div className="line-clamp-2 break-words text-sm font-bold leading-5 text-slate-900 sm:truncate sm:text-[13px] sm:leading-tight">
                         {holding.fund_name}
                       </div>
-                      {unsettledOnly || holding.has_in_progress_transactions ? (
-                        <span className="shrink-0 rounded border border-[var(--warn-border)] bg-[var(--warn-bg)] px-1 py-0 text-[9px] font-bold leading-4 text-[var(--warn-icon)]">
-                          待确认
-                        </span>
-                      ) : null}
-                      {isOfficialDaily && !unsettledOnly ? (
-                        <UpdatedBadge className="!px-0.5 !py-0 !text-[9px]" />
+                      {unsettledOnly || holding.has_in_progress_transactions || (isOfficialDaily && !unsettledOnly) ? (
+                        <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                          {unsettledOnly || holding.has_in_progress_transactions ? (
+                            <span className="shrink-0 rounded border border-[var(--warn-border)] bg-[var(--warn-bg)] px-1 py-0 text-[9px] font-bold leading-4 text-[var(--warn-icon)]">
+                              待确认
+                            </span>
+                          ) : null}
+                          {isOfficialDaily && !unsettledOnly ? (
+                            <UpdatedBadge className="!px-0.5 !py-0 !text-[9px]" />
+                          ) : null}
+                        </div>
                       ) : null}
                     </div>
                     {!amountsHidden ? (

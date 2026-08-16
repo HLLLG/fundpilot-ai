@@ -267,7 +267,7 @@ export function AddHoldingModal({
                   }
                   fileInputRef.current?.click();
                 }}
-                className="btn-primary w-[200px] min-h-9 py-2 text-[14px]"
+                className="btn-primary w-[200px] min-h-11 py-2 text-[14px]"
               >
                 <Images size={15} strokeWidth={2.25} />
                 {ocrProgressLabel(isUploading, uploadProgress, "上传图片")}
@@ -279,7 +279,7 @@ export function AddHoldingModal({
                   setFormError(null);
                   setMode("manual");
                 }}
-                className="btn-ghost w-[200px] min-h-8 py-1.5 text-[13px]"
+                className="btn-ghost w-[200px] min-h-11 py-1.5 text-[13px]"
               >
                 <PenLine size={15} strokeWidth={2.25} />
                 手动输入
@@ -306,7 +306,7 @@ export function AddHoldingModal({
                 type="button"
                 disabled={busy || screenshotIntake.items.length === 0}
                 onClick={() => onUpload(screenshotIntake.files)}
-                className="btn-primary w-[200px] min-h-9 py-2 text-[14px] disabled:cursor-not-allowed disabled:opacity-50"
+                className="btn-primary w-[200px] min-h-11 py-2 text-[14px] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {ocrProgressLabel(
                   isUploading,

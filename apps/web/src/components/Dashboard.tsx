@@ -1660,7 +1660,12 @@ export function Dashboard() {
           <header
             className="app-masthead flex items-center justify-between gap-4 border-b border-[var(--line)] px-4 py-2.5 sm:px-6"
           >
-          <BrandMark size="md" />
+          <span className="lg:hidden">
+            <BrandMark size="md" showName={false} />
+          </span>
+          <span className="hidden lg:inline-flex">
+            <BrandMark size="md" />
+          </span>
           <div className="min-w-0 flex-1">
             <DashboardNav
               activeTab={activeTab}

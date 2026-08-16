@@ -30,7 +30,12 @@ export function WorkspaceSkeleton({ message }: { message: string }) {
         {/* 顶栏：高度与真实 app-masthead 的 min-height: 4.25rem 对齐 */}
         <div className="-mx-4 pb-3 sm:-mx-6">
         <header className="flex min-h-[4.25rem] items-center justify-between gap-4 border-b border-[var(--line)] bg-[rgba(236,238,234,.95)] px-4 py-2.5 sm:px-6">
-          <BrandMark size="md" />
+          <span className="lg:hidden">
+            <BrandMark size="md" showName={false} />
+          </span>
+          <span className="hidden lg:inline-flex">
+            <BrandMark size="md" />
+          </span>
           <div className="hidden min-w-0 flex-1 items-center gap-2 lg:flex" aria-hidden="true">
             {[64, 64, 64, 64, 64].map((width, index) => (
               <span

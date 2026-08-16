@@ -183,7 +183,7 @@ export function FundSearchDialog({ open, onClose, onSelect }: FundSearchDialogPr
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-start justify-center bg-slate-950/35 px-2 pt-4 backdrop-blur-[1px] sm:px-6 sm:pt-[9vh]"
+      className="fixed inset-0 z-[70] flex items-stretch justify-center bg-[var(--panel)] sm:items-start sm:bg-slate-950/35 sm:px-6 sm:pt-[9vh] sm:backdrop-blur-[1px]"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -195,9 +195,9 @@ export function FundSearchDialog({ open, onClose, onSelect }: FundSearchDialogPr
         role="dialog"
         aria-modal="true"
         aria-labelledby="fund-search-title"
-        className="flex max-h-[88dvh] w-full max-w-xl flex-col overflow-hidden rounded-[24px] border border-white/70 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)]"
+        className="flex h-full min-h-0 w-full max-w-xl flex-col overflow-hidden bg-white sm:h-auto sm:max-h-[88dvh] sm:rounded-[24px] sm:border sm:border-white/70 sm:shadow-[0_24px_70px_rgba(15,23,42,0.22)]"
       >
-        <header className="flex items-center justify-between px-5 pb-2 pt-4 sm:px-6">
+        <header className="flex items-center justify-between px-5 pb-2 pt-[max(1rem,env(safe-area-inset-top))] sm:px-6 sm:pt-4">
           <h2 id="fund-search-title" className="text-lg font-bold text-slate-950">
             搜索基金
           </h2>

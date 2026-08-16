@@ -242,8 +242,8 @@ export function FundDiscoveryPanel({
   const allSectorLabels = useMemo(() => {
     const seen = new Set<string>();
     const merged: string[] = [];
-    for (const label of [...rawSectors.map((row) => row.sector_label), ...focusSectors]) {
-      const trimmed = label.trim();
+    for (const label of [...rawSectors.map((row) => row?.sector_label), ...focusSectors]) {
+      const trimmed = typeof label === "string" ? label.trim() : "";
       if (!trimmed || seen.has(trimmed)) {
         continue;
       }

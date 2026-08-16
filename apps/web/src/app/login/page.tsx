@@ -89,7 +89,7 @@ export default function LoginPage() {
           <Link
             href="/register"
             prefetch={false}
-            className="auth-inline-link font-semibold text-[var(--brand-strong)] hover:underline"
+            className="auth-inline-link inline-flex min-h-11 min-w-11 items-center justify-center font-semibold text-[var(--brand-strong)] hover:underline"
           >
             免费注册
           </Link>

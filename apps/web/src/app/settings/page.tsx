@@ -12,8 +12,13 @@ export default function SettingsPage() {
     <main className="settings-shell">
       <header className="settings-masthead">
         <div className="mx-auto flex h-full max-w-[1120px] items-center justify-between px-4 sm:px-6">
-          <BrandMark size="sm" showEnglish />
-          <Link href="/" className="btn-ghost min-h-11 px-3"><ArrowLeft size={16} />返回研究台</Link>
+          <span className="sm:hidden"><BrandMark size="sm" /></span>
+          <span className="hidden sm:inline-flex"><BrandMark size="sm" showEnglish /></span>
+          <Link href="/" className="btn-ghost min-h-11 px-3">
+            <ArrowLeft size={16} />
+            <span className="sm:hidden">返回</span>
+            <span className="hidden sm:inline">返回研究台</span>
+          </Link>
         </div>
       </header>
 

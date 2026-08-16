@@ -179,7 +179,7 @@ export function BatchTransactionModal({
                   }
                   fileInputRef.current?.click();
                 }}
-                className="btn-primary w-[200px] min-h-9 py-2 text-[14px]"
+                className="btn-primary w-[200px] min-h-11 py-2 text-[14px]"
               >
                 <Images size={15} strokeWidth={2.25} />
                 {ocrProgressLabel(isUploading, uploadProgress, "上传图片")}
@@ -206,7 +206,7 @@ export function BatchTransactionModal({
                 type="button"
                 disabled={isUploading || screenshotIntake.items.length === 0}
                 onClick={() => onUpload(screenshotIntake.files)}
-                className="btn-primary w-[200px] min-h-9 py-2 text-[14px] disabled:cursor-not-allowed disabled:opacity-50"
+                className="btn-primary w-[200px] min-h-11 py-2 text-[14px] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {ocrProgressLabel(
                   isUploading,
