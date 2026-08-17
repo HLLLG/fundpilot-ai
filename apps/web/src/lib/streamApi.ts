@@ -71,8 +71,11 @@ type StreamEvent =
   | { type: "done"; report_id: string; report: Report }
   | { type: "error"; message: string };
 
-const FIRST_EVENT_TIMEOUT_MS = 5000;
-const STREAM_IDLE_TIMEOUT_MS = 120_000;
+const FIRST_EVENT_TIMEOUT_MS = 90_000;
+// The API's model request timeout is 300s. A healthy analysis stream emits a
+// stage heartbeat every 12s, so this is only a broken-stream safety net and
+// must leave enough room for the backend to surface its own timeout/fallback.
+const STREAM_IDLE_TIMEOUT_MS = 360_000;
 export const STREAM_TOKEN_BUFFER_MAX = 2048;
 
 export function appendStreamTokenBuffer(prev: string, chunk: string): string {

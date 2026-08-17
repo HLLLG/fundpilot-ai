@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CheckCircle, Loader2, XCircle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Loader2, XCircle } from "lucide-react";
 import type { Report } from "@/lib/api";
 import { fetchAnalysisJob } from "@/lib/api";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
 import { JobProgressCard } from "@/components/JobProgressCard";
 
-type JobState = "running" | "completed" | "failed";
+type JobState = "running" | "failed";
 
 interface JobStatusFloatProps {
   jobId: string | null;
@@ -25,9 +25,13 @@ function etaHint(analysisMode?: string) {
 export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatusFloatProps) {
   const [state, setState] = useState<JobState>("running");
   const [error, setError] = useState<string | null>(null);
-  const [report, setReport] = useState<Report | null>(null);
   const [stageLabel, setStageLabel] = useState("正在生成报告…");
   const [analysisMode, setAnalysisMode] = useState<string>("deep");
+  const onCompleteRef = useRef(onComplete);
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
   useEffect(() => {
     if (!jobId) {
@@ -35,15 +39,28 @@ export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatu
     }
     setState("running");
     setError(null);
-    setReport(null);
     setStageLabel("排队中…");
 
     let cancelled = false;
+    let transientFailures = 0;
     const poll = async () => {
       while (!cancelled) {
         try {
           const job = await fetchAnalysisJob(jobId);
           if (cancelled) return;
+
+          if (job.transient_unavailable) {
+            transientFailures += 1;
+            if (transientFailures < 8) {
+              setStageLabel(job.stage_label ?? "连接波动，正在重试…");
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+              continue;
+            }
+            setError("数据库连接暂不可用，分析任务可能仍在后台运行，请稍后查看历史记录。");
+            setState("failed");
+            return;
+          }
+          transientFailures = 0;
 
           if (job.analysis_mode) {
             setAnalysisMode(job.analysis_mode);
@@ -53,8 +70,7 @@ export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatu
           }
 
           if (job.status === "completed" && job.report) {
-            setReport(job.report);
-            setState("completed");
+            onCompleteRef.current(job.report);
             return;
           }
           if (job.status === "failed") {
@@ -64,6 +80,12 @@ export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatu
           }
         } catch (err: unknown) {
           if (cancelled) return;
+          transientFailures += 1;
+          if (transientFailures < 8) {
+            setStageLabel("连接波动，正在重试…");
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            continue;
+          }
           setError(userFacingErrorMessage(err, "分析失败，请重试。"));
           setState("failed");
           return;
@@ -81,24 +103,6 @@ export function JobStatusFloat({ jobId, onComplete, onClose, onRetry }: JobStatu
 
   if (!jobId) {
     return null;
-  }
-
-  if (state === "completed") {
-    return (
-      <JobProgressCard
-        tone="info"
-        testId="analysis-job-float"
-        icon={<CheckCircle size={18} className="text-[var(--success-icon)]" />}
-        title="报告已生成"
-        primaryAction={{
-          label: "查看报告",
-          onClick: () => {
-            if (report) onComplete(report);
-          },
-        }}
-        secondaryAction={{ label: "关闭", onClick: onClose }}
-      />
-    );
   }
 
   if (state === "failed") {

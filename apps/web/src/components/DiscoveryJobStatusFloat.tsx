@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CheckCircle, Loader2, XCircle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Loader2, XCircle } from "lucide-react";
 import type { FundDiscoveryReport } from "@/lib/api";
 import { fetchDiscoveryJob } from "@/lib/api";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
 import { JobProgressCard } from "@/components/JobProgressCard";
 
-type JobState = "running" | "completed" | "failed";
+type JobState = "running" | "failed";
 
 interface DiscoveryJobStatusFloatProps {
   jobId: string | null;
@@ -24,14 +24,17 @@ export function DiscoveryJobStatusFloat({
 }: DiscoveryJobStatusFloatProps) {
   const [state, setState] = useState<JobState>("running");
   const [error, setError] = useState<string | null>(null);
-  const [report, setReport] = useState<FundDiscoveryReport | null>(null);
   const [stageLabel, setStageLabel] = useState("正在扫描机会…");
+  const onCompleteRef = useRef(onComplete);
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
   useEffect(() => {
     if (!jobId) return;
     setState("running");
     setError(null);
-    setReport(null);
     setStageLabel("排队中…");
 
     let cancelled = false;
@@ -55,8 +58,7 @@ export function DiscoveryJobStatusFloat({
           transientFailures = 0;
           if (job.stage_label) setStageLabel(job.stage_label);
           if (job.status === "completed" && job.discovery_report) {
-            setReport(job.discovery_report);
-            setState("completed");
+            onCompleteRef.current(job.discovery_report);
             return;
           }
           if (job.status === "failed") {
@@ -86,24 +88,6 @@ export function DiscoveryJobStatusFloat({
   }, [jobId]);
 
   if (!jobId) return null;
-
-  if (state === "completed") {
-    return (
-      <JobProgressCard
-        tone="neutral"
-        testId="discovery-job-float"
-        icon={<CheckCircle size={18} className="text-[var(--success-icon)]" />}
-        title="推荐报告已生成"
-        primaryAction={{
-          label: "查看报告",
-          onClick: () => {
-            if (report) onComplete(report);
-          },
-        }}
-        secondaryAction={{ label: "关闭", onClick: onClose }}
-      />
-    );
-  }
 
   if (state === "failed") {
     return (

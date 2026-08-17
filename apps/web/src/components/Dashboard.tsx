@@ -117,6 +117,13 @@ import { resolveReportProviderStatus } from "@/lib/reportPresentation";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
 import { subscribeAgentJobStarted } from "@/lib/agentJobEvents";
 import {
+  DISCOVERY_RECOVERY_POLL_MS,
+  detectCompletedScan,
+  sortReportsByCreatedAtDesc,
+  streamLooksDead,
+} from "@/lib/discoveryScanRecovery";
+import { startVisibilityAwarePolling } from "@/lib/visibilityPolling";
+import {
   deleteDailyReportDetailCache,
   isDailyReportDetailCacheFresh,
   isDailyReportsListCacheFresh,
@@ -354,6 +361,8 @@ export function Dashboard() {
     [holdings, researchFund],
   );
   const reportSectionRef = useRef<HTMLDivElement>(null);
+  const latestAnalysisReportIdRef = useRef<string | null>(null);
+  const lastAnalysisStreamActivityRef = useRef(0);
   const refreshAfterApplyRef = useRef<"sector" | null>(null);
   const initialSectorRefreshDoneRef = useRef(false);
   const holdingsMutationVersionRef = useRef(0);
@@ -938,9 +947,8 @@ export function Dashboard() {
   }, [holdings]);
 
   useEffect(() => {
-    // 板块涨跌只有在"编辑持仓后"或"波段信号评估"（默认关闭）时才会触发真实刷新，
-    // 首次打开页面时展示的都是上次持久化的旧值。这里在持仓首次加载完成后主动
-    // 触发一次真实板块行情刷新，避免用户什么都不做也看不到最新涨跌幅。
+    // 首次加载后立刻刷一次板块，避免打开页面时仍是上次快照。之后由
+    // useSectorQuoteRefresh 在页面可见时按交易时段自动轮询，切回前台也会补刷。
     if (initialSectorRefreshDoneRef.current || holdings.length === 0) {
       return;
     }
@@ -1009,6 +1017,7 @@ export function Dashboard() {
         userLeftReportDuringStreamRef.current = false;
         const abortController = new AbortController();
         streamAbortRef.current = abortController;
+        latestAnalysisReportIdRef.current = orderedReports[0]?.id ?? null;
         const startedAt = streamTimestamp();
         lastAnalysisStageRef.current = {
           stage: "fund_data",
@@ -1141,8 +1150,7 @@ export function Dashboard() {
           lastAnalysisStageRef.current = null;
           return;
         }
-        // 降级到后台分析时不再弹提示：下面会挂起 JobStatusFloat，
-        // 而 markStreamingReportBackgroundFallback 也会把中断阶段写进浮层。
+        // 降级到后台分析时不再弹提示：JobStatusFloat 会轮询任务，完成后自动载入报告。
       }
 
       const jobId = await startAnalyzeJob(
@@ -1217,7 +1225,58 @@ export function Dashboard() {
 
   const handleJobClose = () => {
     setActiveJobId(null);
+    setStreamingReport(null);
   };
+
+  useEffect(() => {
+    if (streamingReport) {
+      lastAnalysisStreamActivityRef.current = streamTimestamp();
+    }
+  }, [streamingReport]);
+
+  const recoverStuckAnalysis = useCallback(async () => {
+    if (!streamLooksDead(lastAnalysisStreamActivityRef.current, streamTimestamp())) {
+      return;
+    }
+    let reports: Report[];
+    try {
+      reports = await listReports();
+    } catch {
+      return;
+    }
+    const recovered = detectCompletedScan({
+      reports: sortReportsByCreatedAtDesc(reports),
+      knownLatestId: latestAnalysisReportIdRef.current,
+    });
+    if (!recovered) {
+      return;
+    }
+    streamAbortRef.current?.abort();
+    streamAbortRef.current = null;
+    userLeftReportDuringStreamRef.current = false;
+    setStreamingReport(null);
+    setActiveJobId(null);
+    setIsSubmitting(false);
+    latestAnalysisReportIdRef.current = recovered.id;
+    writeDailyReportsListCache(user?.id, reports);
+    setReports(reports);
+    hydrateReport(recovered, { asLatest: true, force: true });
+    setActiveTab("report");
+    updateReportUrl(null, "replace");
+  }, [hydrateReport, setActiveTab, updateReportUrl, user?.id]);
+
+  const analysisStreamStartedAt = streamingReport?.startedAt ?? null;
+  useEffect(() => {
+    if (analysisStreamStartedAt == null || activeJobId || user?.id == null) {
+      return;
+    }
+    return startVisibilityAwarePolling({
+      intervalMs: DISCOVERY_RECOVERY_POLL_MS,
+      onTick: () => {
+        void recoverStuckAnalysis();
+      },
+    });
+  }, [activeJobId, analysisStreamStartedAt, recoverStuckAnalysis, user?.id]);
 
   const handleJobRetry = async () => {
     setActiveJobId(null);

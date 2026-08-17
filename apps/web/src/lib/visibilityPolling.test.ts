@@ -52,6 +52,20 @@ describe("startVisibilityAwarePolling", () => {
     expect(onTick).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1_000);
     expect(onTick).toHaveBeenCalledTimes(1);
+    expect(onTick).toHaveBeenLastCalledWith("interval");
+    cleanup();
+  });
+
+  it("labels a restore tick as visible", () => {
+    vi.useFakeTimers();
+    let visibilityState: DocumentVisibilityState = "hidden";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibilityState);
+    const onTick = vi.fn();
+
+    const cleanup = startVisibilityAwarePolling({ intervalMs: 1_000, onTick });
+    visibilityState = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(onTick).toHaveBeenCalledWith("visible");
     cleanup();
   });
 });

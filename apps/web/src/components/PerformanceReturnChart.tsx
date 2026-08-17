@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useId, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { PerformanceSeriesPoint } from "@/lib/performanceTrend";
 import { formatSignedPercent } from "@/lib/performanceTrend";
 import type { TradeMarker } from "@/lib/tradeMarkers";
@@ -16,6 +16,123 @@ const TRADE_AMOUNT_FORMATTER = new Intl.NumberFormat("zh-CN", {
 });
 
 export type { TradeMarker };
+
+type PlottedTradeMarker = TradeMarker & { x: number; y: number };
+
+function formatMarkerDateTime(tradeTime: string) {
+  return tradeTime.slice(0, 16);
+}
+
+function TradeMarkerCallout({
+  marker,
+  chartWidth,
+  chartHeight,
+  containerRef,
+}: {
+  marker: PlottedTradeMarker;
+  chartWidth: number;
+  chartHeight: number;
+  containerRef: RefObject<HTMLDivElement | null>;
+}) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [shiftX, setShiftX] = useState(0);
+  const showBelow = marker.y < 56;
+  const accent = marker.kind === "buy" ? BUY_COLOR : SELL_COLOR;
+  const singleItem = marker.items.length === 1;
+
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    const parent = containerRef.current;
+    if (!card || !parent) {
+      return;
+    }
+    const cardRect = card.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    const unshiftedLeft = cardRect.left - shiftX;
+    const unshiftedRight = cardRect.right - shiftX;
+    const pad = 8;
+    let next = 0;
+    if (unshiftedLeft < parentRect.left + pad) {
+      next = parentRect.left + pad - unshiftedLeft;
+    } else if (unshiftedRight > parentRect.right - pad) {
+      next = parentRect.right - pad - unshiftedRight;
+    }
+    setShiftX((prev) => (prev === next ? prev : next));
+  }, [containerRef, marker.date, marker.kind, marker.x, marker.y, shiftX]);
+
+  return (
+    <div
+      className="pointer-events-none absolute z-10"
+      style={{
+        left: `${(marker.x / chartWidth) * 100}%`,
+        top: `${(marker.y / chartHeight) * 100}%`,
+      }}
+    >
+      <div
+        ref={cardRef}
+        className="absolute z-10 w-max min-w-[148px] max-w-[210px] rounded-[14px] bg-white px-3 py-2.5 shadow-[0_12px_28px_rgba(27,75,95,0.16)] ring-1 ring-slate-200/90"
+        style={{
+          left: 0,
+          top: showBelow ? 10 : undefined,
+          bottom: showBelow ? undefined : 10,
+          transform: `translateX(calc(-50% + ${shiftX}px))`,
+        }}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[11px] font-semibold tabular-nums tracking-wide text-slate-500">
+            {singleItem ? formatMarkerDateTime(marker.items[0].trade_time) : marker.date}
+          </p>
+          <span
+            className="h-1.5 w-1.5 rounded-full"
+            style={{ backgroundColor: accent }}
+            aria-hidden
+          />
+        </div>
+        <ul className="mt-2 space-y-2">
+          {marker.items.map((item, index) => {
+            const isBuy = item.direction === "buy";
+            return (
+              <li key={index} className="flex items-end justify-between gap-3">
+                <span
+                  className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
+                  style={{
+                    color: isBuy ? BUY_COLOR : SELL_COLOR,
+                    backgroundColor: isBuy ? "rgba(200, 30, 58, 0.08)" : "rgba(4, 120, 87, 0.1)",
+                  }}
+                >
+                  {isBuy ? "买入" : "卖出"}
+                  {item.status === "pending" ? " · 待确认" : ""}
+                </span>
+                <div className="text-right">
+                  <p className="font-display text-[15px] font-black leading-none tabular-nums text-[var(--brand-deep)]">
+                    {TRADE_AMOUNT_FORMATTER.format(item.amount_yuan)}
+                    <span className="ml-0.5 text-[10px] font-bold text-slate-400">元</span>
+                  </p>
+                  {singleItem ? null : (
+                    <p className="mt-1 text-[10px] tabular-nums text-slate-400">
+                      {item.trade_time.slice(11, 16)}
+                    </p>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      <span
+        aria-hidden
+        className={`absolute z-0 h-2.5 w-2.5 bg-white ${
+          showBelow ? "shadow-[-1px_-1px_0_0_#e2e8f0]" : "shadow-[1px_1px_0_0_#e2e8f0]"
+        }`}
+        style={{
+          left: 0,
+          top: showBelow ? 10 : -10,
+          transform: "translate(-50%, -50%) rotate(45deg)",
+        }}
+      />
+    </div>
+  );
+}
 
 type PerformanceReturnChartProps = {
   points: PerformanceSeriesPoint[];
@@ -51,7 +168,7 @@ function PerformanceReturnChartView({
     const max = rawMax + pad;
     const range = max - min || 1;
 
-    const padding = { top: markers.length > 0 ? 28 : 14, right: 10, bottom: 26, left: 8 };
+    const padding = { top: 14, right: 10, bottom: 26, left: 8 };
     const width = 360;
     const chartWidth = width - padding.left - padding.right;
     const chartHeight = height - padding.top - padding.bottom;
@@ -117,11 +234,11 @@ function PerformanceReturnChartView({
       max,
       midDateIndex,
     };
-  }, [height, markers.length, points, showBenchmark]);
+  }, [height, points, showBenchmark]);
 
   const markerPoints = useMemo(() => {
     if (!chart || markers.length === 0) {
-      return [] as Array<TradeMarker & { x: number; y: number }>;
+      return [] as PlottedTradeMarker[];
     }
     const byDate = new Map(chart.coords.map((coord) => [coord.date, coord]));
     const kindsByDate = new Map<string, number>();
@@ -138,8 +255,21 @@ function PerformanceReturnChartView({
         const x = overlap ? coord.x + (marker.kind === "buy" ? -6 : 6) : coord.x;
         return { ...marker, x, y: coord.fundY };
       })
-      .filter((marker): marker is TradeMarker & { x: number; y: number } => marker != null);
+      .filter((marker): marker is PlottedTradeMarker => marker != null);
   }, [chart, markers]);
+
+  useEffect(() => {
+    if (!selectedMarkerKey) {
+      return;
+    }
+    const dismiss = (event: PointerEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setSelectedMarkerKey(null);
+      }
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [selectedMarkerKey]);
 
   if (!chart) {
     return (
@@ -182,14 +312,27 @@ function PerformanceReturnChartView({
   };
 
   return (
-    <div ref={containerRef} className="relative w-full">
+    <div
+      ref={containerRef}
+      className="relative w-full"
+      onPointerLeave={(event) => {
+        if (event.pointerType === "mouse") {
+          setSelectedMarkerKey(null);
+          setHoverIndex(null);
+        }
+      }}
+    >
       <svg
         viewBox={`0 0 ${chart.width} ${chart.height}`}
         className="w-full touch-none select-none rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2"
-        role="img"
+        role="group"
         aria-label={chartLabel}
         tabIndex={0}
         onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            setSelectedMarkerKey(null);
+            return;
+          }
           if (["Home", "End", "ArrowLeft", "ArrowRight"].includes(event.key)) {
             event.preventDefault();
             moveKeyboardCursor(event.key);
@@ -241,72 +384,6 @@ function PerformanceReturnChartView({
           <path d={chart.benchPath} fill="none" stroke={BENCH_COLOR} strokeWidth={0.9} />
         ) : null}
         <path d={chart.fundPath} fill="none" stroke={FUND_COLOR} strokeWidth={1} />
-
-        {markerPoints.map((marker) => {
-          const isBuy = marker.kind === "buy";
-          const fill = marker.pending ? "#ffffff" : isBuy ? BUY_COLOR : SELL_COLOR;
-          const stroke = isBuy ? BUY_COLOR : SELL_COLOR;
-          const label = isBuy ? "买入" : "卖出";
-          const tagWidth = 28;
-          const tagHeight = 13;
-          const tagX = Math.min(
-            chart.plotRight - tagWidth,
-            Math.max(chart.plotLeft, marker.x - tagWidth / 2),
-          );
-          const above = isBuy || marker.y > chart.plotTop + 28;
-          const tagY = above
-            ? Math.max(chart.plotTop - 2, marker.y - 22)
-            : Math.min(chart.plotBottom - tagHeight, marker.y + 8);
-          const pointerY = above ? tagY + tagHeight : tagY;
-          const pointerTipY = above ? marker.y - 4 : marker.y + 4;
-          return (
-            <g
-              key={`${marker.date}-${marker.kind}`}
-              style={{ cursor: "pointer" }}
-              onClick={() =>
-                setSelectedMarkerKey((prev) => {
-                  const key = `${marker.date}|${marker.kind}`;
-                  return prev === key ? null : key;
-                })
-              }
-            >
-              <circle
-                cx={marker.x}
-                cy={marker.y}
-                r={3}
-                fill={stroke}
-                stroke="#ffffff"
-                strokeWidth={1.25}
-              />
-              <path
-                d={`M ${marker.x - 3.5} ${pointerY} L ${marker.x + 3.5} ${pointerY} L ${marker.x} ${pointerTipY} Z`}
-                fill={fill}
-                stroke={stroke}
-                strokeWidth={0.6}
-              />
-              <rect
-                x={tagX}
-                y={tagY}
-                width={tagWidth}
-                height={tagHeight}
-                rx={2.5}
-                fill={fill}
-                stroke={stroke}
-                strokeWidth={0.8}
-              />
-              <text
-                x={tagX + tagWidth / 2}
-                y={tagY + 9.5}
-                textAnchor="middle"
-                fontSize={8}
-                fontWeight={700}
-                fill={marker.pending ? stroke : "#ffffff"}
-              >
-                {label}
-              </text>
-            </g>
-          );
-        })}
 
         <text x={chart.plotLeft + 4} y={chart.plotTop + 8} fontSize={8} className="fill-slate-500 font-medium tabular-nums">
           {formatSignedPercent(chart.max)}
@@ -410,94 +487,99 @@ function PerformanceReturnChartView({
           width={chart.chartWidth}
           height={chart.chartHeight}
           fill="transparent"
+          onPointerDown={() => setSelectedMarkerKey(null)}
           onPointerMove={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
             const ratio = (event.clientX - rect.left) / rect.width;
             const index = Math.round(ratio * (chart.coords.length - 1));
-            setHoverIndex(Math.max(0, Math.min(chart.coords.length - 1, index)));
+            const nextIndex = Math.max(0, Math.min(chart.coords.length - 1, index));
+            setHoverIndex(nextIndex);
+            if (event.pointerType === "mouse" && selectedMarkerKey) {
+              const selectedDate = selectedMarkerKey.slice(0, selectedMarkerKey.indexOf("|"));
+              if (chart.coords[nextIndex]?.date !== selectedDate) {
+                setSelectedMarkerKey(null);
+              }
+            }
           }}
-          onPointerLeave={() => setHoverIndex(null)}
+          onPointerLeave={(event) => {
+            const next = event.relatedTarget;
+            if (next instanceof Node && containerRef.current?.contains(next)) {
+              return;
+            }
+            setHoverIndex(null);
+            if (event.pointerType === "mouse") {
+              setSelectedMarkerKey(null);
+            }
+          }}
         />
+        {markerPoints.map((marker) => {
+          const isBuy = marker.kind === "buy";
+          const stroke = isBuy ? BUY_COLOR : SELL_COLOR;
+          const key = `${marker.date}|${marker.kind}`;
+          const activate = () => {
+            setSelectedMarkerKey(key);
+            const coord = chart.coords.find((item) => item.date === marker.date);
+            if (coord) {
+              setHoverIndex(coord.index);
+            }
+          };
+          return (
+            <g
+              key={key}
+              aria-label={`${marker.date} ${isBuy ? "买入" : "卖出"}${marker.pending ? "，待确认" : ""}`}
+              className="outline-none"
+              style={{ cursor: "pointer", outline: "none" }}
+              onPointerEnter={(event) => {
+                if (event.pointerType === "mouse") {
+                  activate();
+                }
+              }}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                activate();
+              }}
+              onPointerLeave={(event) => {
+                if (event.pointerType === "mouse") {
+                  setSelectedMarkerKey(null);
+                }
+              }}
+            >
+              <circle cx={marker.x} cy={marker.y} r={16} fill="transparent" />
+              <circle
+                cx={marker.x}
+                cy={marker.y}
+                r={4}
+                fill={marker.pending ? "#ffffff" : stroke}
+                stroke={marker.pending ? stroke : "#ffffff"}
+                strokeWidth={1.35}
+              />
+            </g>
+          );
+        })}
       </svg>
 
       <p className="sr-only" aria-live="polite">
-        {active
-          ? `${active.date}，基金收益${formatSignedPercent(active.fundPercent)}${
-              active.benchPercent != null
-                ? `，对比基准${formatSignedPercent(active.benchPercent)}`
-                : ""
-            }`
-          : ""}
+        {selectedMarker
+          ? `${selectedMarker.kind === "buy" ? "买入" : "卖出"} ${selectedMarker.items
+              .map((item) => `${TRADE_AMOUNT_FORMATTER.format(item.amount_yuan)}元 ${formatMarkerDateTime(item.trade_time)}`)
+              .join("，")}`
+          : active
+            ? `${active.date}，基金收益${formatSignedPercent(active.fundPercent)}${
+                active.benchPercent != null
+                  ? `，对比基准${formatSignedPercent(active.benchPercent)}`
+                  : ""
+              }`
+            : ""}
       </p>
 
-      {markerPoints.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-2" aria-label="交易记录日期">
-          {markerPoints.map((marker) => (
-            <button
-              key={`marker-control-${marker.date}-${marker.kind}`}
-              type="button"
-              onClick={() =>
-                setSelectedMarkerKey((current) => {
-                  const key = `${marker.date}|${marker.kind}`;
-                  return current === key ? null : key;
-                })
-              }
-              className={`touch-target inline-flex items-center rounded-full border bg-white px-3 text-xs font-bold hover:border-[var(--brand)] hover:text-[var(--brand)] ${
-                marker.kind === "buy"
-                  ? "border-rose-200 text-rose-700"
-                  : "border-emerald-200 text-emerald-700"
-              }`}
-              aria-expanded={selectedMarkerKey === `${marker.date}|${marker.kind}`}
-            >
-              {marker.date.slice(5)} · {marker.kind === "buy" ? "买入" : "卖出"}
-              {marker.pending ? "·待确认" : ""}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
       {selectedMarker ? (
-        <div
-          className="absolute top-1 z-10 w-44 -translate-x-1/2 rounded-xl border border-slate-200 bg-white p-2.5 text-xs shadow-lg"
-          style={{
-            left: `${Math.min(82, Math.max(18, (selectedMarker.x / chart.width) * 100))}%`,
-          }}
-        >
-          <div className="mb-1 flex items-center justify-between">
-            <span className="font-bold text-slate-700">{selectedMarker.date}</span>
-            <button
-              type="button"
-              onClick={() => setSelectedMarkerKey(null)}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-              aria-label="关闭"
-            >
-              ✕
-            </button>
-          </div>
-          <ul className="space-y-1">
-            {selectedMarker.items.map((item, index) => {
-              const isBuy = item.direction === "buy";
-              return (
-                <li key={index} className="flex items-center justify-between gap-2">
-                  <span
-                    className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-bold ${
-                      isBuy ? "bg-rose-100 profit-up" : "bg-emerald-100 profit-down"
-                    }`}
-                  >
-                    {isBuy ? "买入" : "卖出"}
-                    {item.status === "pending" ? "·待确认" : ""}
-                  </span>
-                  <span className="font-bold tabular-nums text-slate-800">
-                    {TRADE_AMOUNT_FORMATTER.format(item.amount_yuan)}
-                  </span>
-                  <span className="shrink-0 text-[10px] tabular-nums text-slate-500">
-                    {item.trade_time.slice(5, 16)}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+        <TradeMarkerCallout
+          marker={selectedMarker}
+          chartWidth={chart.width}
+          chartHeight={chart.height}
+          containerRef={containerRef}
+        />
       ) : null}
     </div>
   );

@@ -6,6 +6,7 @@ import type {
   HoldingFieldWarning,
   SectorMappingCandidate,
   SectorQuoteMeta,
+  SectorQuotesStatus,
 } from "@/lib/api";
 import { mergeHoldingsPreserveQuoteFields } from "@/lib/holdingMetrics";
 import {
@@ -15,6 +16,27 @@ import {
   type RefreshSectorQuotesResult,
 } from "@/lib/api";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
+import { startVisibilityAwarePolling } from "@/lib/visibilityPolling";
+
+const FALLBACK_AUTO_INTERVAL_MS = 180_000;
+const MIN_AUTO_INTERVAL_MS = 60_000;
+
+export function shouldAutoRefreshHoldingsQuotes(
+  status: Pick<SectorQuotesStatus, "enabled" | "auto_refresh_allowed">,
+  reason: "interval" | "visible",
+): boolean {
+  if (!status.enabled) {
+    return false;
+  }
+  if (reason === "visible") {
+    return true;
+  }
+  return status.auto_refresh_allowed;
+}
+
+function autoRefreshIntervalMs(status: Pick<SectorQuotesStatus, "auto_interval_seconds">): number {
+  return Math.max(MIN_AUTO_INTERVAL_MS, status.auto_interval_seconds * 1000);
+}
 
 type MappingQueueItem = {
   index: number;
@@ -45,6 +67,7 @@ export function useSectorQuoteRefresh({
   const holdingsRef = useRef(holdings);
   const warningsRef = useRef(warnings);
   const refreshGenerationRef = useRef(0);
+  const inFlightRef = useRef(false);
 
   useEffect(() => {
     holdingsRef.current = holdings;
@@ -107,12 +130,23 @@ export function useSectorQuoteRefresh({
   );
 
   const refresh = useCallback(
-    async (forceRefresh = false, budget: "fast" | "accurate" = "fast") => {
+    async (
+      forceRefresh = false,
+      budget: "fast" | "accurate" = "fast",
+      options?: { silent?: boolean },
+    ) => {
       if (!holdingsRef.current.length) {
         return undefined;
       }
+      const silent = Boolean(options?.silent);
+      if (silent && inFlightRef.current) {
+        return undefined;
+      }
       const generation = ++refreshGenerationRef.current;
-      setIsRefreshing(true);
+      inFlightRef.current = true;
+      if (!silent) {
+        setIsRefreshing(true);
+      }
       try {
         let nextForce = forceRefresh;
         let nextBudget = budget;
@@ -143,12 +177,66 @@ export function useSectorQuoteRefresh({
         return undefined;
       } finally {
         if (generation === refreshGenerationRef.current) {
-          setIsRefreshing(false);
+          inFlightRef.current = false;
+          if (!silent) {
+            setIsRefreshing(false);
+          }
         }
       }
     },
     [applyRefreshResult],
   );
+
+  const hasHoldings = holdings.length > 0;
+  useEffect(() => {
+    if (!hasHoldings) {
+      return;
+    }
+    let disposed = false;
+    let stopPolling: (() => void) | null = null;
+
+    const pullQuotes = (reason: "interval" | "visible") => {
+      void (async () => {
+        try {
+          const status = await fetchSectorQuotesStatus();
+          if (disposed || !shouldAutoRefreshHoldingsQuotes(status, reason)) {
+            return;
+          }
+          await refresh(false, "fast", { silent: true });
+        } catch {
+          // 自动刷新失败时保留当前数字，手动刷新仍可用。
+        }
+      })();
+    };
+
+    void (async () => {
+      let intervalMs = FALLBACK_AUTO_INTERVAL_MS;
+      try {
+        const status = await fetchSectorQuotesStatus();
+        if (disposed) {
+          return;
+        }
+        if (!status.enabled) {
+          return;
+        }
+        intervalMs = autoRefreshIntervalMs(status);
+      } catch {
+        // 状态接口失败时仍按默认 3 分钟节奏轮询，tick 里会再探一次。
+      }
+      if (disposed) {
+        return;
+      }
+      stopPolling = startVisibilityAwarePolling({
+        intervalMs,
+        onTick: pullQuotes,
+      });
+    })();
+
+    return () => {
+      disposed = true;
+      stopPolling?.();
+    };
+  }, [hasHoldings, refresh]);
 
   const selectMapping = useCallback(
     async (candidate: SectorMappingCandidate) => {
@@ -157,6 +245,7 @@ export function useSectorQuoteRefresh({
         return;
       }
       const generation = ++refreshGenerationRef.current;
+      inFlightRef.current = true;
       setIsRefreshing(true);
       try {
         const result = await applySectorMapping(holdingsRef.current, {
@@ -174,6 +263,7 @@ export function useSectorQuoteRefresh({
         // 这本身就是"没成功"的反馈，不需要再叠一条文案。
       } finally {
         if (generation === refreshGenerationRef.current) {
+          inFlightRef.current = false;
           setIsRefreshing(false);
         }
       }

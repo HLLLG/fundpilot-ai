@@ -5,10 +5,12 @@ type VisibilityTarget = Pick<
 
 type IntervalTarget = Pick<Window, "setInterval" | "clearInterval">;
 
+export type VisibilityPollTickReason = "interval" | "visible";
+
 type VisibilityPollingOptions = {
   documentTarget?: VisibilityTarget;
   intervalMs: number;
-  onTick: () => void;
+  onTick: (reason: VisibilityPollTickReason) => void;
   windowTarget?: IntervalTarget;
 };
 
@@ -34,18 +36,18 @@ export function startVisibilityAwarePolling({
     timer = null;
   };
 
-  const runTick = () => {
+  const runTick = (reason: VisibilityPollTickReason) => {
     if (disposed || documentTarget.visibilityState !== "visible") {
       return;
     }
-    onTick();
+    onTick(reason);
   };
 
   const startTimer = () => {
     if (disposed || timer !== null || documentTarget.visibilityState !== "visible") {
       return;
     }
-    timer = windowTarget.setInterval(runTick, intervalMs);
+    timer = windowTarget.setInterval(() => runTick("interval"), intervalMs);
   };
 
   const handleVisibilityChange = () => {
@@ -53,7 +55,7 @@ export function startVisibilityAwarePolling({
       stopTimer();
       return;
     }
-    runTick();
+    runTick("visible");
     startTimer();
   };
 
