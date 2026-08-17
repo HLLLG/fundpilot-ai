@@ -1,0 +1,167 @@
+"""组合级主题细分规则（CPO / CXO）的行为契约。
+
+这些规则决定重仓光模块/医药外包的基金能否拿到 CPO / CXO 主板块身份，
+进而决定荐基候选池对这两个方向是否永远召回为空。
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from app.services import fund_holdings_sector_infer as infer_module
+from app.services.fund_holdings_sector_infer import (
+    HoldingStockRow,
+    _refine_current_portfolio_themes,
+    assess_sector_from_portfolio_stocks,
+)
+
+_NOW = datetime(2026, 8, 17, 3, 0, tzinfo=timezone.utc).isoformat()
+
+
+def _industry_evidence(industry: str) -> dict:
+    return {
+        "value": industry,
+        "available_at": _NOW,
+        "source": "eastmoney_push2_stock_get_f127",
+        "ref_id": f"ref-{industry}",
+        "pit_qualified": True,
+    }
+
+
+def _board_evidence(codes: list[str]) -> dict:
+    return {
+        "codes": codes,
+        "available_at": _NOW,
+        "ref_id": "board-ref",
+        "pit_qualified": True,
+    }
+
+
+def test_cpo_rule_refines_optical_module_holdings(monkeypatch):
+    """f127「通信设备」持仓中 BK1128 成分占多数时，成分股细分为 CPO。"""
+
+    rows = [
+        {"security_code": "300308", "weight_percent": 9.0},  # 中际旭创
+        {"security_code": "300502", "weight_percent": 7.0},  # 新易盛
+        {"security_code": "000063", "weight_percent": 3.0},  # 中兴通讯，非 CPO 成分
+    ]
+    broad = {
+        code: _industry_evidence("通信设备")
+        for code in ("300308", "300502", "000063")
+    }
+    monkeypatch.setattr(
+        infer_module,
+        "fetch_current_board_constituent_evidence",
+        lambda codes, *, force_refresh=False: {
+            "BK1128": _board_evidence(["300308", "300502"])
+        },
+    )
+
+    enriched = _refine_current_portfolio_themes(rows, broad, force_refresh=False)
+
+    assert enriched["300308"]["theme"] == "CPO"
+    assert enriched["300502"]["theme"] == "CPO"
+    assert enriched["300308"]["theme_pit_qualified"] is True
+    assert "BK1128" in enriched["300308"]["theme_source"]
+    # 命中率 16/19 已过 60% 门槛，但改写只作用于成分股本身。
+    assert "theme" not in enriched["000063"]
+
+
+def test_cxo_rule_keeps_hospital_stocks_in_medical(monkeypatch):
+    """CXO 龙头细分为 CXO；同为「医疗服务」的医院股不在 BK1600，不被改写。"""
+
+    rows = [
+        {"security_code": "603259", "weight_percent": 8.0},  # 药明康德
+        {"security_code": "300347", "weight_percent": 6.0},  # 泰格医药
+        {"security_code": "300015", "weight_percent": 4.0},  # 爱尔眼科
+    ]
+    broad = {
+        code: _industry_evidence("医疗服务")
+        for code in ("603259", "300347", "300015")
+    }
+    monkeypatch.setattr(
+        infer_module,
+        "fetch_current_board_constituent_evidence",
+        lambda codes, *, force_refresh=False: {
+            "BK1600": _board_evidence(["603259", "300347"])
+        },
+    )
+
+    enriched = _refine_current_portfolio_themes(rows, broad, force_refresh=False)
+
+    assert enriched["603259"]["theme"] == "CXO"
+    assert enriched["300347"]["theme"] == "CXO"
+    assert "theme" not in enriched["300015"]
+
+
+def test_cpo_rule_requires_majority_weight(monkeypatch):
+    """主设备商权重占优时（成分权重 3/18 < 60%），规则整体不触发。"""
+
+    rows = [
+        {"security_code": "000063", "weight_percent": 10.0},  # 中兴通讯
+        {"security_code": "600498", "weight_percent": 5.0},  # 烽火通信
+        {"security_code": "300308", "weight_percent": 3.0},  # 中际旭创
+    ]
+    broad = {
+        code: _industry_evidence("通信设备")
+        for code in ("000063", "600498", "300308")
+    }
+    monkeypatch.setattr(
+        infer_module,
+        "fetch_current_board_constituent_evidence",
+        lambda codes, *, force_refresh=False: {
+            "BK1128": _board_evidence(["300308"])
+        },
+    )
+
+    enriched = _refine_current_portfolio_themes(rows, broad, force_refresh=False)
+
+    assert all(
+        "theme" not in value
+        for value in enriched.values()
+        if isinstance(value, dict)
+    )
+
+
+def test_refined_cxo_theme_wins_primary_sector_vote():
+    """细分主题优先于宽行业映射参与投票，可产出合格的 CXO 主板块。"""
+
+    coverage = {"portfolio_weight_coverage_percent": 60.0}
+    stocks = [
+        HoldingStockRow(
+            name="药明康德",
+            weight=30.0,
+            industry="医疗服务",
+            stock_code="603259",
+            coverage=coverage,
+            industry_pit_qualified=True,
+            theme="CXO",
+            theme_pit_qualified=True,
+            theme_available_at=_NOW,
+        ),
+        HoldingStockRow(
+            name="泰格医药",
+            weight=20.0,
+            industry="医疗服务",
+            stock_code="300347",
+            coverage=coverage,
+            industry_pit_qualified=True,
+            theme="CXO",
+            theme_pit_qualified=True,
+            theme_available_at=_NOW,
+        ),
+        HoldingStockRow(
+            name="爱尔眼科",
+            weight=10.0,
+            industry="医疗服务",
+            stock_code="300015",
+            coverage=coverage,
+            industry_pit_qualified=True,
+        ),
+    ]
+
+    assessment = assess_sector_from_portfolio_stocks(stocks)
+
+    assert assessment["sector_name"] == "CXO"
+    assert assessment["scores"] == {"CXO": 50.0, "医疗": 10.0}
+    assert assessment["qualification"]["sector_inference_eligible"] is True

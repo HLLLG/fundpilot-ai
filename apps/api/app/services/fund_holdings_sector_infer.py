@@ -58,11 +58,34 @@ class _PortfolioThemeRefinementRule:
 # Eastmoney exposes those as two separate level-3 industry boards, so their
 # union is the current free-source membership proxy for our canonical
 # ``半导体材料`` (display source name: ``半导体材料设备``) theme.
+#
+# ``parent_industries`` 匹配的是东财 f127 的**原始行业名**（见
+# ``_refine_current_portfolio_themes`` 读取 ``evidence["value"]``），不是
+# ``fund_industry_theme_map`` 归并后的主题名——所以 CPO 的 parent 写「通信设备」
+# 而不是「通信技术」，CXO 写「医疗服务」而不是「医疗」。
 _PORTFOLIO_THEME_REFINEMENT_RULES: tuple[_PortfolioThemeRefinementRule, ...] = (
     _PortfolioThemeRefinementRule(
         target_theme="半导体材料",
         parent_industries=("半导体",),
         board_codes=("BK1325", "BK1326"),
+    ),
+    # 光模块公司（中际旭创/新易盛/天孚通信…）的 f127 全部是「通信设备」，
+    # 行业映射只能到「通信技术」，永远细分不出 CPO。东财没有 CPO 行业板，
+    # BK1128 CPO 概念板是行情注册表已采用的同一代理；主设备商（中兴通讯等）
+    # 依赖组合级 60% 权重门槛兜底，单只沾边股不会改写整个基金的主板块。
+    _PortfolioThemeRefinementRule(
+        target_theme="CPO",
+        parent_industries=("通信设备",),
+        board_codes=("BK1128",),
+    ),
+    # CXO 龙头（药明康德/泰格医药/凯莱英…）的 f127 是「医疗服务」，行业映射
+    # 停在「医疗」。BK1600 医疗研发外包是注册表考证过的 CXO 行业板代理
+    # （BK0899 CRO 只覆盖外包更窄的一层，不能用）；医院/体检股（爱尔眼科等）
+    # 不在 BK1600 成分里，仍归「医疗」，与行业映射表的既有语义一致。
+    _PortfolioThemeRefinementRule(
+        target_theme="CXO",
+        parent_industries=("医疗服务",),
+        board_codes=("BK1600",),
     ),
 )
 
