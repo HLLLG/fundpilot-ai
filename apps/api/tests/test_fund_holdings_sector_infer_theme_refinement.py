@@ -123,6 +123,35 @@ def test_cpo_rule_requires_majority_weight(monkeypatch):
     )
 
 
+def test_compute_rental_rule_refines_it_and_telecom_services(monkeypatch):
+    """IT服务/通信服务持仓中 BK1134 成分占多数时细分为算力租赁；半导体股不受影响。"""
+
+    rows = [
+        {"security_code": "688316", "weight_percent": 7.0},  # 青云科技
+        {"security_code": "300846", "weight_percent": 5.0},  # 首都在线
+        {"security_code": "688256", "weight_percent": 9.0},  # 寒武纪（半导体）
+    ]
+    broad = {
+        "688316": _industry_evidence("IT服务Ⅱ"),
+        "300846": _industry_evidence("通信服务"),
+        "688256": _industry_evidence("半导体"),
+    }
+    monkeypatch.setattr(
+        infer_module,
+        "fetch_current_board_constituent_evidence",
+        lambda codes, *, force_refresh=False: {
+            "BK1134": _board_evidence(["688316", "300846", "688256"])
+        },
+    )
+
+    enriched = _refine_current_portfolio_themes(rows, broad, force_refresh=False)
+
+    assert enriched["688316"]["theme"] == "算力租赁"
+    assert enriched["300846"]["theme"] == "算力租赁"
+    # 半导体不是规则 parent：即便寒武纪在算力租赁概念板里，也不改写其行业身份。
+    assert "theme" not in enriched["688256"]
+
+
 def test_refined_cxo_theme_wins_primary_sector_vote():
     """细分主题优先于宽行业映射参与投票，可产出合格的 CXO 主板块。"""
 

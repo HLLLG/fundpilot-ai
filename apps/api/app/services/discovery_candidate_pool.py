@@ -74,6 +74,21 @@ _DIRECTLY_VERIFIED_PRIMARY_SOURCES = frozenset(
     }
 )
 _BENCHMARK_PRIMARY_SOURCES = frozenset({"benchmark_index", "precompute_benchmark"})
+# 方向 label → 可接受的已核验基金身份板块（单向映射）。
+#
+# 方向引擎的行情证据可以比基金身份粒度更粗：「贵金属」方向的行情代理是东财
+# BK0732 贵金属行业板，而黄金 ETF 联接的身份挂在「黄金」（基准 AU9999 现货）、
+# 黄金股 ETF 联接挂在「黄金股」（931238）。这两类载体都是贵金属方向的合法工具，
+# 不扩展就会出现"方向可布局但结构性无载体"。注意映射只对方向侧生效：
+# 「黄金」「黄金股」两个方向各自仍只接受自己的身份，互不混用。
+_DIRECTION_ACCEPTABLE_IDENTITY_SECTORS: dict[str, tuple[str, ...]] = {
+    "贵金属": ("贵金属", "黄金股", "黄金"),
+}
+
+
+def _acceptable_identity_sectors(sector_label: str) -> tuple[str, ...]:
+    label = str(sector_label or "").strip()
+    return _DIRECTION_ACCEPTABLE_IDENTITY_SECTORS.get(label, (label,))
 _CORE_QUALITY_FIELDS = (
     "return_3m_percent",
     "return_6m_percent",
@@ -149,8 +164,15 @@ def build_candidate_pool(
         for row in list_fund_primary_sectors()
         if str(row.get("source") or "") in {"manual", "ocr_detail"}
     ]
+    identity_sector_names = list(
+        dict.fromkeys(
+            identity_sector
+            for sector in target_sectors
+            for identity_sector in _acceptable_identity_sectors(sector)
+        )
+    )
     primary_rows = tenant_primary_rows + list_fund_primary_sectors_by_sector_names(
-        target_sectors,
+        identity_sector_names,
         limit_per_sector=20,
     )
     new_issue_rows: list[dict] = []
@@ -1112,6 +1134,7 @@ def _candidates_for_sector(
 ) -> list[dict]:
     canon = get_canonical_sector(sector_label)
     keywords = _sector_keywords(sector_label, canon)
+    acceptable_identity_sectors = set(_acceptable_identity_sectors(sector_label))
     entries_by_code: dict[str, dict] = {}
     family_seen = family_seen if family_seen is not None else set()
     verified_primary_sectors_by_code: dict[str, set[str]] = {}
@@ -1129,7 +1152,8 @@ def _candidates_for_sector(
             )
 
     for row in primary_rows:
-        if row.get("sector_name") != sector_label:
+        identity_sector = str(row.get("sector_name") or "").strip()
+        if identity_sector not in acceptable_identity_sectors:
             continue
         code = str(row.get("fund_code", "")).zfill(6)
         if code in excluded or (code in seen_codes and recall_audit_state is None):
@@ -1138,9 +1162,11 @@ def _candidates_for_sector(
         if not _matches_fund_type_preference(name, fund_type_preference):
             continue
         source = str(row.get("source") or "").strip()
+        # 身份核验对照的是映射行自己的板块：同义召回（如贵金属方向接受
+        # 「黄金」身份）时，基准证据重放仍必须复现出「黄金」，而不是方向名。
         verified_primary = _is_execution_verified_primary_mapping(
             row,
-            expected_sector=sector_label,
+            expected_sector=identity_sector,
         )
         inferred_match_kind = (
             "primary"
@@ -1163,6 +1189,7 @@ def _candidates_for_sector(
                 "sector_confidence": row.get("confidence"),
                 "sector_match_kind": inferred_match_kind,
                 "sector_mapping_verified": verified_primary,
+                "identity_sector_label": identity_sector,
             },
             rank_by_code.get(code),
         )
@@ -1173,7 +1200,9 @@ def _candidates_for_sector(
         if code in excluded or (code in seen_codes and recall_audit_state is None):
             continue
         verified_sectors = verified_primary_sectors_by_code.get(code, set())
-        if verified_sectors and sector_label not in verified_sectors:
+        if verified_sectors and acceptable_identity_sectors.isdisjoint(
+            verified_sectors
+        ):
             # A substring recall must not consume the code before its verified
             # target is processed. This is especially important when both
             # 黄金 and 黄金股 are selected in the same scan.
@@ -1904,10 +1933,14 @@ def _with_exact_passive_tracking_match(row: dict) -> dict:
     if "ETF" not in name and "指数" not in name and "指数" not in fund_type:
         return result
 
-    target = get_canonical_sector(str(result.get("sector_label") or ""))
+    sector_label = str(result.get("sector_label") or "")
+    target = get_canonical_sector(sector_label)
     target_label = str(getattr(target, "label", None) or "").strip()
     if not target_label:
         return result
+    acceptable_labels = {target_label} | set(
+        _acceptable_identity_sectors(sector_label)
+    )
 
     references = [
         str(result.get("tracking_reference_text") or "").strip(),
@@ -1923,7 +1956,8 @@ def _with_exact_passive_tracking_match(row: dict) -> dict:
         # track 399998 or 399990. The resolver has already allow-listed the
         # exact index and mapped it to a canonical sector, so compare that
         # canonical identity while still keeping 黄金 and 黄金股 distinct.
-        if resolved_sector != target_label:
+        # 方向级同义（如贵金属方向接受黄金/黄金股跟踪标的）也在这里生效。
+        if resolved_sector not in acceptable_labels:
             result["sector_identity_mismatch"] = {
                 "relation_kind": "tracking_reference",
                 "target_sector_label": target_label,
@@ -1939,6 +1973,7 @@ def _with_exact_passive_tracking_match(row: dict) -> dict:
         result["sector_match_kind"] = "tracking_exact"
         result = annotate_candidate_sector_identity(result)
         result.pop("sector_identity_mismatch", None)
+        result["identity_sector_label"] = resolved_sector
         result["sector_confidence"] = max(
             _num(result.get("sector_confidence")) or 0.0,
             0.95,

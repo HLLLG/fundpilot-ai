@@ -87,6 +87,15 @@ _PORTFOLIO_THEME_REFINEMENT_RULES: tuple[_PortfolioThemeRefinementRule, ...] = (
         parent_industries=("医疗服务",),
         board_codes=("BK1600",),
     ),
+    # 算力租赁（青云科技/首都在线/并行科技/中贝通信…）的主业形态是云/IDC
+    # 服务商，f127 落在「IT服务Ⅱ」「通信服务」。BK1134 概念板实测 100 只成分
+    # 行业极分散（还含半导体、装修装饰等蹭概念股），parent 刻意只收这两个
+    # 服务行业：半导体算力芯片股的主板块应当仍是「半导体」，不被概念改写。
+    _PortfolioThemeRefinementRule(
+        target_theme="算力租赁",
+        parent_industries=("IT服务Ⅱ", "通信服务"),
+        board_codes=("BK1134",),
+    ),
 )
 
 
