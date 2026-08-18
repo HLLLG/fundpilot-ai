@@ -65,7 +65,6 @@ it("renders a holding-return chart, period tabs, and historical profit rows", as
       currentProfit={66.32}
       currentReturnPercent={1.47}
       yesterdayProfit={54.31}
-      settledAmount={4566.32}
     />,
   );
 
