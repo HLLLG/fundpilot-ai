@@ -1035,8 +1035,12 @@ def _run_guard_for_test(
     *,
     budget_yuan: float = 10_000,
     extra_facts: dict | None = None,
+    avoid_chasing: bool = False,
 ):
-    profile = InvestorProfile(concentration_limit_percent=100)
+    profile = InvestorProfile(
+        concentration_limit_percent=100,
+        avoid_chasing=avoid_chasing,
+    )
     facts = {
         "candidate_pool": [candidate],
         "portfolio_snapshot": {
@@ -1302,6 +1306,7 @@ def test_opportunity_first_waits_only_when_price_extension_and_flow_weakness_coe
             )
         ],
         candidate,
+        avoid_chasing=True,
         extra_facts={
             "effective_configuration": {
                 "discovery_strategy": "opportunity_first"

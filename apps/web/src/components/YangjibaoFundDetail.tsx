@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import type {
+  DeletePortfolioTransactionResult,
   Holding,
   HoldingAdjustmentPatch,
   HoldingDetail,
@@ -27,8 +28,8 @@ import {
 import { hydrateTradingSession } from "@/lib/tradingSessionClient";
 import { FundCodeEditModal, isProvisionalFundCode } from "@/components/FundCodeEditModal";
 import { buildFlatIntradayPoints, IntradayPercentChart } from "@/components/IntradayPercentChart";
+import { HoldingProfitPanel } from "@/components/HoldingProfitPanel";
 import { PerformanceTrendPanel } from "@/components/PerformanceTrendPanel";
-import { FundHoldingTransactions } from "@/components/FundHoldingTransactions";
 import {
   resolveInitialPurchaseDate,
   todayIsoDate,
@@ -114,6 +115,7 @@ type YangjibaoFundDetailProps = {
     patch: HoldingAdjustmentPatch,
   ) => Promise<HoldingMutationResult | null>;
   onApplyTransaction?: (transaction: ParsedTransaction) => Promise<HoldingMutationResult | null>;
+  onDeleteTransaction?: (transactionId: string) => Promise<DeletePortfolioTransactionResult>;
 };
 
 function HeaderStat({
@@ -200,8 +202,10 @@ export function YangjibaoFundDetail({
   onDeleteHolding,
   onAdjustHolding,
   onApplyTransaction,
+  onDeleteTransaction,
 }: YangjibaoFundDetailProps) {
   const [tab, setTab] = useState<DetailTab>("sector");
+  const [transactionRevision, setTransactionRevision] = useState(0);
   const [detail, setDetail] = useState<HoldingDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(true);
   const [intradayLoading, setIntradayLoading] = useState(false);
@@ -489,6 +493,7 @@ export function YangjibaoFundDetail({
         sector_quote_meta: sectorMeta,
       });
       setDetail(result);
+      setTransactionRevision((current) => current + 1);
     } catch (error) {
       const message = userFacingErrorMessage(error, "详情刷新失败");
       setDetailError(`持仓已更新，但最新详情暂时无法刷新：${message}`);
@@ -941,53 +946,32 @@ export function YangjibaoFundDetail({
               fundName={activeHolding.fund_name}
               costPrice={unitCost}
               enabled={detail?.fund_code_resolved === true}
+              refreshKey={transactionRevision}
             />
           ) : null}
 
           {tab === "profit" ? (
-            <div className="space-y-2">
-              <ProfitRow label="持有金额" value={`¥ ${formatPlainMoney(settledAmount)}`} />
-              <ProfitRow
-                label="持仓成本总额"
-                value={costBasis != null ? `¥ ${formatPlainMoney(costBasis)}` : "—"}
-              />
-              <ProfitRow
-                label="持有份额"
-                value={shares != null ? formatPlainMoney(shares) : "—"}
-                hint={sourceHint(provenance, "holding_shares")}
-              />
-              <ProfitRow
-                label="单位成本"
-                value={unitCost != null ? unitCost.toFixed(4) : "—"}
-                hint={sourceHint(provenance, "holding_cost")}
-              />
-              <ProfitRow
-                label="持有收益"
-                value={formatSignedMoney(holdingProfit)}
-                valueClass={cnProfitClass(holdingProfit)}
-              />
-              <ProfitRow
-                label="昨日收益"
-                value={yesterdayProfit != null ? formatSignedMoney(yesterdayProfit) : "—"}
-                valueClass={cnProfitClass(yesterdayProfit)}
-                hint={sourceHint(provenance, "yesterday_profit")}
-              />
-              <ProfitRow
-                label="持有天数"
-                value={holdingDays != null ? `${holdingDays} 天` : "—"}
-                hint={sourceHint(provenance, "holding_days")}
-              />
-              {weight != null ? <ProfitRow label="占账户比例" value={formatPlainPercent(weight)} /> : null}
-              {(pendingBuyAmount(activeHolding) > 0 || isUnsettledPreviewHolding(activeHolding)) ? (
-                <p className="rounded-lg bg-[var(--warn-bg)] px-3 py-2 text-[11px] font-semibold leading-5 text-[var(--warn-fg)]">
-                  有在途交易 {formatPlainMoney(pendingBuyAmount(activeHolding))} 元，份额未确认前不计入持有收益。
-                </p>
-              ) : null}
-              <FundHoldingTransactions
-                fundCode={activeHolding.fund_code}
-                enabled={detail?.fund_code_resolved === true || Boolean(activeHolding.fund_code)}
-              />
-            </div>
+            <HoldingProfitPanel
+              fundCode={activeHolding.fund_code}
+              fundName={activeHolding.fund_name}
+              enabled={detail?.fund_code_resolved === true || Boolean(activeHolding.fund_code)}
+              shares={shares}
+              unitCost={unitCost}
+              firstHoldDate={firstPurchaseDate || null}
+              holdingDays={holdingDays}
+              currentProfit={holdingProfit}
+              currentReturnPercent={holdingReturn}
+              yesterdayProfit={yesterdayProfit}
+              costBasis={costBasis}
+              pendingNote={
+                pendingBuyAmount(activeHolding) > 0 || isUnsettledPreviewHolding(activeHolding)
+                  ? `有在途交易 ${formatPlainMoney(pendingBuyAmount(activeHolding))} 元，份额未确认前不计入持有收益。`
+                  : null
+              }
+              refreshKey={transactionRevision}
+              onDeleteTransaction={onDeleteTransaction}
+              onTransactionsChanged={() => setTransactionRevision((current) => current + 1)}
+            />
           ) : null}
         </div>
 
@@ -1165,28 +1149,6 @@ export function YangjibaoFundDetail({
           }}
         />
       </div>
-    </div>
-  );
-}
-
-function ProfitRow({
-  label,
-  value,
-  valueClass = "text-[var(--brand-deep)]",
-  hint,
-}: {
-  label: string;
-  value: string;
-  valueClass?: string;
-  hint?: string;
-}) {
-  return (
-    <div className="flex items-center justify-between rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-2">
-      <div className="min-w-0">
-        <div className="text-[11px] text-[var(--muted)]">{label}</div>
-        {hint ? <div className="truncate text-[10px] text-[var(--muted)]">{hint}</div> : null}
-      </div>
-      <div className={`shrink-0 text-sm font-black tabular-nums ${valueClass}`}>{value}</div>
     </div>
   );
 }

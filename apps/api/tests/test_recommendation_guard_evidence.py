@@ -33,9 +33,8 @@ def _no_live_intraday_reversal_signal(monkeypatch):
 _TODAY_NEWS = [NewsItem(topic="半导体", title="半导体行业利好消息", is_today=True)]
 
 
-def _request(*, sector_name: str = "半导体", decision_style: str = "conservative") -> AnalysisRequest:
+def _request(*, sector_name: str = "半导体") -> AnalysisRequest:
     profile = InvestorProfile(
-        decision_style=decision_style,
         max_drawdown_percent=15,
         # 本文件验证证据守卫；默认关闭集中度干扰，专门用例会显式调低上限。
         concentration_limit_percent=100,
@@ -166,10 +165,9 @@ def test_full_guard_ignores_non_dict_evidence_components() -> None:
     _, guarded = apply_recommendation_guards(
         [_rec()],
         [],
-        _request(decision_style="tactical"),
+        _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
 
@@ -215,10 +213,9 @@ def test_top_level_ic_status_controls_public_evidence_wording(
     _, guarded = apply_recommendation_guards(
         [_rec()],
         [],
-        _request(decision_style="tactical"),
+        _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
 
@@ -303,10 +300,9 @@ def test_prefilled_model_fields_are_sanitized_and_ic_notes_deduplicated(
     _, guarded = apply_recommendation_guards(
         [model_rec],
         [],
-        _request(decision_style="tactical"),
+        _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
 
@@ -346,10 +342,9 @@ def test_available_ic_with_malformed_factor_uses_uncovered_wording() -> None:
     _, guarded = apply_recommendation_guards(
         [_rec()],
         [],
-        _request(decision_style="tactical"),
+        _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
 
@@ -375,10 +370,9 @@ def test_weak_sector_opportunity_downgrades_add_action() -> None:
     _, guarded = apply_recommendation_guards(
         [_rec()],
         [],
-        _request(decision_style="tactical"),
+        _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
     rec = guarded[0]
@@ -406,10 +400,9 @@ def test_strong_evidence_keeps_add_action_and_backfills_fields() -> None:
     _, guarded = apply_recommendation_guards(
         [_rec()],
         [],
-        _request(decision_style="tactical"),
+        _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
     rec = guarded[0]
@@ -422,18 +415,17 @@ def test_strong_evidence_keeps_add_action_and_backfills_fields() -> None:
 
 
 @pytest.mark.parametrize(
-    ("score", "decision_style", "expected_percent"),
+    ("score", "expected_percent"),
     [
-        (49.99, "aggressive", 5.0),
-        (50.0, "tactical", 10.0),
-        (70.0, "tactical", 15.0),
-        (85.0, "aggressive", 20.0),
-        (999.0, "tactical", 20.0),
+        (49.99, 5.0),
+        (50.0, 10.0),
+        (70.0, 15.0),
+        (85.0, 20.0),
+        (999.0, 20.0),
     ],
 )
 def test_add_percentage_tracks_opportunity_score_without_style_cap(
     score: float,
-    decision_style: str,
     expected_percent: float,
 ) -> None:
     facts = _facts_with_holding(
@@ -455,10 +447,9 @@ def test_add_percentage_tracks_opportunity_score_without_style_cap(
     _, guarded = apply_recommendation_guards(
         [_rec()],
         [],
-        _request(decision_style=decision_style),
+        _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
 
@@ -523,7 +514,7 @@ def _unusable_reliability_fund_evidence() -> dict:
 
 
 def test_conservative_profile_does_not_cap_opportunity_percentage() -> None:
-    request = _request(decision_style="conservative")
+    request = _request()
 
     percent, basis, note = _resolve_deterministic_position_change(
         "分批加仓",
@@ -552,7 +543,7 @@ def test_add_percentage_prefers_research_score_and_falls_back_safely(
     sector_opportunity: dict | None,
     expected_percent: float,
 ) -> None:
-    request = _request(decision_style="conservative")
+    request = _request()
 
     percent, _, note = _resolve_deterministic_position_change(
         "分批加仓",
@@ -602,7 +593,7 @@ def test_fund_evidence_steps_the_sector_tier_down(
     expected_basis_fragment: str | None,
 ) -> None:
     """同一板块档位下，基金自身证据决定是否降一级——这是此前完全缺失的区分维度。"""
-    request = _request(decision_style="conservative")
+    request = _request()
 
     percent, basis, note = _resolve_deterministic_position_change(
         "分批加仓",
@@ -625,7 +616,7 @@ def test_fund_evidence_steps_the_sector_tier_down(
 
 def test_fund_evidence_never_raises_the_sector_tier() -> None:
     """量化证据只能增加置信度，不得作为提额依据：最低档不会因证据强而上调。"""
-    request = _request(decision_style="conservative")
+    request = _request()
 
     percent, _basis, _note = _resolve_deterministic_position_change(
         "分批加仓",
@@ -689,10 +680,9 @@ def test_unconfirmed_share_ledger_keeps_direction_and_uses_estimated_percentage(
             )
         ],
         [],
-        _request(decision_style="tactical"),
+        _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
 
@@ -716,7 +706,6 @@ def test_missing_facts_row_does_not_crash_and_still_backfills_generic_fields() -
         _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=None,
     )
     rec = guarded[0]
@@ -731,7 +720,6 @@ def test_confidence_is_normalized_to_known_labels() -> None:
         _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=None,
     )
     assert guarded[0].confidence == "中"
@@ -748,7 +736,6 @@ def test_humanizes_internal_field_names_in_llm_provided_decision_path() -> None:
         _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=None,
     )
     text = guarded[0].decision_path
@@ -783,10 +770,9 @@ def test_llm_watch_gets_upgraded_to_pause_when_divergence_strong_and_evidence_ok
     _, guarded = apply_recommendation_guards(
         [_rec(action="观察")],
         [],
-        _request(decision_style="conservative"),
+        _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
     rec = guarded[0]
@@ -802,10 +788,9 @@ def test_llm_watch_gets_upgraded_to_reduce_when_fund_evidence_also_weak() -> Non
     _, guarded = apply_recommendation_guards(
         [_rec(action="观察")],
         [],
-        _request(decision_style="conservative"),
+        _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
     rec = guarded[0]
@@ -824,10 +809,9 @@ def test_risk_enhanced_reduction_uses_one_third_and_matching_estimate() -> None:
     _, guarded = apply_recommendation_guards(
         [_rec(action="观察")],
         [],
-        _request(decision_style="conservative"),
+        _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
 
@@ -847,10 +831,9 @@ def test_llm_add_action_gets_upgraded_past_the_normal_downgrade_to_reduce() -> N
     _, guarded = apply_recommendation_guards(
         [_rec(action="分批加仓")],
         [],
-        _request(decision_style="conservative"),
+        _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
     rec = guarded[0]
@@ -872,10 +855,9 @@ def test_escalation_does_not_downgrade_below_llm_action_when_evidence_is_fine() 
     _, guarded = apply_recommendation_guards(
         [_rec(action="观察")],
         [],
-        _request(decision_style="conservative"),
+        _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
     rec = guarded[0]
@@ -892,7 +874,6 @@ def test_escalation_backfills_position_change_fields_only_when_triggered() -> No
         _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=None,
     )
     rec = guarded[0]
@@ -912,7 +893,7 @@ def test_deep_reduce_action_produces_matching_default_risk_text() -> None:
         "freshness_status": "fresh",
         "stale": False,
     }
-    request = _request(decision_style="conservative")
+    request = _request()
     # 手工构造真实组合市值口径下的集中度超限场景。
     request.profile.concentration_limit_percent = 5
     facts["market_breadth"] = market_breadth
@@ -923,7 +904,6 @@ def test_deep_reduce_action_produces_matching_default_risk_text() -> None:
         request,
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
     rec = guarded[0]

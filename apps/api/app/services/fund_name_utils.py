@@ -21,6 +21,7 @@ FUND_ISSUER_PREFIX = (
     "平安",
     "富国",
     "鹏华",
+    "鹏扬",
     "诺安",
     "景顺",
     "长城",
@@ -98,6 +99,19 @@ LOOKUP_NAME_STRIP_TOKENS = ("发起式", "主题", "灵活配置", "证券投资
 _LOOKUP_TYPE_SUFFIX_RE = re.compile(r"(混合|股票|指数|债券|联接)型")
 # 东财 QDII 全称常带「人民币/美元/港币」份额币种，支付宝 OCR 常省略
 LOOKUP_CURRENCY_SUFFIXES = ("人民币", "美元", "港币")
+# 支付宝「我的持有」常把 金额/昨日收益/持有收益/收益率 粘在基金名后面。
+# 必须在去掉小数点之前剥掉，否则 517.74 会变成 51774 粘在名称上。
+_TRAILING_HOLDING_METRICS_RE = re.compile(
+    r"(?:"
+    r"\s*[+\-−–—＋]?\d{1,3}(?:,\d{3})+(?:\.\d+)?"
+    r"|\s*[+\-−–—＋]?\d+\.\d+"
+    r"|\s*[+\-−–—＋]\d+(?:\.\d+)?"
+    r"|\s*[+\-−–—＋]?\d+(?:\.\d+)?\s*[%％]"
+    r"|\s*\d{4,}"
+    r")+$"
+)
+
+
 SHARE_CLASS_SUFFIX_RE = re.compile(
     r"(?:混合|联接|ETF联接|ETF联|股票|指数)"
     + _QDII_INFIX
@@ -107,9 +121,14 @@ SHARE_CLASS_SUFFIX_RE = re.compile(
 )
 
 
+def _strip_trailing_holding_metrics(name: str) -> str:
+    stripped = _TRAILING_HOLDING_METRICS_RE.sub("", name).rstrip(" \t,;，；+＋-−–—")
+    return stripped or name
+
+
 def sanitize_fund_name(name: str) -> str:
     """Strip Alipay promo banners and OCR junk prepended to fund names."""
-    cleaned = name.strip()
+    cleaned = _strip_trailing_holding_metrics(name.strip())
     if not cleaned:
         return cleaned
 
@@ -207,6 +226,23 @@ def _normalize_fund_suffix(name: str) -> str:
     return re.sub(r"ETF联([A-CEH])$", r"ETF联接\1", result, flags=re.IGNORECASE)
 
 
+_OPTIONAL_TYPE_SUFFIX_RE = re.compile(r"(指数|股票|混合|债券)$")
+
+
+def normalized_fund_name_stem(normalized: str) -> str:
+    """对已经 ``normalize_fund_name_for_lookup`` 过的名称取比对词干。"""
+    stem = re.sub(r"[A-CEH]$", "", normalized, flags=re.IGNORECASE)
+    return _OPTIONAL_TYPE_SUFFIX_RE.sub("", stem)
+
+
+def fund_name_match_stem(name: str) -> str:
+    """去掉份额字母和末尾「指数/股票/混合」，对齐支付宝简称与东财全称。
+
+    「南方黄金股C」与「南方黄金股指数C」是同一只；直接做子串会因中间多了「指数」对不上。
+    """
+    return normalized_fund_name_stem(normalize_fund_name_for_lookup(name))
+
+
 def is_fund_name_match(left: str, right: str) -> bool:
     if not left or not right:
         return False
@@ -214,7 +250,15 @@ def is_fund_name_match(left: str, right: str) -> bool:
     right_lookup = normalize_fund_name_for_lookup(right)
     if left_lookup == right_lookup:
         return True
-    return left_lookup in right_lookup or right_lookup in left_lookup
+    if left_lookup in right_lookup or right_lookup in left_lookup:
+        return True
+    left_class = extract_share_class_letter(left)
+    right_class = extract_share_class_letter(right)
+    if left_class and right_class and left_class != right_class:
+        return False
+    left_stem = fund_name_match_stem(left)
+    right_stem = fund_name_match_stem(right)
+    return bool(left_stem) and left_stem == right_stem
 
 
 def lookup_match_score(left: str, right: str) -> int:
@@ -226,6 +270,10 @@ def lookup_match_score(left: str, right: str) -> int:
         return len(left_lookup) * 100 + len(right_lookup)
     if right_lookup in left_lookup:
         return len(right_lookup) * 100 + len(left_lookup)
+    left_stem = fund_name_match_stem(left)
+    right_stem = fund_name_match_stem(right)
+    if left_stem and left_stem == right_stem:
+        return 50_000 + len(left_stem)
     return 0
 
 

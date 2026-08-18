@@ -482,6 +482,51 @@ def _should_skip_official_nav_roll(
     return False
 
 
+def _latest_confirmed_nav(fund_code: str) -> float | None:
+    """已确认交易上的确认日净值，给加仓金额重算当缓存净值缺失时的兜底。"""
+    from app.database import list_fund_transactions
+
+    latest_date = ""
+    nav: float | None = None
+    try:
+        transactions = list_fund_transactions(fund_code=fund_code)
+    except Exception:
+        logger.exception("读取 %s 确认净值失败", fund_code)
+        return None
+    for tx in transactions:
+        if tx.status != "confirmed" or not tx.nav_on_confirm or tx.nav_on_confirm <= 0:
+            continue
+        if tx.confirm_date >= latest_date:
+            latest_date = tx.confirm_date
+            nav = float(tx.nav_on_confirm)
+    return nav
+
+
+def _unit_nav_for_share_override(
+    fund_code: str,
+    *,
+    profile: FundProfile | None,
+    settled: float,
+    allow_nav_fetch: bool,
+    official_unit_nav: float | None,
+) -> float | None:
+    """加仓后重算市值用的单价：官方净值 → 缓存 → 旧份额隐含价 → 确认日净值。"""
+    from app.services.fund_nav_service import peek_cached_unit_nav
+
+    if official_unit_nav and official_unit_nav > 0:
+        return official_unit_nav
+    peeked = peek_cached_unit_nav(fund_code)
+    if peeked and peeked > 0:
+        return peeked
+    latest = get_latest_unit_nav(fund_code, allow_fetch=allow_nav_fetch)
+    if latest and latest > 0:
+        return latest
+    old_shares = profile.holding_shares if profile else None
+    if old_shares and old_shares > 0 and settled > 0:
+        return settled / old_shares
+    return _latest_confirmed_nav(fund_code)
+
+
 def _sync_one_holding(
     holding: Holding,
     *,
@@ -542,6 +587,39 @@ def _sync_one_holding(
                     )
 
     settled = _resolve_settled_amount(holding, profile)
+
+    # 已确认加减仓是仓位真值，必须先于收益递延冻结：否则加仓第二天金额仍停在旧市值。
+    if override_value is not None and shares and shares > 0:
+        official_unit_nav = get_latest_unit_nav(code, allow_fetch=allow_nav_fetch)
+        unit_nav = _unit_nav_for_share_override(
+            code,
+            profile=profile,
+            settled=settled,
+            allow_nav_fetch=allow_nav_fetch,
+            official_unit_nav=official_unit_nav,
+        )
+        if unit_nav and unit_nav > 0:
+            new_settled = round(shares * unit_nav, 2)
+            if persist_profile and profile is not None:
+                profile = save_fund_profile(
+                    profile.model_copy(
+                        update={
+                            "settled_holding_amount": new_settled,
+                            "holding_amount": new_settled,
+                        }
+                    )
+                )
+            return (
+                holding.model_copy(
+                    update={
+                        "holding_amount": new_settled,
+                        "settled_holding_amount": new_settled,
+                        "amount_includes_today": False,
+                    }
+                ),
+                profile,
+            )
+
     from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
     if is_profit_accrual_deferred(profile):
@@ -565,29 +643,6 @@ def _sync_one_holding(
         else get_cached_official_nav_return(code, trade_date)
     )
     official_unit_nav = get_latest_unit_nav(code, allow_fetch=allow_nav_fetch)
-
-    # 交易账本有效份额变化：按最新官方净值重算结算基线（用户确认加减仓）。
-    if override_value is not None and shares and official_unit_nav and official_unit_nav > 0:
-        new_settled = round(shares * official_unit_nav, 2)
-        if persist_profile and profile is not None:
-            profile = save_fund_profile(
-                profile.model_copy(
-                    update={
-                        "settled_holding_amount": new_settled,
-                        "holding_amount": new_settled,
-                    }
-                )
-            )
-        return (
-            holding.model_copy(
-                update={
-                    "holding_amount": new_settled,
-                    "settled_holding_amount": new_settled,
-                    "amount_includes_today": False,
-                }
-            ),
-            profile,
-        )
 
     if official_return is not None:
         pre_roll = _pre_roll_settled(

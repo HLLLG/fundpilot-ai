@@ -96,9 +96,9 @@ export function normalizeInvestorProfile(
       ? Number(source.expected_investment_amount)
       : fallback.expected_investment_amount ?? DEFAULT_EXPECTED_INVESTMENT_AMOUNT;
 
+  // 2026-08 决策风格收敛：存量 localStorage 里的 style/horizon/decision_style/
+  // investment_preset 字段在这里被投影掉（不再出现在返回对象里），无需显式迁移。
   return {
-    style: source.style?.trim() || fallback.style,
-    horizon: source.horizon?.trim() || fallback.horizon,
     max_drawdown_percent: Number(source.max_drawdown_percent ?? fallback.max_drawdown_percent),
     concentration_limit_percent: Number(
       source.concentration_limit_percent ?? fallback.concentration_limit_percent,
@@ -106,17 +106,6 @@ export function normalizeInvestorProfile(
     expected_investment_amount: expected,
     prefer_dca: source.prefer_dca ?? fallback.prefer_dca,
     avoid_chasing: source.avoid_chasing ?? fallback.avoid_chasing,
-    decision_style:
-      source.decision_style === "tactical" ||
-      source.decision_style === "conservative" ||
-      source.decision_style === "aggressive"
-        ? source.decision_style
-        : fallback.decision_style ?? "conservative",
-    investment_preset:
-      source.investment_preset === "aggressive_swing" ||
-      source.investment_preset === "conservative_hold"
-        ? source.investment_preset
-        : fallback.investment_preset ?? "conservative_hold",
     round_trip_fee_percent: Number(
       source.round_trip_fee_percent ?? fallback.round_trip_fee_percent ?? 1.5,
     ),

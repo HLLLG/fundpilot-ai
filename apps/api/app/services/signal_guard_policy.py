@@ -4,7 +4,6 @@ from typing import Any
 
 from app.config import get_settings
 from app.models import Holding
-from app.services.prompt_tuning import resolve_accuracy_tuning
 from app.services.sector_signal_context import (
     build_signal_backtest_context,
     sector_labels_from_holdings,
@@ -15,27 +14,20 @@ def resolve_signal_guard_policy(
     holdings: list[Holding] | None = None,
     *,
     sector_labels: list[str] | None = None,
-    lookback_reports: int | None = None,
     backtest_days: int | None = None,
     fetch_series=None,
 ) -> dict[str, Any]:
-    """合并日报复盘 + 板块回测，输出守卫收紧/放松策略。"""
+    """按板块信号回测的历史命中率决定守卫收紧/放松（纯数据驱动）。
+
+    2026-08 决策风格收敛：原「日报复盘 Prompt 调参」（tactical 专属、默认禁用且
+    口径未重建）已随战术风格一起删除；保留的是与风格无关的回测证据——涨后回吐/
+    冲高回落两条信号命中率低于随机基准时放松对应门禁，避免用无效信号拦决策。
+    """
     settings = get_settings()
     labels = sector_labels or (sector_labels_from_holdings(holdings or []) if holdings else [])
-    reports_window = lookback_reports or settings.tactical_prompt_tuning_lookback_reports
     days = backtest_days or settings.sector_signal_backtest_days
     min_triggers = settings.sector_signal_backtest_min_triggers
 
-    accuracy = (
-        resolve_accuracy_tuning(lookback_reports=reports_window)
-        if settings.tactical_prompt_tuning_enabled
-        else {
-            "tighten_tactical": False,
-            "reason": None,
-            "hints": [],
-            "stats": {"disabled": True},
-        }
-    )
     backtest = build_signal_backtest_context(
         labels,
         lookback_days=days,
@@ -47,9 +39,8 @@ def resolve_signal_guard_policy(
 
     enforce_reversal = True
     enforce_pullback = True
-    tighten_tactical = bool(accuracy.get("tighten_tactical"))
     reasons: list[str] = []
-    hints: list[str] = list(accuracy.get("hints") or [])
+    hints: list[str] = []
 
     rev_triggers = int(reversal.get("trigger_count") or 0)
     rev_hit = reversal.get("hit_rate_percent")
@@ -61,11 +52,6 @@ def resolve_signal_guard_policy(
                 "低于随机基准，守卫已放松该信号。"
             )
         elif rev_hit >= 58:
-            tighten_tactical = True
-            reasons.append(
-                f"板块涨后回吐规则近 {days} 日命中率 {rev_hit}%（{rev_triggers} 次），"
-                "高于随机基准，战术模式将更严格限制追涨。"
-            )
             hints.append(
                 "板块历史回测：涨后回吐后 T+1 偏弱命中率较高，回吐/冲高回落场景禁止加仓。"
             )
@@ -85,18 +71,14 @@ def resolve_signal_guard_policy(
                 "板块历史回测：冲高回落后 T+1 延续调整命中率较高，盘中冲高回落宜观察。"
             )
 
-    reason = accuracy.get("reason")
-    if reasons:
-        reason = " ".join([part for part in [reason, *reasons] if part])
+    reason = " ".join(reasons) if reasons else None
 
     return {
-        "tighten_tactical": tighten_tactical,
         "enforce_reversal_block": enforce_reversal,
         "enforce_pullback_block": enforce_pullback,
         "reason": reason,
         "hints": list(dict.fromkeys(hints)),
         "stats": {
-            "accuracy": accuracy.get("stats") or {},
             "backtest": {
                 "lookback_days": days,
                 "reversal_down": reversal,

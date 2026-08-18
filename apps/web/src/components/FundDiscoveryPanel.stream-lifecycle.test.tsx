@@ -17,7 +17,6 @@ import {
   fetchDiscoveryReportDetail,
   listDiscoveryReports,
   saveDiscoveryPromptRemote,
-  startDiscoveryJob,
 } from "@/lib/api";
 import { streamDiscovery } from "@/lib/discoveryStreamApi";
 import { deleteClientCachesWhere } from "@/lib/clientCache";
@@ -45,7 +44,6 @@ vi.mock("@/lib/api", () => ({
     provider: "test",
   })),
   saveDiscoveryPromptRemote: vi.fn().mockResolvedValue({}),
-  startDiscoveryJob: vi.fn().mockResolvedValue("job-1"),
 }));
 
 vi.mock("@/lib/discoveryStreamApi", async () => {
@@ -85,17 +83,14 @@ function holding(): Holding {
 
 function profile(): InvestorProfile {
   return {
-    style: "稳健",
-    horizon: "半年到一年",
     max_drawdown_percent: 15,
     concentration_limit_percent: 35,
     expected_investment_amount: 30000,
     prefer_dca: true,
     avoid_chasing: true,
-    decision_style: "conservative",
-    investment_preset: "conservative_hold",
     round_trip_fee_percent: 1.5,
     min_net_profit_percent: 1,
+    hold_days_target: 7,
     swing_alerts_enabled: false,
     swing_monitor_scope: "both",
   };
@@ -389,8 +384,10 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(await screen.findByTestId("discovery-config-summary")).toHaveTextContent("历史模式");
   });
 
-  it("collapses completed reports to a run summary and keeps the old report during fallback", async () => {
-    vi.mocked(streamDiscovery).mockRejectedValueOnce(new Error("流式连接波动"));
+  it("collapses completed reports to a run summary and keeps the old report after a stream failure", async () => {
+    vi.mocked(streamDiscovery)
+      .mockRejectedValueOnce(new Error("流式连接波动"))
+      .mockRejectedValueOnce(new Error("流式连接波动"));
     renderPanel({
       pendingDiscoveryReport: {
         ...discoveryReport(),
@@ -414,15 +411,35 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.getByRole("button", { name: "高级设置" })).toHaveClass("min-h-11");
 
     fireEvent.click(screen.getByRole("button", { name: "重新扫描" }));
-    await waitFor(() => expect(startDiscoveryJob).toHaveBeenCalled());
-    const fallbackMessage = await screen.findByText(
-      "流式连接波动，已切换到后台扫描；完成后会自动更新结果。",
-    );
-    expect(fallbackMessage.closest('[role="status"]')).toHaveClass("inline-notice-warning");
+    await waitFor(() => expect(streamDiscovery).toHaveBeenCalledTimes(2));
+    const failureMessage = await screen.findByText(/没有转入后台任务，请再点一次重新扫描/);
+    expect(failureMessage).toHaveTextContent("流式连接波动");
+    expect(failureMessage.closest('[role="alert"]')).toHaveClass("inline-notice-error");
     expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("上一份机会报告");
 
     fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
     expect(screen.getByRole("group", { name: "荐基决策策略" })).toBeInTheDocument();
+  });
+
+  it("retries a transient stream failure once and does not start a background job", async () => {
+    vi.mocked(streamDiscovery)
+      .mockRejectedValueOnce(new Error("Failed to fetch"))
+      .mockResolvedValueOnce(undefined);
+    renderPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
+    await waitFor(() => expect(streamDiscovery).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(/后台扫描/)).not.toBeInTheDocument();
+  });
+
+  it("starts a discovery stream even when a daily report stream is already active", async () => {
+    vi.mocked(streamDiscovery).mockResolvedValue(undefined);
+    renderPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
+    await waitFor(() => expect(streamDiscovery).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/日报正在流式生成/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/同时开两条长连接/)).not.toBeInTheDocument();
   });
 
   it("keeps the previous report visible while a new stream is running", async () => {

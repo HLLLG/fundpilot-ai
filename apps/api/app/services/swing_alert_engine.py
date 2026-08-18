@@ -1,10 +1,6 @@
 from __future__ import annotations
 
 from app.models import Holding, InvestorProfile, SwingAlertItem, SwingMonitorScope
-from app.services.aggressive_swing_recommendations import (
-    _should_dip_buy,
-    _should_take_profit_on_reversal,
-)
 from app.services.holding_estimates import compute_estimated_holding_return_percent
 from app.services.investment_presets import take_profit_threshold_percent
 from app.services.risk import holding_weight_percent, resolve_weight_denominator
@@ -18,10 +14,52 @@ _SECTOR_DIP_5D = -5.0
 
 
 def should_evaluate_swing_alerts(profile: InvestorProfile) -> bool:
-    if not profile.swing_alerts_enabled and profile.decision_style != "aggressive":
+    if not profile.swing_alerts_enabled:
         return False
     session = build_trading_session()
     return session.get("session_kind") in _INTRADAY_SESSION_KINDS
+
+
+def _should_take_profit_on_reversal(
+    momentum: dict | None,
+    intraday: dict | None,
+    est_return: float | None,
+    threshold: float,
+) -> bool:
+    """浮盈达止盈线六成以上且出现回吐信号——盘中提醒比日报离线规则的整线更敏感。"""
+    if est_return is None or est_return < threshold * 0.6:
+        return False
+    if momentum and momentum.get("pattern_label") == "two_day_reversal_down":
+        return True
+    if intraday and intraday.get("pattern_label") == "intraday_pullback":
+        return True
+    return False
+
+
+def _should_dip_buy(
+    sector: float | None,
+    momentum: dict | None,
+    intraday: dict | None,
+    nav_trend: dict | None,
+) -> bool:
+    recent_5d = _num((nav_trend or {}).get("recent_5d_change_percent"))
+    intraday_label = (intraday or {}).get("pattern_label")
+    momentum_label = (momentum or {}).get("pattern_label")
+
+    if recent_5d is not None and recent_5d <= -4.0:
+        if sector is None or sector <= 1.5:
+            return True
+
+    if sector is not None and sector <= -1.5:
+        if intraday_label in {"intraday_rebound", "steady_rally"} or sector > -4.0:
+            return True
+        if momentum_label != "two_day_reversal_down":
+            return True
+
+    if recent_5d is not None and recent_5d <= -2.5 and intraday_label == "intraday_rebound":
+        return True
+
+    return False
 
 
 def evaluate_swing_alerts(
@@ -90,7 +128,7 @@ def _evaluate_holding_alerts(
                     title=f"{holding.fund_name} 达止盈线",
                     message=(
                         f"持有收益约 {est_return:+.2f}% ≥ 扣费止盈线 {threshold:.1f}%，"
-                        "激进波段建议考虑减仓落袋。"
+                        "可考虑减仓落袋。"
                     ),
                     fund_code=code,
                     fund_name=holding.fund_name,

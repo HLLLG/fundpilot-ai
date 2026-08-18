@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronUp, Plus, Search, X } from "lucide-react";
+import { ChevronUp, Plus, Search, X } from "lucide-react";
 import { InlineNotice } from "@/components/InlineNotice";
 import { FundCodeSearchButton, ReviewEditRow } from "@/components/ocrReviewFields";
 import { CLIPBOARD_IMAGE_PASTE_QUERY } from "@/components/ScreenshotIntakeExtras";
@@ -14,6 +14,8 @@ import { useDialogA11y } from "@/lib/useDialogA11y";
 import { useMediaQuery } from "@/lib/useMediaQuery";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
 import {
+  countSameDayKeys,
+  markAlreadyRecordedTransactions,
   recordedTransactionKey,
   resolveConfirmDate,
   resolveFirstReturnDate,
@@ -53,20 +55,20 @@ function confirmBadgeFor({
   index,
   transactions,
   heldCodes,
-  recordedKeys,
+  alreadyRecorded,
   recordedReady,
 }: {
   tx: ParsedTransaction;
   index: number;
   transactions: ParsedTransaction[];
   heldCodes: Set<string>;
-  recordedKeys: Set<string>;
+  alreadyRecorded: boolean[];
   recordedReady: boolean;
 }): ConfirmBadge | null {
-  const key = recordedTransactionKey(tx);
-  if (tx.fund_code && recordedReady && recordedKeys.has(key)) {
+  if (tx.fund_code && recordedReady && alreadyRecorded[index]) {
     return { label: "已录入", className: "text-slate-400" };
   }
+  const key = recordedTransactionKey(tx);
   const duplicateInBatch = transactions
     .slice(0, index)
     .some(
@@ -214,9 +216,9 @@ export function BatchTransactionConfirmModal({
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [planOpen, setPlanOpen] = useState(false);
-  const [syncPlan, setSyncPlan] = useState<TransactionSyncPlan>("apply_position");
-  const [recordedKeys, setRecordedKeys] = useState<Set<string>>(() => new Set());
+  const [recordedCounts, setRecordedCounts] = useState<Map<string, number>>(
+    () => new Map(),
+  );
   const [recordedReady, setRecordedReady] = useState(false);
   const heldCodeSet = useMemo(
     () => new Set(heldFunds.map((fund) => fund.fund_code).filter((code) => code && code !== "000000")),
@@ -230,7 +232,7 @@ export function BatchTransactionConfirmModal({
 
   useEffect(() => {
     if (!recordedLookupKey) {
-      setRecordedKeys(new Set());
+      setRecordedCounts(new Map());
       setRecordedReady(true);
       return;
     }
@@ -247,13 +249,7 @@ export function BatchTransactionConfirmModal({
       if (cancelled) {
         return;
       }
-      const keys = new Set<string>();
-      for (const list of lists) {
-        for (const tx of list) {
-          keys.add(recordedTransactionKey(tx));
-        }
-      }
-      setRecordedKeys(keys);
+      setRecordedCounts(countSameDayKeys(lists.flat()));
       setRecordedReady(true);
     });
     return () => {
@@ -348,7 +344,7 @@ export function BatchTransactionConfirmModal({
     open: true,
     onClose: requestClose,
     initialFocusRef: closeButtonRef,
-    closeOnEscape: searchIndex === null && !planOpen,
+    closeOnEscape: searchIndex === null,
   });
 
   const handleContinueUpload = () => {
@@ -406,15 +402,19 @@ export function BatchTransactionConfirmModal({
     closeSearch(index);
   };
 
+  const alreadyRecorded = useMemo(
+    () => markAlreadyRecordedTransactions(transactions, recordedCounts),
+    [recordedCounts, transactions],
+  );
   const validCount = transactions.filter((tx) => Boolean(tx.fund_code)).length;
   const skipCount = transactions.filter((tx, index) => {
     if (!tx.fund_code) {
       return false;
     }
-    const key = recordedTransactionKey(tx);
-    if (recordedReady && recordedKeys.has(key)) {
+    if (recordedReady && alreadyRecorded[index]) {
       return true;
     }
+    const key = recordedTransactionKey(tx);
     return transactions
       .slice(0, index)
       .some((prev) => Boolean(prev.fund_code) && recordedTransactionKey(prev) === key);
@@ -479,7 +479,7 @@ export function BatchTransactionConfirmModal({
               index,
               transactions,
               heldCodes: heldCodeSet,
-              recordedKeys,
+              alreadyRecorded,
               recordedReady,
             });
             return (
@@ -671,18 +671,14 @@ export function BatchTransactionConfirmModal({
             <p className="mb-2 text-center text-[11px] text-slate-500">
               {applyCount > 0
                 ? `另有 ${skipCount} 笔已录入或重复，写入时将跳过。`
-                : "这些交易均已录入，再次确认不会重复建仓。"}
+                : "这些交易均已录入，再次确认不会重复打点。"}
             </p>
           ) : null}
           <button
             type="button"
             disabled={locked || validCount === 0}
             onClick={() => {
-              if (applyCount === 0) {
-                onConfirm("markers_only");
-                return;
-              }
-              setPlanOpen(true);
+              onConfirm("markers_only");
             }}
             className="btn-primary w-full rounded-2xl disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -697,128 +693,6 @@ export function BatchTransactionConfirmModal({
                     : "确认写入（0）"}
           </button>
         </div>
-      </div>
-      {planOpen ? (
-        <TransactionSyncPlanDialog
-          value={syncPlan}
-          busy={isBusy}
-          onChange={setSyncPlan}
-          onCancel={() => setPlanOpen(false)}
-          onConfirm={() => {
-            setPlanOpen(false);
-            onConfirm(syncPlan);
-          }}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-const SYNC_PLAN_OPTIONS: {
-  value: TransactionSyncPlan;
-  title: string;
-}[] = [
-  {
-    value: "apply_position",
-    title: "同步买卖点且进行加减仓操作",
-  },
-  {
-    value: "markers_only",
-    title: "仅同步买卖点，不进行加减仓",
-  },
-];
-
-function TransactionSyncPlanDialog({
-  value,
-  busy,
-  onChange,
-  onCancel,
-  onConfirm,
-}: {
-  value: TransactionSyncPlan;
-  busy: boolean;
-  onChange: (value: TransactionSyncPlan) => void;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const confirmButtonRef = useRef<HTMLButtonElement>(null);
-  const dialogRef = useDialogA11y<HTMLDivElement>({
-    open: true,
-    onClose: busy ? () => undefined : onCancel,
-    initialFocusRef: confirmButtonRef,
-  });
-
-  return (
-    <div
-      className="modal-backdrop fixed inset-0 z-[60] flex items-center justify-center p-6"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !busy) {
-          onCancel();
-        }
-      }}
-      role="presentation"
-    >
-      <div
-        ref={dialogRef}
-        tabIndex={-1}
-        className="modal-sheet w-full max-w-sm overflow-hidden rounded-[var(--radius-card)] px-5 pb-5 pt-6"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="transaction-sync-plan-title"
-      >
-        <h3
-          id="transaction-sync-plan-title"
-          className="text-center text-base font-black text-[var(--brand-deep)]"
-        >
-          请选择同步方案
-        </h3>
-        <div
-          className="mt-5 space-y-3"
-          role="radiogroup"
-          aria-labelledby="transaction-sync-plan-title"
-        >
-          {SYNC_PLAN_OPTIONS.map((option) => {
-            const selected = value === option.value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                disabled={busy}
-                onClick={() => onChange(option.value)}
-                className={`flex w-full items-center gap-3 rounded-2xl border px-3.5 py-3 text-left transition ${
-                  selected
-                    ? "border-[var(--success-border)] bg-[var(--success-bg)]/60"
-                    : "border-slate-200 bg-slate-50/80 hover:border-slate-300"
-                }`}
-              >
-                <span
-                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
-                    selected
-                      ? "border-[var(--success-icon)] bg-[var(--success-icon)] text-white"
-                      : "border-slate-300 bg-white"
-                  }`}
-                  aria-hidden
-                >
-                  {selected ? <Check size={12} strokeWidth={3} /> : null}
-                </span>
-                <span className="block text-sm font-bold leading-5 text-slate-900">
-                  {option.title}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        <button
-          ref={confirmButtonRef}
-          type="button"
-          disabled={busy}
-          onClick={onConfirm}
-          className="btn-primary mt-5 w-full rounded-2xl disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {busy ? "正在应用..." : "确定"}
-        </button>
       </div>
     </div>
   );

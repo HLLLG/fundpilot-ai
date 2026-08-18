@@ -72,7 +72,6 @@ def main() -> None:
     ]
 
     profile = InvestorProfile(
-        decision_style="conservative",
         max_drawdown_percent=15,
         concentration_limit_percent=35,
         expected_investment_amount=30000,

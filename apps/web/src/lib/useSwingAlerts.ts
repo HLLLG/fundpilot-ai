@@ -19,7 +19,7 @@ type UseSwingAlertsOptions = {
 };
 
 function isAlertsActive(profile: InvestorProfile): boolean {
-  return Boolean(profile.swing_alerts_enabled || profile.decision_style === "aggressive");
+  return Boolean(profile.swing_alerts_enabled);
 }
 
 export function useSwingAlerts({
@@ -106,10 +106,10 @@ export function useSwingAlerts({
   ]);
 
   useEffect(() => {
-    if (!profile.swing_alerts_enabled && profile.decision_style !== "aggressive") {
+    if (!profile.swing_alerts_enabled) {
       setItems([]);
     }
-  }, [profile.swing_alerts_enabled, profile.decision_style]);
+  }, [profile.swing_alerts_enabled]);
 
   return {
     items,

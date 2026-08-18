@@ -16,6 +16,7 @@ import requests
 
 from app.config import get_settings
 from app.services.performance_metrics import record_provider_call
+from app.services.provider_lane import current_provider_lane
 
 
 _T = TypeVar("_T")
@@ -26,6 +27,8 @@ _DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
 
 _gate = Condition(Lock())
 _active_requests = 0
+_active_by_lane: dict[str, int] = {}
+_waiting_by_lane: dict[str, int] = {}
 _circuit_lock = Lock()
 _circuit_failures: dict[str, int] = {}
 _circuit_open_until: dict[str, float] = {}
@@ -138,36 +141,91 @@ def _record_result(
             )
 
 
+def _lane_floor(lane: str, settings: Any) -> int:
+    if lane == "analysis":
+        return max(0, int(getattr(settings, "eastmoney_lane_floor_analysis", 3)))
+    if lane == "discovery":
+        return max(0, int(getattr(settings, "eastmoney_lane_floor_discovery", 3)))
+    return 0
+
+
+def _lane_is_competing(lane: str) -> bool:
+    return _active_by_lane.get(lane, 0) > 0 or _waiting_by_lane.get(lane, 0) > 0
+
+
+def _can_acquire_lane(lane: str, limit: int, settings: Any) -> bool:
+    if _active_requests >= limit:
+        return False
+    projected = _active_requests + 1
+    reserved_for_others = 0
+    for other in ("analysis", "discovery", "other"):
+        if other == lane:
+            continue
+        if not _lane_is_competing(other):
+            continue
+        reserved_for_others += max(
+            0,
+            _lane_floor(other, settings) - _active_by_lane.get(other, 0),
+        )
+    return projected + reserved_for_others <= limit
+
+
+def reset_eastmoney_admission_for_tests() -> None:
+    """Drop in-process slot counters between tests."""
+
+    global _active_requests
+    with _gate:
+        _active_requests = 0
+        _active_by_lane.clear()
+        _waiting_by_lane.clear()
+        _gate.notify_all()
+
+
 @contextmanager
 def _request_slot(url: str) -> Iterator[None]:
     global _active_requests
     _check_circuit(url)
     settings = get_settings()
     limit = max(0, int(settings.eastmoney_max_concurrency))
-    wait_seconds = max(0.01, float(settings.eastmoney_acquire_timeout_seconds))
+    lane = current_provider_lane()
+    solo_wait = max(0.01, float(settings.eastmoney_acquire_timeout_seconds))
+    fair_wait = max(
+        solo_wait,
+        float(getattr(settings, "eastmoney_fair_acquire_timeout_seconds", 15)),
+    )
     remaining = _remaining_seconds()
-    if remaining is not None:
-        wait_seconds = min(wait_seconds, remaining)
-    wait_until = time.monotonic() + wait_seconds
-
     counted = limit > 0
     if counted:
         with _gate:
-            while _active_requests >= limit:
-                remaining_wait = wait_until - time.monotonic()
-                if remaining_wait <= 0:
-                    raise httpx.PoolTimeout(
-                        "Eastmoney provider concurrency budget exhausted"
-                    )
-                _gate.wait(timeout=remaining_wait)
+            competing = any(
+                other != lane and _lane_is_competing(other)
+                for other in ("analysis", "discovery", "other")
+            )
+            wait_seconds = fair_wait if competing else solo_wait
+            if remaining is not None:
+                wait_seconds = min(wait_seconds, remaining)
+            wait_until = time.monotonic() + wait_seconds
+            _waiting_by_lane[lane] = _waiting_by_lane.get(lane, 0) + 1
+            try:
+                while not _can_acquire_lane(lane, limit, settings):
+                    remaining_wait = wait_until - time.monotonic()
+                    if remaining_wait <= 0:
+                        raise httpx.PoolTimeout(
+                            "Eastmoney provider concurrency budget exhausted"
+                        )
+                    _gate.wait(timeout=remaining_wait)
+            finally:
+                _waiting_by_lane[lane] = max(0, _waiting_by_lane.get(lane, 0) - 1)
             _active_requests += 1
+            _active_by_lane[lane] = _active_by_lane.get(lane, 0) + 1
     try:
         yield
     finally:
         if counted:
             with _gate:
                 _active_requests = max(0, _active_requests - 1)
-                _gate.notify()
+                _active_by_lane[lane] = max(0, _active_by_lane.get(lane, 0) - 1)
+                _gate.notify_all()
 
 
 def _bounded_timeout(value: Any) -> Any:

@@ -20,6 +20,7 @@ from app.services.deepseek_http import (
     deepseek_request_headers,
     deepseek_timeout,
     get_deepseek_http_client,
+    post_deepseek_chat,
 )
 from app.services.deepseek_client import (
     FETCH_MARKET_NEWS_TOOL,
@@ -417,7 +418,8 @@ class DiscoveryClient:
             trace_collector.start_request(body)
         try:
             client = get_deepseek_http_client(self.settings)
-            response = client.post(
+            response = post_deepseek_chat(
+                client,
                 deepseek_chat_url(self.settings),
                 headers=deepseek_request_headers(self.settings),
                 json=body,
@@ -523,7 +525,8 @@ class DiscoveryClient:
             tools=tools,
             response_format=response_format,
         )
-        response = get_deepseek_http_client(self.settings).post(
+        response = post_deepseek_chat(
+            get_deepseek_http_client(self.settings),
             deepseek_chat_url(self.settings),
             headers=deepseek_request_headers(self.settings),
             json=body,

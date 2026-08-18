@@ -111,6 +111,76 @@ describe("mergeParsedTransactions", () => {
       batchTransactionKey(overlapPage[1]),
     ]);
   });
+
+  it("merges 交易记录 and 交易分析 rows that only differ by seconds", () => {
+    const fromRecords = [
+      tx({
+        fund_name: "南方黄金股C",
+        fund_code: "021959",
+        amount_yuan: 1000,
+        trade_time: "2026-08-17 14:55:30",
+      }),
+    ];
+    const fromAnalysis = [
+      tx({
+        fund_name: "南方黄金股指数C",
+        fund_code: "021959",
+        amount_yuan: 1000,
+        trade_time: "2026-08-17 14:59:52",
+      }),
+    ];
+    expect(mergeParsedTransactions(fromRecords, fromAnalysis)).toHaveLength(1);
+  });
+
+  it("keeps two same-day same-amount buys from one screenshot", () => {
+    const page = [
+      tx({
+        fund_name: "南方黄金股指数C",
+        fund_code: "021959",
+        amount_yuan: 500,
+        trade_time: "2026-08-17 14:50:00",
+      }),
+      tx({
+        fund_name: "南方黄金股指数C",
+        fund_code: "021959",
+        amount_yuan: 500,
+        trade_time: "2026-08-17 14:52:00",
+      }),
+    ];
+    expect(mergeParsedTransactions([], page)).toHaveLength(2);
+  });
+
+  it("consumes overlapping analysis rows without dropping the second genuine buy", () => {
+    const fromRecords = [
+      tx({
+        fund_name: "南方黄金股指数C",
+        fund_code: "021959",
+        amount_yuan: 500,
+        trade_time: "2026-08-17 14:50:00",
+      }),
+      tx({
+        fund_name: "南方黄金股指数C",
+        fund_code: "021959",
+        amount_yuan: 500,
+        trade_time: "2026-08-17 14:52:00",
+      }),
+    ];
+    const fromAnalysis = [
+      tx({
+        fund_name: "南方黄金股指数C",
+        fund_code: "021959",
+        amount_yuan: 500,
+        trade_time: "2026-08-17 14:55:30",
+      }),
+      tx({
+        fund_name: "南方黄金股指数C",
+        fund_code: "021959",
+        amount_yuan: 500,
+        trade_time: "2026-08-17 14:59:52",
+      }),
+    ];
+    expect(mergeParsedTransactions(fromRecords, fromAnalysis)).toHaveLength(2);
+  });
 });
 
 describe("mergeFundCodeResolutions", () => {

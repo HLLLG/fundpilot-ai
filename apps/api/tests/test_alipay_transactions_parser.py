@@ -228,6 +228,47 @@ def test_same_line_timestamp_and_amount_still_parse() -> None:
     ]
 
 
+def test_transaction_analysis_20260817_page_parses_six_buys() -> None:
+    text = """交易分析
+全部持有 收益分析 配置分析 交易分析
+近一年
+全部交易汇总
+买入 74次 131,500.00元
+卖出 61次 109,286.55元
+定投/发车 3次 30.00元
+分红 0次
+预约 0次
+买入 基金 1,000.00元
+南方黄金股指数C
+2026-08-17 14:59:52
+买入 基金 1,000.00元
+招商医疗保健股票A
+2026-08-17 14:59:35
+买入 基金 2,000.00元
+华夏半导体材料设备ETF联接A
+2026-08-17 14:58:45
+买入 基金 500.00元
+南方黄金股指数C
+2026-08-14 14:59:57
+买入 基金 300.00元
+嘉实中证稀土产业ETF联接C
+2026-08-14 14:57:23
+买入 基金 1,000.00元
+博时黄金ETF联接A
+2026-08-14 14:56:15
+"""
+    parsed = parse_alipay_transactions(text)
+    assert detect_ocr_source(text) == "alipay_transactions"
+    assert _compact(parsed) == [
+        ("buy", "南方黄金股指数C", 1000.0, "2026-08-17 14:59:52", False),
+        ("buy", "招商医疗保健股票A", 1000.0, "2026-08-17 14:59:35", False),
+        ("buy", "华夏半导体材料设备ETF联接A", 2000.0, "2026-08-17 14:58:45", False),
+        ("buy", "南方黄金股指数C", 500.0, "2026-08-14 14:59:57", False),
+        ("buy", "嘉实中证稀土产业ETF联接C", 300.0, "2026-08-14 14:57:23", False),
+        ("buy", "博时黄金ETF联接A", 1000.0, "2026-08-14 14:56:15", False),
+    ]
+
+
 def test_holdings_overview_tabs_alone_are_not_a_transaction_page() -> None:
     lines = [line.strip() for line in ALIPAY_OVERVIEW_OCR.splitlines() if line.strip()]
     assert not is_alipay_transaction_page(lines)

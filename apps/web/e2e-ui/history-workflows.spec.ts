@@ -119,17 +119,14 @@ async function installHistoryStubs(
     }
     if (pathname === "/api/investor-profile") {
       await json(route, 200, {
-        style: "稳健",
-        horizon: "半年到一年",
         max_drawdown_percent: 8,
         concentration_limit_percent: 35,
         expected_investment_amount: 30000,
         prefer_dca: true,
         avoid_chasing: true,
-        decision_style: "conservative",
-        investment_preset: "conservative_hold",
         round_trip_fee_percent: 1.5,
         min_net_profit_percent: 1,
+        hold_days_target: 7,
         swing_alerts_enabled: false,
         swing_monitor_scope: "both",
       });

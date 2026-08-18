@@ -22,7 +22,6 @@ import {
   fetchDiscoverySectors,
   listDiscoveryReports,
   saveDiscoveryPromptRemote,
-  startDiscoveryJob,
 } from "@/lib/api";
 import { DiscoveryHistoryWorkspace } from "@/components/DiscoveryHistoryWorkspace";
 import { InlineNotice, type NoticeTone } from "@/components/InlineNotice";
@@ -38,6 +37,7 @@ import {
   appendStreamTokenBuffer,
   streamDiscovery,
   streamTimestamp,
+  type DiscoveryPartialField,
   type DiscoveryRecommendationPartial,
   type StreamingDiscoveryState,
 } from "@/lib/discoveryStreamApi";
@@ -333,8 +333,6 @@ export function FundDiscoveryPanel({
     if (report) {
       setConfigExpanded(false);
     }
-    // 记下"开扫之前最新的一份是哪个"。流断了之后就靠它判断后台有没有产出新报告，
-    // 比对时间戳可靠：created_at 是服务端时钟，startedAt 是浏览器时钟。
     latestKnownReportIdRef.current = historyReports[0]?.id ?? null;
     lastStreamActivityRef.current = streamTimestamp();
     const parsedBudget = parseBudgetYuan(budgetYuan) ?? loadDiscoveryBudgetYuan(userId);
@@ -348,115 +346,122 @@ export function FundDiscoveryPanel({
       discoveryStrategy: DISCOVERY_STRATEGY,
       systemRolePrompt: discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : null,
     };
-
-    try {
-      try {
-        void ensureNotificationPermission();
-        onDiscoveryStreamStart?.();
-        const abortController = new AbortController();
-        discoveryStreamAbortRef.current = abortController;
-        onStreamingDiscoveryChange({
-          stage: "sector_heat",
-          stageLabel: "正在连接流式扫描…",
-          fundCodes: [],
-          fundNames: [],
-          partialByCode: {},
-          stageLog: [],
-          tokenBuffer: "",
-          startedAt: streamTimestamp(),
+    const streamEvents = {
+      onStage: (stage: string, label: string) =>
+        onStreamingDiscoveryChange((current) => {
+          if (!current) {
+            return current;
+          }
+          const entry = { stage, label, at: streamTimestamp() };
+          const stageLog = [
+            ...current.stageLog.filter((item) => item.stage !== stage),
+            entry,
+          ];
+          return { ...current, stage, stageLabel: label, stageLog };
+        }),
+      onSkeleton: (fundCodes: string[], fundNames: string[]) =>
+        onStreamingDiscoveryChange((current) =>
+          current ? { ...current, fundCodes, fundNames } : current,
+        ),
+      onToken: (content: string) =>
+        onStreamingDiscoveryChange((current) =>
+          current
+            ? {
+                ...current,
+                tokenBuffer: appendStreamTokenBuffer(current.tokenBuffer, content),
+              }
+            : current,
+        ),
+      onPartial: (field: DiscoveryPartialField, value: unknown) => {
+        onStreamingDiscoveryChange((current) => {
+          if (!current) {
+            return current;
+          }
+          if (field === "title") {
+            return { ...current, title: String(value) };
+          }
+          if (field === "summary") {
+            return { ...current, summary: String(value) };
+          }
+          if (field === "caveats" && Array.isArray(value)) {
+            return { ...current, caveats: value.map(String) };
+          }
+          if (field === "recommendation" && value && typeof value === "object") {
+            const rec = value as DiscoveryRecommendationPartial;
+            const code = rec.fund_code;
+            if (!code) {
+              return current;
+            }
+            return {
+              ...current,
+              partialByCode: {
+                ...current.partialByCode,
+                [code]: { ...current.partialByCode[code], ...rec },
+              },
+            };
+          }
+          return current;
         });
-
-        await streamDiscovery(
-          displayableHoldings(holdings),
-          profile,
-          {
-            onStage: (stage, label) =>
-              onStreamingDiscoveryChange((current) => {
-                if (!current) {
-                  return current;
-                }
-                const entry = { stage, label, at: streamTimestamp() };
-                const stageLog = [
-                  ...current.stageLog.filter((item) => item.stage !== stage),
-                  entry,
-                ];
-                return { ...current, stage, stageLabel: label, stageLog };
-              }),
-            onSkeleton: (fundCodes, fundNames) =>
-              onStreamingDiscoveryChange((current) =>
-                current ? { ...current, fundCodes, fundNames } : current,
-              ),
-            onToken: (content) =>
-              onStreamingDiscoveryChange((current) =>
-                current
-                  ? {
-                      ...current,
-                      tokenBuffer: appendStreamTokenBuffer(current.tokenBuffer, content),
-                    }
-                  : current,
-              ),
-            onPartial: (field, value) => {
-              onStreamingDiscoveryChange((current) => {
-                if (!current) {
-                  return current;
-                }
-                if (field === "title") {
-                  return { ...current, title: String(value) };
-                }
-                if (field === "summary") {
-                  return { ...current, summary: String(value) };
-                }
-                if (field === "caveats" && Array.isArray(value)) {
-                  return { ...current, caveats: value.map(String) };
-                }
-                if (field === "recommendation" && value && typeof value === "object") {
-                  const rec = value as DiscoveryRecommendationPartial;
-                  const code = rec.fund_code;
-                  if (!code) {
-                    return current;
-                  }
-                  return {
-                    ...current,
-                    partialByCode: {
-                      ...current.partialByCode,
-                      [code]: { ...current.partialByCode[code], ...rec },
-                    },
-                  };
-                }
-                return current;
-              });
-            },
-            onDone: (completedReport) => {
-              discoveryStreamAbortRef.current = null;
-              onStreamingDiscoveryChange(null);
-              onDiscoveryStreamComplete(completedReport);
-              void refreshReports();
-            },
-            onError: (message) => {
-              throw new Error(message);
-            },
-          },
-          { ...scanOptions, signal: abortController.signal },
-        );
-        return;
-      } catch (streamError) {
+      },
+      onDone: (completedReport: FundDiscoveryReport) => {
         discoveryStreamAbortRef.current = null;
         onStreamingDiscoveryChange(null);
-        if (streamError instanceof DOMException && streamError.name === "AbortError") {
-          return;
-        }
-        setFeedback({
-          tone: "warning",
-          message:
-            streamError instanceof Error
-              ? `${streamError.message}，已切换到后台扫描；完成后会自动更新结果。`
-              : "流式连接中断，已切换到后台扫描；完成后会自动更新结果。",
-        });
-      }
+        onDiscoveryStreamComplete(completedReport);
+        void refreshReports();
+      },
+      onError: (message: string) => {
+        throw new Error(message);
+      },
+    };
 
-      const jobId = await startDiscoveryJob(displayableHoldings(holdings), profile, scanOptions);
-      onDiscoveryJobIdChange(jobId);
+    const runStreamOnce = async () => {
+      const abortController = new AbortController();
+      discoveryStreamAbortRef.current = abortController;
+      onStreamingDiscoveryChange({
+        stage: "sector_heat",
+        stageLabel: "正在连接流式扫描…",
+        fundCodes: [],
+        fundNames: [],
+        partialByCode: {},
+        stageLog: [],
+        tokenBuffer: "",
+        startedAt: streamTimestamp(),
+      });
+      await streamDiscovery(
+        displayableHoldings(holdings),
+        profile,
+        streamEvents,
+        { ...scanOptions, signal: abortController.signal },
+      );
+    };
+
+    try {
+      void ensureNotificationPermission();
+      onDiscoveryStreamStart?.();
+      let lastError: unknown = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, 300));
+        }
+        try {
+          await runStreamOnce();
+          return;
+        } catch (streamError) {
+          discoveryStreamAbortRef.current = null;
+          if (streamError instanceof DOMException && streamError.name === "AbortError") {
+            onStreamingDiscoveryChange(null);
+            return;
+          }
+          lastError = streamError;
+        }
+      }
+      onStreamingDiscoveryChange(null);
+      setFeedback({
+        tone: "error",
+        message: `${userFacingErrorMessage(lastError, "流式扫描中断")}。没有转入后台任务，请再点一次重新扫描。`,
+      });
     } catch (scanError) {
+      onStreamingDiscoveryChange(null);
       setFeedback({
         tone: "error",
         message: userFacingErrorMessage(scanError, "提交失败"),
@@ -472,7 +477,6 @@ export function FundDiscoveryPanel({
     focusSectors,
     historyReports,
     holdings,
-    onDiscoveryJobIdChange,
     onDiscoveryStreamComplete,
     onDiscoveryStreamStart,
     onStreamingDiscoveryChange,

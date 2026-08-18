@@ -146,7 +146,6 @@ def test_qualified_context_is_directly_consumable_by_deterministic_allocator() -
         concentration_denominator_yuan=20_000,
         concentration_limit_percent=35,
         prefer_dca=True,
-        decision_style="conservative",
         risk_context=risk_context,
     )
 

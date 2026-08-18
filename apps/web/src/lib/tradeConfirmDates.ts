@@ -85,3 +85,60 @@ export function recordedTransactionKey(input: {
 }): string {
   return `${input.fund_code ?? ""}|${input.direction}|${input.trade_time}|${input.amount_yuan}`;
 }
+
+/** 同码同日同方向同金额的占用身份。用来对照已入库条数，不把同一张图里的两笔真买入折成一笔。 */
+export function sameDayTransactionKey(input: {
+  direction: string;
+  fund_code?: string | null;
+  fund_name?: string;
+  amount_yuan: number;
+  trade_time: string;
+}): string {
+  const day = input.trade_time.trim().slice(0, 10);
+  const amount = Number(input.amount_yuan);
+  const rounded = Number.isFinite(amount) ? amount.toFixed(2) : String(input.amount_yuan);
+  const code = (input.fund_code || "").trim();
+  if (code && code !== "000000") {
+    return `${code}|${input.direction}|${day}|${rounded}`;
+  }
+  return `${input.direction}|${input.fund_name ?? ""}|${day}|${rounded}`;
+}
+
+export function countSameDayKeys(
+  items: Array<{
+    direction: string;
+    fund_code?: string | null;
+    fund_name?: string;
+    amount_yuan: number;
+    trade_time: string;
+  }>,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    const key = sameDayTransactionKey(item);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+export function markAlreadyRecordedTransactions<T extends {
+  fund_code?: string | null;
+  direction: string;
+  fund_name?: string;
+  amount_yuan: number;
+  trade_time: string;
+}>(transactions: T[], recordedCounts: Map<string, number>): boolean[] {
+  const remaining = new Map(recordedCounts);
+  return transactions.map((tx) => {
+    if (!tx.fund_code) {
+      return false;
+    }
+    const key = sameDayTransactionKey(tx);
+    const available = remaining.get(key) ?? 0;
+    if (available <= 0) {
+      return false;
+    }
+    remaining.set(key, available - 1);
+    return true;
+  });
+}

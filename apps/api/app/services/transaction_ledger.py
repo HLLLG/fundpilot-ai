@@ -10,11 +10,14 @@ from zoneinfo import ZoneInfo
 
 from app.database import (
     _connect,
+    _delete_fund_transaction_on_connection,
     _get_fund_transaction_by_dedup_on_connection,
+    _get_fund_transaction_on_connection,
     _get_pending_fund_transaction_on_connection,
     _insert_fund_transaction_on_connection,
     _list_fund_transactions_on_connection,
     _update_fund_transaction_on_connection,
+    get_fund_profile_by_code,
     insert_fund_transaction,
     list_fund_profiles,
     list_fund_transactions,
@@ -50,10 +53,9 @@ _CN_TZ = ZoneInfo("Asia/Shanghai")
 def sort_transactions_for_display(
     transactions: list[FundTransaction],
 ) -> list[FundTransaction]:
-    """进行中/待确认在前，已确认在后；组内按成交时间、创建时间降序。"""
+    """按成交时间倒序；同一秒再按写入时间倒序。"""
     ordered = list(transactions)
     ordered.sort(key=lambda tx: (tx.trade_time, tx.created_at), reverse=True)
-    ordered.sort(key=lambda tx: 0 if (tx.in_progress or tx.status == "pending") else 1)
     return ordered
 
 
@@ -61,6 +63,12 @@ class TransactionTruthConflict(ValueError):
     def __init__(self, conflicts: list[dict[str, object]]) -> None:
         super().__init__("重复交易与已保存的确认真值不一致，请先核对或执行显式更正")
         self.conflicts = conflicts
+
+
+class TransactionNotFound(LookupError):
+    def __init__(self, transaction_id: str) -> None:
+        super().__init__("未找到要删除的交易记录")
+        self.transaction_id = transaction_id
 
 
 def _current_china_date() -> date:
@@ -233,12 +241,15 @@ def compute_effective_shares_map(
     as_of_date: str | None = None,
     profiles_by_code: dict[str, FundProfile] | None = None,
 ) -> dict[str, float]:
-    """对每个有 profile 且 holding_shares 非空的 code，计算有效份额。
+    """计算有效份额：基线份额 + 基线日之后已确认交易的份额增减。
 
-    effective = profile.holding_shares + Σ(tx.shares_delta)
+    effective = (profile.holding_shares or 0) + Σ(tx.shares_delta)
     其中 tx 取该 code、shares_delta 非空、且 confirm_date > baseline_date 的交易。
     用 confirm_date > baseline_date 过滤：重传总览（基线日前移）后早于基线的交易
     自动不再叠加，避免双重计数。返回值 ≤ 0 表示已清仓。
+
+    ``holding_shares is None``（收益递延未锁份额）时，只有已经确认的加减仓才会
+    进入覆盖表；没有后续成交则不输出，避免把 OCR 金额误清成 0。
     """
     codes = {code for code in fund_codes if code and code != "000000"}
     if not codes:
@@ -249,26 +260,33 @@ def compute_effective_shares_map(
         profiles = {
             profile.fund_code: profile
             for profile in list_fund_profiles()
-            if profile.fund_code in codes and profile.holding_shares is not None
+            if profile.fund_code in codes
         }
     else:
         profiles = {
             code: profile
             for code in codes
             if (profile := profiles_by_code.get(code)) is not None
-            and profile.holding_shares is not None
         }
     effective_by_code = {
         code: float(profile.holding_shares)
         for code, profile in profiles.items()
+        if profile.holding_shares is not None
     }
     for tx in list_fund_transactions():
         profile = profiles.get(tx.fund_code or "")
         if profile is None or tx.status != "confirmed" or tx.shares_delta is None:
             continue
         baseline_date = profile.shares_baseline_date or _MIN_BASELINE_DATE
-        if baseline_date < tx.confirm_date <= cutoff_date:
-            effective_by_code[profile.fund_code] += tx.shares_delta
+        if not (baseline_date < tx.confirm_date <= cutoff_date):
+            continue
+        code = profile.fund_code
+        if code not in effective_by_code:
+            if profile.holding_shares is None:
+                effective_by_code[code] = 0.0
+            else:
+                continue
+        effective_by_code[code] += tx.shares_delta
 
     result: dict[str, float] = {}
     for code, effective in effective_by_code.items():
@@ -336,6 +354,26 @@ def _dedup_key(parsed: ParsedTransaction) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _same_day_identity(
+    *,
+    fund_code: str | None,
+    direction: str,
+    amount_yuan: float,
+    trade_time: str,
+) -> str | None:
+    """同码同日同方向同金额的占用身份。
+
+    支付宝「交易记录」和「交易分析」对同一笔的秒级时间经常不一致；去重键仍按
+    完整时间落库。匹配只消耗已入库且尚未占用的行，同一请求里 14:50 / 14:52
+    两笔同金额买入不会互相折叠。
+    """
+    code = (fund_code or "").strip()
+    day = (trade_time or "").strip()[:10]
+    if not code or code == "000000" or len(day) != 10 or day[4] != "-":
+        return None
+    return f"{code}|{direction}|{day}|{round(float(amount_yuan), 2):.2f}"
+
+
 def _existing_semantic_dedup_key(tx: FundTransaction) -> str | None:
     """Map legacy formatting variants to the canonical v2 transaction identity."""
 
@@ -386,10 +424,12 @@ def _preflight_transaction_truth(
     user_id = get_request_user_id()
     resolved: list[tuple[ParsedTransaction, str, str]] = []
     conflicts: list[dict[str, object]] = []
-    seen_request: dict[str, tuple[ParsedTransaction, str]] = {}
+    seen_request: dict[str, tuple[ParsedTransaction, str, str]] = {}
+    consumed_ids: set[str] = set()
     with _connect() as connection:
         ensure_primary_position_store(connection)
         semantic_existing: dict[str, list[FundTransaction]] = {}
+        same_day_existing: dict[str, list[FundTransaction]] = {}
         for stored in _list_fund_transactions_on_connection(
             connection,
             user_id=user_id,
@@ -397,13 +437,27 @@ def _preflight_transaction_truth(
             semantic_key = _existing_semantic_dedup_key(stored)
             if semantic_key:
                 semantic_existing.setdefault(semantic_key, []).append(stored)
+            same_day_key = _same_day_identity(
+                fund_code=stored.fund_code,
+                direction=stored.direction,
+                amount_yuan=stored.amount_yuan,
+                trade_time=stored.trade_time,
+            )
+            if same_day_key:
+                same_day_existing.setdefault(same_day_key, []).append(stored)
         for item in parsed:
             confirm_date = item.confirm_date or resolve_confirm_date(item.trade_time)
             canonical_dedup_key = _dedup_key(item)
             dedup_key = canonical_dedup_key
+            same_day_key = _same_day_identity(
+                fund_code=item.fund_code,
+                direction=item.direction,
+                amount_yuan=item.amount_yuan,
+                trade_time=item.trade_time,
+            )
             previous_request = seen_request.get(canonical_dedup_key)
             if previous_request is not None:
-                previous_item, previous_confirm_date = previous_request
+                previous_item, _previous_confirm_date, previous_dedup = previous_request
                 request_diff: dict[str, dict[str, object | None]] = {}
                 for field, left, right in (
                     (
@@ -412,8 +466,6 @@ def _preflight_transaction_truth(
                         item.confirmed_shares,
                     ),
                     ("fee_yuan", previous_item.fee_yuan, item.fee_yuan),
-                    ("in_progress", previous_item.in_progress, item.in_progress),
-                    ("confirm_date", previous_confirm_date, confirm_date),
                 ):
                     normalized_left = (
                         round(float(left), 6)
@@ -440,9 +492,10 @@ def _preflight_transaction_truth(
                             "source": "duplicate_in_request",
                         }
                     )
-            else:
-                seen_request[canonical_dedup_key] = (item, confirm_date)
+                resolved.append((item, confirm_date, previous_dedup))
+                continue
             if not item.fund_code:
+                seen_request[canonical_dedup_key] = (item, confirm_date, dedup_key)
                 resolved.append((item, confirm_date, dedup_key))
                 continue
             existing = _get_fund_transaction_by_dedup_on_connection(
@@ -450,8 +503,13 @@ def _preflight_transaction_truth(
                 user_id=user_id,
                 dedup_key=dedup_key,
             )
+            match_kind = "exact" if existing is not None else None
             if existing is None:
-                semantic_matches = semantic_existing.get(canonical_dedup_key, [])
+                semantic_matches = [
+                    tx
+                    for tx in semantic_existing.get(canonical_dedup_key, [])
+                    if tx.id not in consumed_ids
+                ]
                 if len(semantic_matches) > 1:
                     conflicts.append(
                         {
@@ -470,8 +528,25 @@ def _preflight_transaction_truth(
                     # Reuse the historical unique key so the write path cannot
                     # insert a canonical-format duplicate of the same trade.
                     dedup_key = existing.dedup_key
+                    match_kind = "semantic"
+            if existing is None and same_day_key:
+                day_matches = [
+                    tx
+                    for tx in same_day_existing.get(same_day_key, [])
+                    if tx.id not in consumed_ids
+                ]
+                if day_matches:
+                    existing = day_matches[0]
+                    dedup_key = existing.dedup_key
+                    match_kind = "same_day"
             if existing is not None:
+                consumed_ids.add(existing.id)
                 diff = _truth_diff(existing, item, confirm_date=confirm_date)
+                if match_kind == "same_day":
+                    # 交易分析 / 交易记录只是成交秒数不同，确认日和进行中状态
+                    # 可能跟着 OCR 时间漂移，不能当成两笔真值冲突。
+                    diff.pop("confirm_date", None)
+                    diff.pop("in_progress", None)
                 if diff:
                     conflicts.append(
                         {
@@ -481,6 +556,7 @@ def _preflight_transaction_truth(
                             "diff": diff,
                         }
                     )
+            seen_request[canonical_dedup_key] = (item, confirm_date, dedup_key)
             resolved.append((item, confirm_date, dedup_key))
     if conflicts:
         raise TransactionTruthConflict(conflicts)
@@ -532,6 +608,34 @@ def _transaction_for_apply(
     )
 
 
+def _parse_profile_iso_date(value: str | None) -> str | None:
+    raw = (value or "").strip()[:10]
+    if not raw:
+        return None
+    try:
+        date.fromisoformat(raw)
+    except ValueError:
+        return None
+    return raw
+
+
+def _existing_holding_start_date(profile: FundProfile) -> str | None:
+    """已有持仓的建仓锚点：购入日、首次出现日、OCR 回推日中最早的一天。"""
+    dates: list[str] = []
+    for raw in (profile.first_purchase_date, profile.first_seen_date):
+        parsed = _parse_profile_iso_date(raw)
+        if parsed is not None:
+            dates.append(parsed)
+    if profile.holding_days is not None and profile.holding_days_as_of:
+        as_of = _parse_profile_iso_date(profile.holding_days_as_of)
+        if as_of is not None:
+            start = date.fromisoformat(as_of) - timedelta(
+                days=max(0, int(profile.holding_days))
+            )
+            dates.append(start.isoformat())
+    return min(dates) if dates else None
+
+
 def _ensure_buy_profile(
     item: ParsedTransaction,
     *,
@@ -547,7 +651,8 @@ def _ensure_buy_profile(
     permanently.
 
     新建仓：收益递延到确认日当天（下一交易日才开始计盈亏）。已有持仓的加仓
-    只把更早的成交日写进 first_purchase_date，不得把整仓收益重新递延归零。
+    只把更早的成交日写进 first_purchase_date；首次出现日更早时不得用加仓日
+    覆盖，否则持有天数会被重置成最近几笔导入。
     """
 
     if item.direction != "buy" or not item.fund_code:
@@ -556,7 +661,8 @@ def _ensure_buy_profile(
     trade_date = item.trade_time[:10]
     existing = profiles_by_code.get(item.fund_code)
     if existing is not None:
-        if existing.first_purchase_date and existing.first_purchase_date <= trade_date:
+        existing_start = _existing_holding_start_date(existing)
+        if existing_start is not None and existing_start <= trade_date:
             return
         profile_service.save_profile(
             existing.model_copy(update={"first_purchase_date": trade_date}),
@@ -590,10 +696,10 @@ def _seed_amounts_for_new_positions(
     *,
     buy_amounts: dict[str, float] | None = None,
 ) -> None:
-    """给全新建仓（holding_amount=0）的基金按有效份额 × 最新净值写入初始金额，
-    使其能进入 merge_holdings_with_profiles 展示；精确金额随后由 sync override 重算。
+    """按有效份额写入持有金额：新建仓补 0 金额，已有持仓的加仓也要跟上。
 
-    确认阶段已预热净值缓存。缓存未命中时退回买入金额，避免再打一遍 AkShare。
+    确认阶段已预热净值缓存。缓存未命中时，新建仓退回买入金额；已有持仓留给
+    后续 ``shares_override`` 同步用份额比例或确认日净值重算。
     """
     effective_map = compute_effective_shares_map(
         fund_codes,
@@ -603,7 +709,7 @@ def _seed_amounts_for_new_positions(
         if effective <= 0:
             continue
         profile = profiles_by_code.get(code)
-        if profile is None or (profile.holding_amount or 0) > 0:
+        if profile is None:
             continue
         nav = peek_cached_unit_nav(code)
         if nav is None or nav <= 0:
@@ -612,14 +718,22 @@ def _seed_amounts_for_new_positions(
                 nav = get_unit_nav_on_date(code, confirm_day)
         if nav is None or nav <= 0:
             nav = get_latest_unit_nav(code)
+        current = profile.holding_amount or 0
         if nav is not None and nav > 0:
             amount = round(effective * nav, 2)
-        elif buy_amounts and buy_amounts.get(code, 0) > 0:
+        elif current <= 0 and buy_amounts and buy_amounts.get(code, 0) > 0:
             amount = round(buy_amounts[code], 2)
         else:
             continue
+        if abs(amount - current) <= 0.01:
+            continue
         saved = save_fund_profile(
-            profile.model_copy(update={"holding_amount": amount})
+            profile.model_copy(
+                update={
+                    "holding_amount": amount,
+                    "settled_holding_amount": amount,
+                }
+            )
         )
         profiles_by_code[saved.fund_code] = saved
 
@@ -792,4 +906,97 @@ def _apply_parsed_transactions_unlocked(
         "inserted": inserted,
         "skipped": skipped,
         "pending": pending,
+    }
+
+
+def _visible_transactions_payload() -> list[dict[str, object]]:
+    return [
+        tx.model_dump(mode="json")
+        for tx in sort_transactions_for_display(list_fund_transactions())
+        if tx.status not in {"skipped", "superseded"}
+    ]
+
+
+def _serialized_holdings_payload(holdings: list[Holding]) -> list[dict[str, object]]:
+    from app.services.pending_holding_preview import overlay_pending_transaction_previews
+
+    return overlay_pending_transaction_previews(
+        [holding.model_dump(mode="json") for holding in holdings]
+    )
+
+
+def _current_holdings_payload() -> list[dict[str, object]]:
+    """删除后只回读已有快照，不再跑板块/净值同步。"""
+    from app.database import get_most_recent_portfolio_snapshot
+
+    snapshot = get_most_recent_portfolio_snapshot()
+    raw = (snapshot or {}).get("holdings") or []
+    return _serialized_holdings_payload(
+        [Holding.model_validate(item) for item in raw]
+    )
+
+
+def _absorb_deleted_shares_into_baseline(tx: FundTransaction) -> None:
+    """把已确认成交的份额折进档案基线，避免下一轮刷新按剩余流水改金额。
+
+    交易记录只负责走势图标点；金额以「同步持仓」为准。删除行之后
+    ``compute_effective_shares_map`` 看不到这笔 ``shares_delta``，若不折进
+    ``holding_shares``，看板金额会在下一次同步被重算。
+    """
+    if tx.shares_delta is None:
+        return
+    code = (tx.fund_code or "").strip()
+    if not code or code == "000000":
+        return
+    profile = get_fund_profile_by_code(code)
+    if profile is None:
+        return
+    current = 0.0 if profile.holding_shares is None else float(profile.holding_shares)
+    next_shares = round(current + float(tx.shares_delta), 6)
+    if next_shares == current:
+        return
+    save_fund_profile(profile.model_copy(update={"holding_shares": next_shares}))
+
+
+def delete_parsed_transaction(transaction_id: str) -> dict:
+    from app.services.portfolio_mutation_guard import portfolio_mutation_guard
+
+    with portfolio_mutation_guard():
+        return _delete_parsed_transaction_unlocked(transaction_id)
+
+
+def _delete_parsed_transaction_unlocked(transaction_id: str) -> dict:
+    """删除一笔导入交易，只撤走势图买卖点，不改持仓金额。
+
+    交易行物理删除，同一笔可以重新导入。已确认成交的份额折进档案基线，
+    避免刷新时按剩余流水重算金额。不跑板块/净值同步，避免删除卡 3～4 秒。
+    """
+    tx_id = (transaction_id or "").strip()
+    if not tx_id:
+        raise TransactionNotFound(transaction_id)
+
+    user_id = get_request_user_id()
+    with _connect() as connection:
+        ensure_primary_position_store(connection)
+        current = _get_fund_transaction_on_connection(
+            connection,
+            user_id=user_id,
+            id=tx_id,
+        )
+        if current is None:
+            raise TransactionNotFound(tx_id)
+        deleted = _delete_fund_transaction_on_connection(
+            connection,
+            user_id=user_id,
+            id=tx_id,
+        )
+        if deleted <= 0:
+            raise TransactionNotFound(tx_id)
+
+    _absorb_deleted_shares_into_baseline(current)
+
+    return {
+        "holdings": _current_holdings_payload(),
+        "transactions": _visible_transactions_payload(),
+        "deleted_id": tx_id,
     }

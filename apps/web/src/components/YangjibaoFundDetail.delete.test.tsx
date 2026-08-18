@@ -28,6 +28,9 @@ vi.mock("@/components/AuthProvider", () => ({
 vi.mock("@/components/PerformanceTrendPanel", () => ({
   PerformanceTrendPanel: () => <div data-testid="performance-panel" />,
 }));
+vi.mock("@/components/HoldingProfitPanel", () => ({
+  HoldingProfitPanel: () => <div data-testid="holding-profit-panel" />,
+}));
 vi.mock("@/components/IntradayPercentChart", () => ({
   IntradayPercentChart: () => <div data-testid="intraday-chart" />,
   buildFlatIntradayPoints: () => [],

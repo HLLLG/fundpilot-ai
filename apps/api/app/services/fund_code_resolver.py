@@ -23,7 +23,9 @@ from app.services.fund_name_table_store import (
 from app.services.fund_search_suggestions import fetch_ranked_fund_suggestions
 from app.services.fund_name_utils import (
     extract_share_class_letter,
+    fund_name_match_stem,
     is_fund_name_match,
+    normalized_fund_name_stem,
     lookup_match_score,
     normalize_fund_name_for_lookup,
 )
@@ -339,13 +341,16 @@ def lookup_fund_code_by_name(fund_name: str) -> tuple[str | None, str | None]:
         return exact_rows[0][0], "akshare"
 
     candidates: list[tuple[int, str]] = []
+    target_stem = fund_name_match_stem(target)
     for code, name, normalized in index.normalized_table:
         # `is_fund_name_match` 只做「相等或互为子串」，先用 in 快速排除绝大多数行，
         # 省掉每行两次 normalize_fund_name_for_lookup 的重复归一化开销。
+        # 支付宝「南方黄金股指数C」对东财「南方黄金股C」不是子串，还要放行词干相等。
         if not normalized:
             continue
         if target not in normalized and normalized not in target:
-            continue
+            if not target_stem or normalized_fund_name_stem(normalized) != target_stem:
+                continue
         table_class = extract_share_class_letter(name)
         if target_class and table_class and target_class != table_class:
             continue

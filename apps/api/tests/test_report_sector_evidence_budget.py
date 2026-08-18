@@ -250,7 +250,6 @@ def test_missing_direction_layer_downgrades_add_even_with_strong_fund_evidence(
         _request(sector_name=sector_name),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
 
@@ -276,7 +275,6 @@ def test_missing_direction_layer_does_not_relax_risk_actions() -> None:
         _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
 

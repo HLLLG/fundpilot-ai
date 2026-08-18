@@ -10,6 +10,7 @@ from app.services.risk import evaluate_portfolio_risk
 from app.services.decision_data_evidence import resolve_portfolio_preflight
 from app.database import save_report
 from app.services.decision_clock import capture_decision_clock
+from app.services.provider_lane import LANE_ANALYSIS, provider_lane
 
 ProgressCallback = Callable[[str, str], None]
 
@@ -20,11 +21,12 @@ def run_analysis(
 ) -> Report:
     from app.config import get_settings
 
-    if getattr(get_settings(), "langgraph_enabled", True):
-        from app.services.graphs.daily_report import run_daily_report_graph
+    with provider_lane(LANE_ANALYSIS):
+        if getattr(get_settings(), "langgraph_enabled", True):
+            from app.services.graphs.daily_report import run_daily_report_graph
 
-        return run_daily_report_graph(request, on_progress)
-    return run_analysis_linear(request, on_progress)
+            return run_daily_report_graph(request, on_progress)
+        return run_analysis_linear(request, on_progress)
 
 
 def run_analysis_linear(

@@ -232,7 +232,6 @@ def test_direction_exit_now_reaches_the_deterministic_reduction_chain() -> None:
         market_breadth=None,
         over_concentration=False,
         has_unrealized_gain=False,
-        decision_style="conservative",
     )
     assert without["min_bucket"] is None
 
@@ -242,7 +241,6 @@ def test_direction_exit_now_reaches_the_deterministic_reduction_chain() -> None:
         market_breadth=None,
         over_concentration=False,
         has_unrealized_gain=False,
-        decision_style="conservative",
         direction_exit=_assess(trend_strength=41.0),
     )
     assert with_exit["min_bucket"] == ACTION_BUCKET_REDUCE
@@ -257,7 +255,6 @@ def test_merge_keeps_the_more_conservative_of_risk_and_direction() -> None:
         market_breadth=None,
         over_concentration=False,
         has_unrealized_gain=False,
-        decision_style="conservative",
     )
     assert risk_floor["min_bucket"] == ACTION_BUCKET_REDUCE
 
@@ -267,7 +264,6 @@ def test_merge_keeps_the_more_conservative_of_risk_and_direction() -> None:
         market_breadth=None,
         over_concentration=False,
         has_unrealized_gain=False,
-        decision_style="conservative",
         # 方向侧更保守（大幅减仓）→ 应当胜出
         direction_exit=_assess(entry_state="invalid", trend_strength=8.0),
     )
@@ -285,7 +281,6 @@ def test_hold_state_does_not_weaken_an_existing_risk_floor() -> None:
         market_breadth=None,
         over_concentration=False,
         has_unrealized_gain=False,
-        decision_style="conservative",
         direction_exit=_assess(entry_state="ready_to_start", trend_strength=90.0),
     )
 
@@ -300,7 +295,6 @@ def test_no_signal_on_either_side_still_returns_no_escalation() -> None:
         market_breadth=None,
         over_concentration=False,
         has_unrealized_gain=False,
-        decision_style="conservative",
         direction_exit=_assess(entry_state="ready_to_start", trend_strength=90.0),
     )
 

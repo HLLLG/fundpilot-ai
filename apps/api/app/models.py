@@ -14,8 +14,6 @@ TransactionSharesSource = Literal["user_confirmed", "derived_amount_nav"]
 
 Action = Literal["watch", "pause_add", "staggered_add", "risk_review"]
 RiskLevel = Literal["low", "medium", "high"]
-DecisionStyle = Literal["conservative", "tactical", "aggressive"]
-InvestmentPreset = Literal["conservative_hold", "aggressive_swing"]
 SwingMonitorScope = Literal["holdings", "full_market", "both"]
 SwingAlertType = Literal["take_profit", "dip_buy", "pullback", "sector_dip"]
 
@@ -48,15 +46,19 @@ class Holding(BaseModel):
 
 
 class InvestorProfile(BaseModel):
-    style: str = "稳健"
-    horizon: str = "半年到一年"
+    """单一数据驱动决策风格（2026-08 收敛）。
+
+    原 `style`/`horizon` 自由文本、`decision_style` 三选一与 `investment_preset` 预设
+    已删除：信号强度由确定性打分层（趋势/资金/方向退出）决定，这里只保留数据推不出的
+    偏好数字——浮亏线、集中度、止盈线（手续费+净赚）与预计持有天数（费用档位用）。
+    Pydantic 默认忽略未知字段，历史存量 payload 里的旧字段可直接解析。
+    """
+
     max_drawdown_percent: float = 8
     concentration_limit_percent: float = 35
     expected_investment_amount: float | None = None
-    prefer_dca: bool = True
-    avoid_chasing: bool = True
-    decision_style: DecisionStyle = "conservative"
-    investment_preset: InvestmentPreset = "conservative_hold"
+    prefer_dca: bool = False
+    avoid_chasing: bool = False
     round_trip_fee_percent: float = 1.5
     min_net_profit_percent: float = 1.0
     hold_days_target: int = 7

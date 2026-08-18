@@ -1234,15 +1234,14 @@ def parse_hold_horizon_min_days(value: object) -> int | None:
 
 
 def resolve_profile_min_holding_days(profile: object) -> int | None:
-    """Use deterministic user settings, never an LLM-written horizon, for fees."""
+    """Use deterministic user settings, never an LLM-written horizon, for fees.
 
-    preset = str(getattr(profile, "investment_preset", "") or "")
+    2026-08 决策风格收敛后只剩一个来源：数字型 `hold_days_target`。原自由文本
+    `profile.horizon` 的中文正则解析已随字段一起删除——用正则猜手写中文来定赎回费
+    档位本就是脆弱设计。
+    """
+
     target = _int_or_none(getattr(profile, "hold_days_target", None))
-    if preset == "aggressive_swing" and target is not None and target > 0:
-        return target
-    parsed = parse_hold_horizon_min_days(getattr(profile, "horizon", None))
-    if parsed is not None:
-        return parsed
     if target is not None and target > 0:
         return target
     return None

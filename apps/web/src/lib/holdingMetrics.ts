@@ -625,15 +625,54 @@ export function sumDailyProfit(holdings: Holding[]): number {
   );
 }
 
-/** 总资产 = Σ(结算持有金额 + 当日收益)；盘中结算额不变，总资产随估算收益动 */
+/** 应计官方净值的持仓是否都已切到官方净值（递延/在途买入不挡）。 */
+export function portfolioOfficialNavSettled(holdings: Holding[]): boolean {
+  let counted = 0;
+  for (const holding of holdings) {
+    if (!holding.fund_code || holding.fund_code === "000000") {
+      continue;
+    }
+    const amount = holding.settled_holding_amount ?? holding.holding_amount ?? 0;
+    if (amount <= 0) {
+      continue;
+    }
+    if (
+      holding.profit_accrual_deferred ||
+      holding.daily_return_percent_source === "pending_accrual"
+    ) {
+      continue;
+    }
+    counted += 1;
+    if (holding.daily_return_percent_source !== "official_nav") {
+      return false;
+    }
+  }
+  return counted > 0;
+}
+
+/** 总资产只用结算额；全部官方净值公布后才叠加上日收益，估算收益不计入。 */
 export function sumPortfolioTotalAssets(holdings: Holding[]): number {
+  const includeOfficialDaily = portfolioOfficialNavSettled(holdings);
   return round2(
     holdings.reduce((sum, holding) => {
       const settled =
         holding.settled_holding_amount ??
         holding.display_holding_amount ??
-        holding.holding_amount;
-      return sum + settled + (computeDailyProfit(holding) ?? 0);
+        holding.holding_amount ??
+        0;
+      if (settled <= 0 && (holding.holding_amount ?? 0) <= 0) {
+        return sum;
+      }
+      if (
+        !includeOfficialDaily ||
+        holding.daily_return_percent_source !== "official_nav"
+      ) {
+        return sum + settled;
+      }
+      if (holding.amount_includes_today) {
+        return sum + (holding.holding_amount ?? settled);
+      }
+      return sum + settled + (holding.daily_profit ?? computeDailyProfit(holding) ?? 0);
     }, 0),
   );
 }

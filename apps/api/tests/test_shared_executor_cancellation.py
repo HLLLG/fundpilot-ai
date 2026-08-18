@@ -27,13 +27,13 @@ def test_shared_executors_are_singletons_and_pipeline_isolated() -> None:
         assert shared_executors.get_analysis_context_executor() is analysis
         assert shared_executors.get_discovery_context_executor() is discovery
         assert analysis is not discovery
-        assert io._max_workers == 32
+        assert io._max_workers == 48
         # 上下文池不再钉死字面量：它必须 >= 单份日报提交的增强项数量，否则后提交的任务会用
         # 自己的超时预算去排队（2026-08-11 实测：池 2 / 任务 6，`sector_opportunity` 排第 5，
         # 整层方向证据被判超时）。下界见 shared_executors.analysis_context_worker_floor()。
         assert analysis._max_workers >= shared_executors.analysis_context_worker_floor()
         assert analysis._max_workers >= shared_executors.ANALYSIS_ENHANCEMENT_TASK_COUNT
-        assert discovery._max_workers == 2
+        assert discovery._max_workers == 4
     finally:
         shared_executors.close_shared_executors()
 

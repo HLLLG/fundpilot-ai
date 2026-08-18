@@ -14,7 +14,12 @@ from app.request_context import reset_request_user_id, set_request_user_id, try_
 from app.services.portfolio_refresh_gate import begin_nav_work, end_nav_work
 from app.services.fund_nav_service import get_official_nav_return, prime_official_nav_cache
 from app.services.fund_profile import match_profiles_to_holdings
-from app.services.holding_estimates import compute_daily_profit_from_rate, sum_daily_profit
+from app.services.holding_estimates import (
+    compute_daily_profit_from_rate,
+    compute_portfolio_total_assets,
+    holding_settled_principal,
+    sum_daily_profit,
+)
 from app.services.holding_filters import without_inactive_holdings, without_placeholder_holdings, without_test_holdings
 from app.services.portfolio_holdings_service import load_persisted_holdings
 from app.services.portfolio_snapshot import save_daily_snapshot
@@ -180,17 +185,13 @@ def _persist_settlement_holdings_unlocked(
         shares_override=overrides,
     )
 
-    total_assets = round(
-        sum(
-            (holding.settled_holding_amount or holding.holding_amount)
-            + (holding.daily_profit or 0)
-            for holding in holdings
-        ),
-        2,
-    )
+    total_assets = compute_portfolio_total_assets(holdings)
     daily_profit = sum_daily_profit(holdings)
     daily_return_percent = None
-    previous_assets = total_assets - daily_profit
+    previous_assets = round(
+        sum(holding_settled_principal(holding) for holding in holdings),
+        2,
+    )
     if previous_assets > 0:
         daily_return_percent = round(daily_profit / previous_assets * 100, 2)
 
@@ -247,20 +248,20 @@ def _serialize_settlement_holdings_for_client(holdings: list[Holding]) -> list[d
 def settle_official_nav_for_portfolio() -> dict:
     session = build_trading_session()
     settlement_date = str(session.get("effective_trade_date") or "")
-    if session.get("session_kind") in {"trading_day_intraday", "trading_day_pre_close"}:
-        return _empty_response(
-            reason="intraday_session",
-            session=session,
-            settlement_date=settlement_date,
-        )
-
     from app.services.transaction_ledger import (
         absorb_confirmed_transaction_positions,
         confirm_pending_transactions,
         compute_effective_shares_map,
     )
 
+    # 盘中也要推进到期确认：否则加仓要等到收盘结算才进金额。
     confirmed_count = confirm_pending_transactions()
+    if session.get("session_kind") in {"trading_day_intraday", "trading_day_pre_close"}:
+        return _empty_response(
+            reason="intraday_session",
+            session=session,
+            settlement_date=settlement_date,
+        )
     holdings, _source, snapshot_date, _refreshed_at = _load_settlement_holdings()
     holdings = absorb_confirmed_transaction_positions(holdings)
     if not holdings:

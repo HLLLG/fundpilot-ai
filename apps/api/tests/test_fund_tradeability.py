@@ -395,19 +395,14 @@ def test_horizon_parser_supports_product_labels(text: str, days: int) -> None:
     assert parse_hold_horizon_min_days(text) == days
 
 
-def test_profile_horizon_not_llm_horizon_controls_cost_gate() -> None:
-    conservative = InvestorProfile(
-        horizon="半年到一年",
-        investment_preset="conservative_hold",
-        hold_days_target=7,
-    )
-    aggressive = InvestorProfile(
-        horizon="半年到一年",
-        investment_preset="aggressive_swing",
-        hold_days_target=14,
-    )
-    assert resolve_profile_min_holding_days(conservative) == 180
-    assert resolve_profile_min_holding_days(aggressive) == 14
+def test_hold_days_target_controls_cost_gate() -> None:
+    """费用档位唯一来源是数字型 hold_days_target（自由文本 horizon 已随决策风格收敛删除）。"""
+    week = InvestorProfile(hold_days_target=7)
+    fortnight = InvestorProfile(hold_days_target=14)
+    unset = InvestorProfile(hold_days_target=0)
+    assert resolve_profile_min_holding_days(week) == 7
+    assert resolve_profile_min_holding_days(fortnight) == 14
+    assert resolve_profile_min_holding_days(unset) is None
 
 
 def test_short_horizon_high_standard_cost_is_blocked() -> None:

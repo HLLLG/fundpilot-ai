@@ -186,9 +186,8 @@ def _no_live_intraday_reversal_signal(monkeypatch):
     )
 
 
-def _request(decision_style: str = "conservative") -> AnalysisRequest:
+def _request() -> AnalysisRequest:
     profile = InvestorProfile(
-        decision_style=decision_style,
         max_drawdown_percent=15,
         concentration_limit_percent=100,
         expected_investment_amount=100000,
@@ -339,12 +338,10 @@ def test_full_guard_reads_vehicle_quality_from_facts_row() -> None:
         action="分批加仓",
     )
 
-    # 短线风格：非短线风格会走 conservative_action_text，被离线兜底的「观察」压回去，
-    # 那与本用例要验证的载体质量分档无关（既有 evidence 用例同样用 tactical）。
     _, guarded = apply_recommendation_guards(
         [rec],
         [],
-        _request(decision_style="tactical"),
+        _request(),
         RiskAssessment(
             level="medium",
             weighted_return_percent=1.2,
@@ -352,7 +349,6 @@ def test_full_guard_reads_vehicle_quality_from_facts_row() -> None:
             alerts=[],
         ),
         [NewsItem(topic="半导体", title="半导体行业利好消息", is_today=True)],
-        [],
         facts=facts,
     )
 
@@ -398,7 +394,6 @@ def _guard_with_vehicle(vehicle_quality: dict | None, *, action: str = "观察")
             suggested_action="watch",
             alerts=[],
         ),
-        [],
         [],
         facts=facts,
     )

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from threading import Lock
+from threading import Condition, Lock
 import time
+from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import getproxies_environment, proxy_bypass_environment
 
@@ -100,6 +103,123 @@ def deepseek_timeout(
 
 _CLIENTS_LOCK = Lock()
 _SHARED_CLIENTS: dict[tuple[float, int, str | None], httpx.Client] = {}
+_REQUEST_GATE = Condition(Lock())
+_STREAM_GATE = Condition(Lock())
+_active_requests = 0
+_active_streams = 0
+
+
+def reset_deepseek_admission_for_tests() -> None:
+    """Drop in-process DeepSeek slot counters between tests."""
+
+    global _active_requests, _active_streams
+    with _REQUEST_GATE:
+        _active_requests = 0
+        _REQUEST_GATE.notify_all()
+    with _STREAM_GATE:
+        _active_streams = 0
+        _STREAM_GATE.notify_all()
+
+
+def _wait_for_slot(
+    gate: Condition,
+    active_attr: str,
+    *,
+    limit: int,
+    wait_seconds: float,
+    is_cancelled: Callable[[], bool] | None,
+) -> None:
+    from app.services.streaming_heartbeat import StreamCancelled
+
+    global _active_requests, _active_streams
+    wait_until = time.monotonic() + max(0.01, wait_seconds)
+    with gate:
+        while ( _active_streams if active_attr == "streams" else _active_requests) >= limit:
+            if is_cancelled is not None and is_cancelled():
+                raise StreamCancelled
+            remaining = wait_until - time.monotonic()
+            if remaining <= 0:
+                raise httpx.PoolTimeout("DeepSeek concurrency budget exhausted")
+            gate.wait(timeout=min(0.1, remaining))
+        if active_attr == "streams":
+            _active_streams += 1
+        else:
+            _active_requests += 1
+
+
+@contextmanager
+def deepseek_request_slot(
+    *,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> Iterator[None]:
+    """Admit one non-stream chat completion. ``0`` disables the gate."""
+
+    global _active_requests
+    settings = get_settings()
+    limit = max(0, int(getattr(settings, "deepseek_max_concurrent_requests", 3)))
+    if limit == 0:
+        yield
+        return
+    wait_seconds = max(
+        0.01,
+        float(getattr(settings, "deepseek_acquire_timeout_seconds", 45)),
+    )
+    _wait_for_slot(
+        _REQUEST_GATE,
+        "requests",
+        limit=limit,
+        wait_seconds=wait_seconds,
+        is_cancelled=is_cancelled,
+    )
+    try:
+        yield
+    finally:
+        with _REQUEST_GATE:
+            _active_requests = max(0, _active_requests - 1)
+            _REQUEST_GATE.notify_all()
+
+
+@contextmanager
+def deepseek_stream_slot(
+    *,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> Iterator[None]:
+    """Admit one long-lived stream completion. ``0`` disables the gate."""
+
+    global _active_streams
+    settings = get_settings()
+    limit = max(0, int(getattr(settings, "deepseek_max_concurrent_streams", 1)))
+    if limit == 0:
+        yield
+        return
+    wait_seconds = max(
+        0.01,
+        float(getattr(settings, "deepseek_stream_acquire_timeout_seconds", 180)),
+    )
+    _wait_for_slot(
+        _STREAM_GATE,
+        "streams",
+        limit=limit,
+        wait_seconds=wait_seconds,
+        is_cancelled=is_cancelled,
+    )
+    try:
+        yield
+    finally:
+        with _STREAM_GATE:
+            _active_streams = max(0, _active_streams - 1)
+            _STREAM_GATE.notify_all()
+
+
+def post_deepseek_chat(
+    client: httpx.Client,
+    url: str,
+    **kwargs: Any,
+) -> httpx.Response:
+    """POST a non-stream chat completion under the process-wide request gate."""
+
+    with deepseek_request_slot():
+        return client.post(url, **kwargs)
 
 
 def _environment_proxy_for(url: str) -> str | None:

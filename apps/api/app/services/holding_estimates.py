@@ -531,6 +531,34 @@ def portfolio_official_nav_settled(holdings: list[Holding]) -> bool:
     return counted > 0
 
 
+def holding_settled_principal(holding: Holding) -> float:
+    return float(holding.settled_holding_amount or holding.holding_amount or 0)
+
+
+def compute_portfolio_total_assets(holdings: list[Holding]) -> float:
+    """总资产：估算当日收益不计入；全部官方净值公布后才叠加上日收益。
+
+    持有金额已含今日涨跌（``amount_includes_today``）时不再加一遍当日收益。
+    """
+    include_official_daily = portfolio_official_nav_settled(holdings)
+    total = 0.0
+    for holding in holdings:
+        settled = holding_settled_principal(holding)
+        if settled <= 0 and (holding.holding_amount or 0) <= 0:
+            continue
+        if (
+            not include_official_daily
+            or holding.daily_return_percent_source != "official_nav"
+        ):
+            total += settled
+            continue
+        if _amount_includes_today_return(holding):
+            total += float(holding.holding_amount or settled)
+            continue
+        total += settled + float(holding.daily_profit or 0)
+    return _round2(total)
+
+
 def compute_portfolio_daily_return_percent(holdings: list[Holding], daily_profit: float) -> float | None:
     total_assets = sum(
         (holding.settled_holding_amount or holding.holding_amount) + (holding.daily_profit or 0)

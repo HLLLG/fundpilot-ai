@@ -120,26 +120,18 @@ def build_discovery_facts(
         "instruction": DISCOVERY_FACTS_INSTRUCTION,
         "session": session,
         "profile": {
-            "decision_style": profile.decision_style,
             "prefer_dca": profile.prefer_dca,
             "avoid_chasing": profile.avoid_chasing,
             "max_drawdown_percent": profile.max_drawdown_percent,
             "account_loss_review_percent": profile.max_drawdown_percent,
             "concentration_limit_percent": profile.concentration_limit_percent,
             "expected_investment_amount": profile.expected_investment_amount,
-            "horizon": profile.horizon,
             # Point-in-time user assumption used only for estimated fee-adjusted
             # outcomes; recurring fund expenses are already embedded in NAV.
             "round_trip_fee_percent": profile.round_trip_fee_percent,
-            **(
-                {
-                    "min_net_profit_percent": profile.min_net_profit_percent,
-                    "take_profit_threshold_percent": take_profit_threshold_percent(profile),
-                    "hold_days_target": profile.hold_days_target,
-                }
-                if profile.decision_style == "aggressive"
-                else {}
-            ),
+            "min_net_profit_percent": profile.min_net_profit_percent,
+            "take_profit_threshold_percent": take_profit_threshold_percent(profile),
+            "hold_days_target": profile.hold_days_target,
         },
         "portfolio_gap": {
             "holding_count": len(holdings),

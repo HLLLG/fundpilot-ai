@@ -274,7 +274,6 @@ def test_guard_discloses_the_penalty_window_on_a_reduce_action() -> None:
                 )
             ],
             profile=InvestorProfile(
-                decision_style="conservative",
                 max_drawdown_percent=15,
                 concentration_limit_percent=100,
                 expected_investment_amount=100_000,
@@ -288,7 +287,6 @@ def test_guard_discloses_the_penalty_window_on_a_reduce_action() -> None:
             alerts=[],
         ),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
 

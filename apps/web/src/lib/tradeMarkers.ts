@@ -17,7 +17,7 @@ export type TradeMarker = {
 export function buildTradeMarkers(transactions: FundTransaction[]): TradeMarker[] {
   const groups = new Map<string, TradeMarker>();
   for (const tx of transactions) {
-    if (tx.status === "skipped" || tx.status === "superseded") {
+    if (tx.status === "skipped" || tx.status === "superseded" || tx.status === "reversed") {
       continue;
     }
     const date = tx.confirm_date?.slice(0, 10);

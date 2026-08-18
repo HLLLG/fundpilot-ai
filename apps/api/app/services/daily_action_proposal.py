@@ -106,7 +106,6 @@ def propose_daily_action(
     opportunity_available: bool | None,
     weak_evidence_reasons: tuple[str, ...] | list[str],
     reversal_blocked: bool,
-    today_news_required_missing: bool,
     execution_blocked: bool,
 ) -> DailyActionProposal:
     """按已算好的门禁结果给出动作提议。
@@ -149,8 +148,6 @@ def propose_daily_action(
         blocked.append("risk_ceiling")
     if reversal_blocked:
         blocked.append("reversal_or_pullback")
-    if today_news_required_missing:
-        blocked.append("no_today_news")
 
     if blocked:
         return DailyActionProposal(

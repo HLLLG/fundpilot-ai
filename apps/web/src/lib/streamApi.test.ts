@@ -52,14 +52,11 @@ function sampleReport(): Report {
 
 function testProfile(): import("@/lib/api").InvestorProfile {
   return {
-    style: "conservative",
-    horizon: "medium",
     max_drawdown_percent: 15,
     concentration_limit_percent: 30,
     expected_investment_amount: 100000,
     prefer_dca: true,
     avoid_chasing: true,
-    decision_style: "conservative",
   };
 }
 
@@ -118,7 +115,7 @@ describe("streamAnalysis", () => {
       {},
     );
 
-    expect(stages).toEqual(["fund_data"]);
+    expect(stages).toEqual(["connected", "fund_data"]);
     expect(skeletons).toEqual([["519674"]]);
     expect(tokens).toEqual(['{"title":', '"t"']);
     expect(partials).toEqual(["fund_recommendation"]);

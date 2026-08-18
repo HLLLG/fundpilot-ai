@@ -219,7 +219,6 @@ def _guard(action: str):
         _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=_facts_with_registry(),
     )
     return guarded[0]

@@ -62,7 +62,12 @@ def discovery_horizon_label(
 ) -> str:
     if normalize_discovery_strategy(strategy) == "opportunity_first":
         return OPPORTUNITY_HORIZON_LABEL
-    return profile.horizon or "1-3个月"
+    # 自由文本 horizon 已删除（2026-08 决策风格收敛）；legacy 策略的持有窗口标签
+    # 改由预计持有天数推导。
+    days = profile.hold_days_target
+    if isinstance(days, int) and days > 0:
+        return f"约{days}天"
+    return "1-3个月"
 
 
 def discovery_minimum_holding_days(

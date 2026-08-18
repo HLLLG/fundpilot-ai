@@ -3,11 +3,25 @@
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { FundTransactionList } from "@/components/FundTransactionList";
-import { getPortfolioTransactions, type FundTransaction } from "@/lib/api";
+import {
+  getPortfolioTransactions,
+  type DeletePortfolioTransactionResult,
+  type FundTransaction,
+} from "@/lib/api";
 import { useDialogA11y } from "@/lib/useDialogA11y";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
 
-export function HoldingsTransactionLedgerModal({ onClose }: { onClose: () => void }) {
+function visibleTransactions(transactions: FundTransaction[]) {
+  return transactions.filter((tx) => tx.status !== "skipped" && tx.status !== "superseded");
+}
+
+export function HoldingsTransactionLedgerModal({
+  onClose,
+  onDeleteTransaction,
+}: {
+  onClose: () => void;
+  onDeleteTransaction?: (transactionId: string) => Promise<DeletePortfolioTransactionResult>;
+}) {
   const [transactions, setTransactions] = useState<FundTransaction[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -22,11 +36,7 @@ export function HoldingsTransactionLedgerModal({ onClose }: { onClose: () => voi
     void getPortfolioTransactions()
       .then((result) => {
         if (!cancelled) {
-          setTransactions(
-            result.transactions.filter(
-              (tx) => tx.status !== "skipped" && tx.status !== "superseded",
-            ),
-          );
+          setTransactions(visibleTransactions(result.transactions));
         }
       })
       .catch((loadError: unknown) => {
@@ -40,7 +50,15 @@ export function HoldingsTransactionLedgerModal({ onClose }: { onClose: () => voi
   }, []);
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-end justify-center bg-[var(--brand-ink)]/48 p-0 backdrop-blur-[6px] sm:items-center sm:p-4">
+    <div
+      className="modal-backdrop fixed inset-0 z-[80] flex items-end justify-center bg-[var(--brand-ink)]/48 p-0 backdrop-blur-[6px] sm:items-center sm:p-4"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+      role="presentation"
+    >
       <div
         ref={dialogRef}
         role="dialog"
@@ -73,7 +91,11 @@ export function HoldingsTransactionLedgerModal({ onClose }: { onClose: () => voi
             <FundTransactionList
               transactions={transactions}
               showFundName
-              emptyText="还没有导入过交易。持仓页「导入交易」会把买卖流水记在这里。"
+              emptyText="还没有导入过交易。持仓页「导入交易」会把买卖点记在这里，金额请用「同步持仓」更新。"
+              onDeleteTransaction={onDeleteTransaction}
+              onDeleted={(result) => {
+                setTransactions(visibleTransactions(result.transactions));
+              }}
             />
           )}
         </div>

@@ -269,7 +269,7 @@ def test_persisted_lookthrough_is_the_bounded_summary_shared_with_prompt() -> No
     assert "resolution_audit" not in persisted
     assert "existing_funds" not in persisted
 
-    trimmed = trim_analysis_facts_for_llm(facts, decision_style="conservative")
+    trimmed = trim_analysis_facts_for_llm(facts)
     # trim 不再二次投影：模型看到的与落库的是同一个对象形状。
     assert trimmed["fund_lookthrough"] == persisted
     # 声明审计是对模型自己叙述的事后检查，不能回喂给模型。
@@ -386,7 +386,7 @@ def test_benchmark_metrics_are_joined_onto_each_holding_row() -> None:
     # 没有基准身份的持仓留空字典，下游能区分"没有基准"与"忘了挂"。
     assert rows["161725"]["benchmark_metrics"] == {}
 
-    trimmed = trim_analysis_facts_for_llm(facts, decision_style="conservative")
+    trimmed = trim_analysis_facts_for_llm(facts)
     assert trimmed["holdings"][0]["benchmark_metrics"]["status"] == "qualified"
     # 顶层完整载荷不再重复下发，否则同一事实两个位置、契约自相矛盾。
     assert "benchmark_research" not in trimmed
@@ -505,7 +505,7 @@ def test_vehicle_quality_is_attached_after_the_benchmark_join() -> None:
     assert active["score"] is None
 
     # 载体质量要进 prompt：它是模型判断"这只工具合不合格"的唯一依据。
-    trimmed = trim_analysis_facts_for_llm(facts, decision_style="conservative")
+    trimmed = trim_analysis_facts_for_llm(facts)
     trimmed_rows = {str(row["fund_code"]): row for row in trimmed["holdings"]}
     assert trimmed_rows["510300"]["vehicle_quality"]["status"] == "eligible"
     assert trimmed_rows["519674"]["vehicle_quality"]["applicable"] is False
@@ -547,7 +547,7 @@ def test_peer_research_is_attached_per_holding_and_reaches_the_prompt() -> None:
     assert unranked["available"] is False
     assert unranked["execution_tilt_eligible"] is False
 
-    trimmed = trim_analysis_facts_for_llm(facts, decision_style="conservative")
+    trimmed = trim_analysis_facts_for_llm(facts)
     trimmed_rows = {str(row["fund_code"]): row for row in trimmed["holdings"]}
     assert trimmed_rows["519674"]["peer_research"]["status"] == "descriptive_only"
 

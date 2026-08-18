@@ -26,19 +26,21 @@ function tx(
 }
 
 describe("sortLedgerTransactions", () => {
-  it("puts in-progress rows above confirmed, then sorts each group by time desc", () => {
-    const confirmedNewer = tx("c-new", "2026-08-14 14:56:15", "confirmed");
-    const inProgressOldest = tx("p-old", "2026-08-14 14:44:52", "pending", true);
-    const confirmedOlder = tx("c-old", "2026-08-13 14:55:30", "confirmed");
-    const inProgressNewest = tx("p-new", "2026-08-14 14:57:23", "pending", true);
+  it("sorts by trade time descending across days", () => {
+    const goldAug14 = tx("gold-14", "2026-08-14 14:59:57", "confirmed");
+    const rareEarth = tx("re-14", "2026-08-14 14:57:23", "confirmed");
+    const goldAug17 = tx("gold-17", "2026-08-17 14:59:52", "confirmed");
+    const medical = tx("med-17", "2026-08-17 14:59:35", "confirmed");
+    const inProgressOlder = tx("p-old", "2026-08-14 14:44:52", "pending", true);
 
     expect(
       sortLedgerTransactions([
-        confirmedNewer,
-        inProgressOldest,
-        confirmedOlder,
-        inProgressNewest,
+        goldAug14,
+        rareEarth,
+        goldAug17,
+        medical,
+        inProgressOlder,
       ]).map((item) => item.id),
-    ).toEqual(["p-new", "p-old", "c-new", "c-old"]);
+    ).toEqual(["gold-17", "med-17", "gold-14", "re-14", "p-old"]);
   });
 });

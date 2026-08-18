@@ -8,7 +8,17 @@ from app.services.sector_quote_label import sector_quote_lookup_label
 IntradayPoint = dict[str, str | float]
 
 
-def summarize_sector_intraday_for_holding(holding: Holding) -> dict | None:
+def summarize_sector_intraday_for_holding(
+    holding: Holding,
+    *,
+    cache_only: bool = False,
+) -> dict | None:
+    """cache_only=True 时缓存 miss 直接返回 None，不打行情网络。
+
+    离线规则构建器走这条只读路径：分时信号缺失本就按「不触发」处理（与守卫的
+    回吐判定同一语义），而 facts 阶段的 `_build_sector_intraday_map` 已经预热过
+    同一份缓存，决策收口路径不该再等东财/akshare 的多级超时。
+    """
     label = sector_quote_lookup_label(holding)
     if not label:
         return None
@@ -20,6 +30,7 @@ def summarize_sector_intraday_for_holding(holding: Holding) -> dict | None:
     points, note, session_date, close_change = fetch_sector_intraday(
         canon.source_type,
         canon.source_name,
+        cache_only=cache_only,
     )
     if not points:
         return None

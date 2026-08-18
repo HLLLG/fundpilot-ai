@@ -22,16 +22,11 @@ from app.services.nav_trend_summary import summarize_nav_history
 
 
 def test_new_discovery_requests_default_to_opportunity_first_without_changing_profile():
-    profile = InvestorProfile(
-        horizon="半年到一年",
-        max_drawdown_percent=8,
-        investment_preset="conservative_hold",
-    )
+    profile = InvestorProfile(max_drawdown_percent=8)
     request = DiscoveryRequest(profile=profile)
 
     assert request.discovery_strategy == "opportunity_first"
     assert request.profile.max_drawdown_percent == 8
-    assert request.profile.horizon == "半年到一年"
     assert discovery_horizon_label(request.discovery_strategy, profile) == "1-3个月"
     assert discovery_minimum_holding_days(request.discovery_strategy, profile) == 30
 

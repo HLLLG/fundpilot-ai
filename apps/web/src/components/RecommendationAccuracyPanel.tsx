@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Activity, FlaskConical } from "lucide-react";
+import { FlaskConical } from "lucide-react";
 import type { OutcomeHorizonStats, RecommendationAccuracy } from "@/lib/api";
 import { fetchRecommendationAccuracy } from "@/lib/api";
 import { InlineNotice } from "@/components/InlineNotice";
@@ -13,12 +13,6 @@ import {
 } from "@/components/DecisionMetricGrid";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
 import { MethodologyNote } from "@/components/MethodologyNote";
-
-const STYLE_LABELS: Record<string, string> = {
-  tactical: "战术短线",
-  aggressive: "激进波段",
-  conservative: "稳健",
-};
 
 function percent(value: number | null | undefined) {
   return value === null || value === undefined ? "—" : `${value}%`;
@@ -86,7 +80,6 @@ export function RecommendationAccuracyPanel() {
   }, [retrySequence]);
 
   const horizonEntries = Object.entries(data?.by_horizon ?? {});
-  const styles = Object.values(data?.by_style ?? {});
   const primaryKey = horizonEntries[0]?.[0] ?? "T+5";
   const primaryMetrics = data?.metrics ?? data?.by_horizon?.[primaryKey]?.metrics;
 
@@ -154,35 +147,6 @@ export function RecommendationAccuracyPanel() {
         </div>
       ) : null}
 
-      {styles.length ? (
-        <div className="mt-4 rounded-2xl border border-[var(--line)] bg-[var(--surface-muted)] p-4">
-          <div className="mb-3 flex items-center gap-2 text-xs font-black tracking-[0.08em] text-[var(--muted)]">
-            <Activity size={14} className="text-[var(--accent-strong)]" />
-            按决策风格 · {primaryKey}
-          </div>
-          <div className="grid gap-2 sm:grid-cols-3">
-            {styles.map((bucket) => {
-              const stats = bucket.by_horizon?.[primaryKey];
-              return (
-                <div key={bucket.decision_style} className="rounded-xl border border-[var(--line)] bg-[var(--panel)] px-3 py-3">
-                  <div className="text-sm font-black text-[var(--brand-deep)]">
-                    {STYLE_LABELS[bucket.decision_style] ?? bucket.decision_style}
-                  </div>
-                  <p className="mt-1 text-xs leading-5 text-slate-600 tabular-nums">
-                    成熟 {stats?.mature_count ?? bucket.mature_count ?? 0}/
-                    {stats?.eligible_count ?? bucket.eligible_count ?? 0} · 方向吻合 {percent(stats?.hit_rate_percent)}
-                  </p>
-                  <p className="text-[11px] text-slate-500">
-                    观察/复核 {bucket.observation_count ?? 0} 条，不进入分母
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : data?.has_enough_data ? (
-        <InlineNotice tone="info" message="复盘已生成，但暂无可展示的决策风格样本。" className="mt-4" />
-      ) : null}
     </section>
   );
 }

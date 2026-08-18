@@ -57,6 +57,11 @@ def test_analyze_stream_endpoint_emits_sse(tmp_path, monkeypatch: pytest.MonkeyP
 
     events = _parse_sse_events(body)
     types = [e["type"] for e in events]
-    assert types == ["session", "stage", "skeleton", "done"]
+    assert types == ["stage", "session", "stage", "skeleton", "done"]
+    assert events[0] == {
+        "type": "stage",
+        "stage": "connected",
+        "label": "已连接服务端，正在启动分析…",
+    }
     assert events[-1]["report_id"] == "r1"
     assert captured_modes == ["deep"]

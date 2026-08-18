@@ -12,8 +12,6 @@ const holding: Holding = {
 };
 
 const profile: InvestorProfile = {
-  style: "稳健",
-  horizon: "半年到一年",
   max_drawdown_percent: 8,
   concentration_limit_percent: 100,
   prefer_dca: true,

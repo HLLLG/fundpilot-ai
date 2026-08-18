@@ -252,3 +252,43 @@ def test_grouped_layout_survives_two_columns_merged_into_one_line() -> None:
         "新华鑫科技3个月滚动持有灵活配置混合A": (2229.22, -770.78),
         "博时黄金ETF联接A": (1004.41, 4.41),
     }
+
+
+ALIPAY_GROUPED_NAME_GLUED_TO_METRICS = """10:07
+基金
+我的持有
+更新时间排序
+全部 偏股 偏债 指数 黄金 全球
+名称 金额/昨日收益 持有收益/率
+鹏扬基金财富号
+鹏扬中证数字经济主题ETF联接C517.74+17.74+15.38+3.55%
+国泰基金财富号
+国泰国证房地产行业指数(LOF)A972.54-27.46+2.68-2.75%
+博时基金财富号
+博时黄金ETF联接A2,039.76+39.76+24.33+1.99%
+嘉实基金财富号
+嘉实中证稀土产业ETF联接C1,816.10+16.10+33.93+0.89%
+基金市场
+排行
+自选
+持有
+"""
+
+
+def test_grouped_layout_strips_metrics_glued_to_fund_name() -> None:
+    """qwen-vl 常把名称和右侧三列读成一行，名称不能带着 51774+1774 这种数字尾巴。"""
+    holdings = parse_holdings_from_text(ALIPAY_GROUPED_NAME_GLUED_TO_METRICS)
+    parsed = {
+        holding.fund_name: (
+            holding.holding_amount,
+            holding.holding_profit,
+            holding.holding_return_percent,
+        )
+        for holding in holdings
+    }
+    assert parsed == {
+        "鹏扬中证数字经济主题ETF联接C": (517.74, 17.74, 3.55),
+        "国泰国证房地产行业指数(LOF)A": (972.54, -27.46, -2.75),
+        "博时黄金ETF联接A": (2039.76, 39.76, 1.99),
+        "嘉实中证稀土产业ETF联接C": (1816.10, 16.10, 0.89),
+    }

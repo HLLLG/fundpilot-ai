@@ -2,6 +2,7 @@
 
 import { Bell, Loader2, X } from "lucide-react";
 import type { StreamingReportState } from "@/lib/streamApi";
+import { stageShortLabel } from "@/lib/streamingStageMeta";
 import { ReportThinkingSidebar } from "@/components/ReportThinkingSidebar";
 import { StatusPill } from "@/components/StatusPill";
 
@@ -31,7 +32,13 @@ function SkeletonCard({ fundCode, fundName }: { fundCode: string; fundName: stri
 }
 
 export function ReportSkeleton({ streaming, onCancel, onFollowup }: ReportSkeletonProps) {
-  const { stageLabel, fundCodes, fundNames, title, summary, partialByCode, caveats } = streaming;
+  const { stage, stageLabel, fundCodes, fundNames, title, summary, partialByCode, caveats } =
+    streaming;
+  const filledCount = Object.values(partialByCode).filter((item) => item.action).length;
+  const stageProgress =
+    fundCodes.length > 0
+      ? `${stageShortLabel(stage)} · 持仓 ${filledCount}/${fundCodes.length}`
+      : stageShortLabel(stage);
   const showBackgroundFallbackFrame =
     Boolean(streaming.backgroundJobId) &&
     !title &&
@@ -44,9 +51,15 @@ export function ReportSkeleton({ streaming, onCancel, onFollowup }: ReportSkelet
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_240px]">
         <div className="space-y-4 rounded-[var(--radius-card)] bg-[var(--panel-strong)] p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm text-slate-600">
-              <Loader2 className="h-4 w-4 animate-spin text-[var(--brand-strong)]" />
-              <span>{stageLabel || "AI 分析中…"}</span>
+            <div className="min-w-0 text-sm text-slate-600">
+              <div className="flex items-center gap-2">
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-[var(--brand-strong)]" />
+                <span>{stageLabel || "AI 分析中…"}</span>
+              </div>
+              <p className="mt-1 pl-6 text-xs text-slate-500" data-testid="report-stream-stage">
+                {stageProgress}
+                {" · 可切换页面，完成后通知您"}
+              </p>
             </div>
             {onCancel ? (
               <button

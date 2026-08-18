@@ -61,7 +61,6 @@ def _floor(*, nav_trend: dict | None, sector_opportunity: dict | None, **overrid
         "market_breadth": None,
         "over_concentration": False,
         "has_unrealized_gain": False,
-        "decision_style": "conservative",
         "direction_exit": None,
         "nav_trend": nav_trend,
     }
@@ -190,7 +189,6 @@ def _request() -> AnalysisRequest:
             )
         ],
         profile=InvestorProfile(
-            decision_style="conservative",
             max_drawdown_percent=15,
             concentration_limit_percent=100,
             expected_investment_amount=100_000,
@@ -221,7 +219,6 @@ def _guard(facts, *, llm_action: str) -> FundRecommendation:
         _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
     return guarded[0]

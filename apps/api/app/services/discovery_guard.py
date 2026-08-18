@@ -793,7 +793,9 @@ def apply_discovery_guards(
                             "短线涨幅已经偏快且5日资金没有继续确认，先等回调或资金重新转强。"
                         ]
             else:
-                chase_threshold = 6.0 if profile.decision_style == "aggressive" else 4.0
+                # 与日报侧拒绝追高门（板块日涨 >5%）取同一个数：追高是同一个概念，
+                # 两条路径不该各用一个阈值（2026-08 决策风格收敛前为 4%/6% 按风格分叉）。
+                chase_threshold = 5.0
                 if sector_move is not None and sector_move >= chase_threshold:
                     copy.action = "等待回调"
                     copy.points = list(copy.points) + [
@@ -1280,8 +1282,6 @@ def _enforce_discovery_execution_projection(rec: DiscoveryRecommendation) -> Non
 
 def _profile_drawdown_limit(profile: InvestorProfile) -> float:
     base = max(float(profile.max_drawdown_percent or 0.0), 0.0)
-    if profile.decision_style == "aggressive":
-        return max(40.0, base * 3.0)
     return max(20.0, base * 2.0)
 
 

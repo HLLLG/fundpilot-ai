@@ -31,7 +31,7 @@ function sampleTx(): ParsedTransaction {
   };
 }
 
-it("asks for a sync plan before writing, including markers-only", () => {
+it("writes markers only and does not ask to change holdings", () => {
   const onConfirm = vi.fn();
   render(
     <BatchTransactionConfirmModal
@@ -45,13 +45,7 @@ it("asks for a sync plan before writing, including markers-only", () => {
   );
 
   fireEvent.click(screen.getByRole("button", { name: "完成（1）" }));
-  expect(screen.getByRole("dialog", { name: "请选择同步方案" })).toBeInTheDocument();
-  expect(
-    screen.getByRole("radio", { name: /同步买卖点且进行加减仓操作/ }),
-  ).toHaveAttribute("aria-checked", "true");
-
-  fireEvent.click(screen.getByRole("radio", { name: /仅同步买卖点，不进行加减仓/ }));
-  fireEvent.click(screen.getByRole("button", { name: "确定" }));
+  expect(screen.queryByRole("dialog", { name: "请选择同步方案" })).not.toBeInTheDocument();
   expect(onConfirm).toHaveBeenCalledWith("markers_only");
 });
 

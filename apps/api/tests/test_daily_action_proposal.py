@@ -96,7 +96,6 @@ def _supporting_kwargs(**overrides) -> dict:
         opportunity_available=True,
         weak_evidence_reasons=(),
         reversal_blocked=False,
-        today_news_required_missing=False,
         execution_blocked=False,
     )
     base.update(overrides)
@@ -124,7 +123,6 @@ def test_all_positive_conditions_propose_an_add() -> None:
         ({"escalation_min_bucket": ACTION_BUCKET_PAUSE}, "risk_escalation_floor"),
         ({"max_allowed_bucket": ACTION_BUCKET_WATCH}, "risk_ceiling"),
         ({"reversal_blocked": True}, "reversal_or_pullback"),
-        ({"today_news_required_missing": True}, "no_today_news"),
     ],
 )
 def test_any_missing_condition_withholds_the_add(override: dict, expected_reason: str) -> None:
@@ -189,7 +187,7 @@ def test_baseline_reflects_portfolio_risk(risk_level, suggested, expected) -> No
 # --- 集成层：shadow vs enforced ---------------------------------------------
 
 
-def _request(*, decision_style: str = "conservative", holding_amount: float = 10_000):
+def _request(*, holding_amount: float = 10_000):
     return AnalysisRequest(
         holdings=[
             Holding(
@@ -200,7 +198,6 @@ def _request(*, decision_style: str = "conservative", holding_amount: float = 10
             )
         ],
         profile=InvestorProfile(
-            decision_style=decision_style,
             max_drawdown_percent=15,
             concentration_limit_percent=100,
             expected_investment_amount=100_000,
@@ -262,7 +259,6 @@ def _guard(facts, *, llm_action="观察", request=None, risk=None):
         request or _request(),
         risk or _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
     return guarded[0]
@@ -412,16 +408,13 @@ def test_offline_watch_no_longer_caps_the_add(proposal_mode, monkeypatch) -> Non
         ),
     )
 
-    rec = _guard(facts, llm_action="观察", request=_request(decision_style="conservative"))
+    rec = _guard(facts, llm_action="观察", request=_request())
 
     assert rec.action == "分批加仓"
 
 
-@pytest.mark.parametrize("decision_style", ["conservative", "tactical", "aggressive"])
-def test_offline_risk_opinion_now_applies_to_every_style(
-    proposal_mode, monkeypatch, decision_style: str
-) -> None:
-    """短线/激进此前完全跳过这道对照，离线算出的风险意见被整份丢掉。"""
+def test_offline_risk_opinion_vetoes_the_llm_add(proposal_mode, monkeypatch) -> None:
+    """离线规则引擎给出的风险意见必须能否决模型草案的加仓。"""
     proposal_mode("enforced")
     facts = _supporting_facts()
 
@@ -432,13 +425,9 @@ def test_offline_risk_opinion_now_applies_to_every_style(
         ),
     )
 
-    rec = _guard(
-        facts,
-        llm_action="分批加仓",
-        request=_request(decision_style=decision_style),
-    )
+    rec = _guard(facts, llm_action="分批加仓", request=_request())
 
-    assert rec.action == "减仓评估", f"{decision_style} 风格必须接受离线风险否决"
+    assert rec.action == "减仓评估", "离线风险否决必须生效"
     assert rec.suggested_position_change_percent == -25.0
 
 

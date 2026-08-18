@@ -35,11 +35,12 @@ describe("buildTradeMarkers", () => {
     expect(markers.every((marker) => marker.date === "2026-08-13")).toBe(true);
   });
 
-  it("ignores skipped and superseded ledger rows", () => {
+  it("ignores skipped, superseded, and reversed ledger rows", () => {
     expect(
       buildTradeMarkers([
         tx({ id: "skip", status: "skipped" }),
         tx({ id: "old", status: "superseded", confirm_date: "2026-08-10" }),
+        tx({ id: "rev", status: "reversed", confirm_date: "2026-08-11" }),
         tx({ id: "keep", amount_yuan: 1300 }),
       ]),
     ).toEqual([

@@ -457,7 +457,7 @@ def test_weak_evidence_reasons_include_the_entry_state_block() -> None:
     assert any("条件仍在形成中" in text for text in reasons)
 
 
-def _request(decision_style: str = "tactical") -> AnalysisRequest:
+def _request() -> AnalysisRequest:
     return AnalysisRequest(
         holdings=[
             Holding(
@@ -468,7 +468,6 @@ def _request(decision_style: str = "tactical") -> AnalysisRequest:
             )
         ],
         profile=InvestorProfile(
-            decision_style=decision_style,
             max_drawdown_percent=15,
             concentration_limit_percent=100,
             expected_investment_amount=100_000,
@@ -539,7 +538,6 @@ def test_full_guard_downgrades_add_when_direction_is_only_forming() -> None:
             alerts=[],
         ),
         [NewsItem(topic="半导体", title="半导体行业利好消息", is_today=True)],
-        [],
         facts=facts,
     )
 
@@ -586,7 +584,6 @@ def test_maturity_fields_survive_the_llm_projection(analysis_mode: str) -> None:
 
     trimmed = trim_analysis_facts_for_llm(
         facts,
-        decision_style="conservative",
         analysis_mode=analysis_mode,
     )
     opportunity = trimmed["holdings"][0]["sector_opportunity"]

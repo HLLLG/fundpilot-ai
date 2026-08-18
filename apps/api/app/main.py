@@ -78,7 +78,10 @@ from app.models import (
 from app.services.analyze_pipeline import run_analysis
 from app.services.analyze_streaming import stream_analysis
 from app.services.decision_data_evidence import resolve_portfolio_preflight
-from app.services.async_sse import sse_from_sync_iterator
+from app.services.async_sse import (
+    sse_connected_prelude,
+    sse_from_sync_iterator,
+)
 from app.services.discovery_streaming import stream_discovery
 from app.services.stream_session_store import append_stream_followup
 from app.services.stream_admission import try_acquire_stream_slot
@@ -526,6 +529,26 @@ def list_portfolio_transactions() -> dict:
     }
 
 
+@app.delete("/api/transactions/{transaction_id}")
+def delete_portfolio_transaction(transaction_id: str) -> dict:
+    from app.services.portfolio_ledger_service import PositionTruthStoreUnavailable
+    from app.services.transaction_ledger import (
+        TransactionNotFound,
+        delete_parsed_transaction,
+    )
+
+    try:
+        payload = delete_parsed_transaction(transaction_id)
+    except TransactionNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PositionTruthStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    from app.services.portfolio_holdings_cache import bump_holdings_cache_generation
+
+    bump_holdings_cache_generation()
+    return payload
+
+
 @app.get("/api/funds/{fund_code}/transactions")
 def fund_transactions(fund_code: str) -> dict:
     from app.database import list_fund_transactions
@@ -913,6 +936,8 @@ async def analyze_stream_endpoint(
 
     async def event_stream():
         try:
+            for chunk in sse_connected_prelude("已连接服务端，正在启动分析…"):
+                yield chunk
             items = stream_analysis(
                 request,
                 user_id=user_id,
@@ -929,9 +954,9 @@ async def analyze_stream_endpoint(
 
     return StreamingResponse(
         event_stream(),
-        media_type="text/event-stream",
+        media_type="text/event-stream; charset=utf-8",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
@@ -1049,9 +1074,6 @@ async def fund_discovery_stream_endpoint(
     http_request: Request,
 ) -> StreamingResponse:
     request = request.model_copy(update={"analysis_mode": "deep"})
-    if not request.holdings:
-        loaded, _, _, _ = await asyncio.to_thread(load_persisted_holdings)
-        request = request.model_copy(update={"holdings": loaded})
     user_id = get_request_user_id()
     settings = get_settings()
     stream_slot = try_acquire_stream_slot(settings.sse_max_concurrent_per_process)
@@ -1064,22 +1086,32 @@ async def fund_discovery_stream_endpoint(
     stop_event = threading.Event()
     stream_state = {"stage": "connected", "terminal": False}
 
-    def tracked_items():
-        for item in stream_discovery(
-            request,
-            user_id=user_id,
-            stop_event=stop_event,
-        ):
-            if item.get("type") == "stage":
-                stream_state["stage"] = str(
-                    item.get("stage") or stream_state["stage"]
-                )
-            elif item.get("type") in {"done", "error"}:
-                stream_state["terminal"] = True
-            yield item
-
     async def event_stream():
+        resolved = request
         try:
+            for chunk in sse_connected_prelude("已连接服务端，正在启动扫描…"):
+                yield chunk
+            if not resolved.holdings:
+                loaded, _, _, _ = await asyncio.to_thread(
+                    load_persisted_holdings,
+                    fetch_benchmark=False,
+                )
+                resolved = resolved.model_copy(update={"holdings": loaded})
+
+            def tracked_items():
+                for item in stream_discovery(
+                    resolved,
+                    user_id=user_id,
+                    stop_event=stop_event,
+                ):
+                    if item.get("type") == "stage":
+                        stream_state["stage"] = str(
+                            item.get("stage") or stream_state["stage"]
+                        )
+                    elif item.get("type") in {"done", "error"}:
+                        stream_state["terminal"] = True
+                    yield item
+
             async for chunk in sse_from_sync_iterator(
                 tracked_items(),
                 stop_event=stop_event,

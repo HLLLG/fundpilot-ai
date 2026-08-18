@@ -87,6 +87,7 @@ from app.services.news_service import (
 )
 from app.services.news_summarizer import summarize_all_topics
 from app.services.pipeline_concurrency import run_with_request_user
+from app.services.provider_lane import LANE_DISCOVERY, provider_lane
 from app.services.risk import resolve_weight_denominator
 from app.services.streaming_heartbeat import (
     Heartbeat,
@@ -134,6 +135,20 @@ def stream_discovery(
     stop_event: threading.Event | None = None,
 ) -> Iterator[dict[str, Any]]:
     stop = stop_event or threading.Event()
+    with provider_lane(LANE_DISCOVERY):
+        yield from _stream_discovery_with_heartbeat(
+            request,
+            user_id=user_id,
+            stop=stop,
+        )
+
+
+def _stream_discovery_with_heartbeat(
+    request: DiscoveryRequest,
+    *,
+    user_id: int,
+    stop: threading.Event,
+) -> Iterator[dict[str, Any]]:
     started_at = time.monotonic()
     active_stage = {
         "stage": "connected",

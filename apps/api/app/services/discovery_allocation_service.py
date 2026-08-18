@@ -118,7 +118,6 @@ def apply_deterministic_discovery_allocation(
         concentration_denominator_yuan=denominator,
         concentration_limit_percent=profile.concentration_limit_percent,
         prefer_dca=profile.prefer_dca,
-        decision_style=profile.decision_style,
         risk_context=risk_context,
         priority_inputs=None,
         current_tranche_ratio_cap=_entry_maturity_tranche_ratio_cap(

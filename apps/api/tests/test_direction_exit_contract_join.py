@@ -205,7 +205,6 @@ def test_holdings_without_a_contract_are_absent_from_the_per_fund_map(
 
 def test_per_fund_exit_wins_over_the_sector_row_on_the_holding(monkeypatch) -> None:
     """`analysis_facts` 必须给持仓行挂上属于它自己的那一份。"""
-    from app.models import InvestorProfile
     from app.services.analysis_facts import _attach_escalation_to_holdings
 
     per_fund = [
@@ -221,13 +220,6 @@ def test_per_fund_exit_wins_over_the_sector_row_on_the_holding(monkeypatch) -> N
     _attach_escalation_to_holdings(
         per_fund,
         market_breadth=None,
-        profile=InvestorProfile(
-            decision_style="tactical",
-            max_drawdown_percent=15,
-            concentration_limit_percent=100,
-            expected_investment_amount=100_000,
-            avoid_chasing=False,
-        ),
         direction_exit_by_fund_code={
             "011373": {
                 "exit_state": "hold",

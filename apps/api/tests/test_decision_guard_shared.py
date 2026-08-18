@@ -133,7 +133,6 @@ def test_no_escalation_when_sector_opportunity_missing() -> None:
         market_breadth=None,
         over_concentration=False,
         has_unrealized_gain=False,
-        decision_style="conservative",
     )
     assert result["min_bucket"] is None
     assert result["reasons"] == []
@@ -149,7 +148,6 @@ def test_no_escalation_when_opportunity_available_true() -> None:
         market_breadth=_breadth(),
         over_concentration=True,
         has_unrealized_gain=True,
-        decision_style="conservative",
     )
     assert result["min_bucket"] is None
 
@@ -163,7 +161,6 @@ def test_no_escalation_when_divergence_not_strong() -> None:
             market_breadth=_breadth(),
             over_concentration=True,
             has_unrealized_gain=True,
-            decision_style="conservative",
         )
         assert result["min_bucket"] is None, f"confidence={weak_confidence!r} should not escalate"
 
@@ -176,7 +173,6 @@ def test_row1_pause_when_only_divergence_and_unavailable() -> None:
         market_breadth=None,
         over_concentration=False,
         has_unrealized_gain=False,
-        decision_style="conservative",
     )
     assert result["min_bucket"] == ACTION_BUCKET_PAUSE
     assert result["suggested_position_change_percent"] is None
@@ -193,7 +189,6 @@ def test_row1_pause_when_evidence_present_but_strong() -> None:
             market_breadth=None,
             over_concentration=False,
             has_unrealized_gain=False,
-            decision_style="conservative",
         )
         assert result["min_bucket"] == ACTION_BUCKET_PAUSE, f"level={strong_level!r}"
 
@@ -205,7 +200,6 @@ def test_row2_reduce_when_fund_evidence_weak() -> None:
         market_breadth=None,
         over_concentration=False,
         has_unrealized_gain=False,
-        decision_style="conservative",
     )
     assert result["min_bucket"] == ACTION_BUCKET_REDUCE
     assert result["suggested_position_change_percent"] == -25.0
@@ -219,24 +213,24 @@ def test_row3_reduce_with_higher_percent_when_unrealized_gain() -> None:
         market_breadth=None,
         over_concentration=False,
         has_unrealized_gain=True,
-        decision_style="conservative",
     )
     assert result["min_bucket"] == ACTION_BUCKET_REDUCE
     assert result["suggested_position_change_percent"] == pytest.approx(-(100 / 3))
     assert result["suggested_position_change_percent"] < -25.0  # 比 row2 更激进
 
 
-def test_row4_deep_reduce_conservative_requires_both_conditions() -> None:
-    """conservative 风格下，第4档要求「情绪冰点降档」与「集中度超限」同时满足。"""
+def test_row4_deep_reduce_triggers_on_either_condition() -> None:
+    """第4档（2026-08 决策风格收敛后统一 or 判定）：情绪冰点或集中度超限任一满足
+    即触发。用默认 fixture（1 条 penalty）验证：第5档门槛固定为 >=2 条 penalty，
+    因此这里应稳定停在第4档，不会连带触发第5档。"""
     only_breadth = resolve_escalation_floor(
         sector_opportunity=_opportunity(),
         evidence=_evidence("不足"),
         market_breadth=_breadth(),
         over_concentration=False,
         has_unrealized_gain=False,
-        decision_style="conservative",
     )
-    assert only_breadth["min_bucket"] == ACTION_BUCKET_REDUCE  # 未升级到第4档
+    assert only_breadth["min_bucket"] == ACTION_BUCKET_DEEP_REDUCE
 
     only_concentration = resolve_escalation_floor(
         sector_opportunity=_opportunity(),
@@ -244,58 +238,20 @@ def test_row4_deep_reduce_conservative_requires_both_conditions() -> None:
         market_breadth=None,
         over_concentration=True,
         has_unrealized_gain=False,
-        decision_style="conservative",
     )
-    assert only_concentration["min_bucket"] == ACTION_BUCKET_REDUCE  # 未升级到第4档
-
-    both = resolve_escalation_floor(
-        sector_opportunity=_opportunity(),
-        evidence=_evidence("不足"),
-        market_breadth=_breadth(),
-        over_concentration=True,
-        has_unrealized_gain=False,
-        decision_style="conservative",
-    )
-    assert both["min_bucket"] == ACTION_BUCKET_DEEP_REDUCE
-    assert both["suggested_position_change_percent"] == -50.0
-
-
-def test_row4_deep_reduce_lenient_style_triggers_on_either_condition() -> None:
-    """tactical/aggressive 风格门槛更松：情绪冰点或集中度超限任一满足即可触发第4档
-    （decision_style 只影响触发门槛松紧，不是触发的必要条件——本用例验证"更容易触发"）。
-    用默认 fixture（1 条 penalty）验证：第5档门槛固定为 >=2 条 penalty、不随
-    decision_style 松紧，因此这里应稳定停在第4档，不会连带触发第5档。"""
-    for style in ("tactical", "aggressive"):
-        only_breadth = resolve_escalation_floor(
-            sector_opportunity=_opportunity(),
-            evidence=_evidence("不足"),
-            market_breadth=_breadth(),
-            over_concentration=False,
-            has_unrealized_gain=False,
-            decision_style=style,
-        )
-        assert only_breadth["min_bucket"] == ACTION_BUCKET_DEEP_REDUCE, style
-
-        only_concentration = resolve_escalation_floor(
-            sector_opportunity=_opportunity(),
-            evidence=_evidence("不足"),
-            market_breadth=None,
-            over_concentration=True,
-            has_unrealized_gain=False,
-            decision_style=style,
-        )
-        assert only_concentration["min_bucket"] == ACTION_BUCKET_DEEP_REDUCE, style
+    assert only_concentration["min_bucket"] == ACTION_BUCKET_DEEP_REDUCE
+    assert only_concentration["suggested_position_change_percent"] == -50.0
 
 
 def test_row4_requires_sentiment_both_ice_and_dropping() -> None:
-    """情绪档位必须同时满足「冰点」与「较前一交易日下降≥2档」，缺一不可。"""
+    """情绪档位必须同时满足「冰点」与「较前一交易日下降≥2档」，缺一不可。
+    集中度置 False，隔离出情绪腿单独判定（or 语义下集中度超限会自行触发第4档）。"""
     ice_but_not_dropping = resolve_escalation_floor(
         sector_opportunity=_opportunity(),
         evidence=_evidence("不足"),
         market_breadth={"sentiment_level": "冰点", "sentiment_level_change": 0},
-        over_concentration=True,
+        over_concentration=False,
         has_unrealized_gain=False,
-        decision_style="conservative",
     )
     assert ice_but_not_dropping["min_bucket"] == ACTION_BUCKET_REDUCE
 
@@ -303,15 +259,15 @@ def test_row4_requires_sentiment_both_ice_and_dropping() -> None:
         sector_opportunity=_opportunity(),
         evidence=_evidence("不足"),
         market_breadth={"sentiment_level": "低迷", "sentiment_level_change": -3},
-        over_concentration=True,
+        over_concentration=False,
         has_unrealized_gain=False,
-        decision_style="conservative",
     )
     assert dropping_but_not_ice["min_bucket"] == ACTION_BUCKET_REDUCE
 
 
 def test_row4_rejects_stale_or_legacy_breadth_for_hard_guard() -> None:
-    """过期、明确不合格或缺少资格字段的旧缓存都只能展示，不能触发第4档。"""
+    """过期、明确不合格或缺少资格字段的旧缓存都只能展示，不能触发第4档。
+    集中度置 False，隔离出情绪腿（or 语义下集中度超限会自行触发第4档）。"""
     candidates = [
         {"sentiment_level": "冰点", "sentiment_level_change": -2},
         {**_breadth(), "decision_eligible": False},
@@ -323,22 +279,20 @@ def test_row4_rejects_stale_or_legacy_breadth_for_hard_guard() -> None:
             sector_opportunity=_opportunity(),
             evidence=_evidence("不足"),
             market_breadth=breadth,
-            over_concentration=True,
+            over_concentration=False,
             has_unrealized_gain=False,
-            decision_style="conservative",
         )
         assert result["min_bucket"] == ACTION_BUCKET_REDUCE
 
 
-def test_row5_clear_all_conservative_requires_two_penalties() -> None:
-    """conservative 风格下，第5档（多重信号共振）要求至少 2 条 penalties 同时命中。"""
+def test_row5_clear_all_requires_two_penalties() -> None:
+    """第5档（多重信号共振）要求至少 2 条 penalties 同时命中。"""
     one_penalty = resolve_escalation_floor(
         sector_opportunity=_opportunity(penalties=["资金背离或持续流出"]),
         evidence=_evidence("不足"),
         market_breadth=_breadth(),
         over_concentration=True,
         has_unrealized_gain=False,
-        decision_style="conservative",
     )
     assert one_penalty["min_bucket"] == ACTION_BUCKET_DEEP_REDUCE  # 未升级到第5档
 
@@ -350,38 +304,9 @@ def test_row5_clear_all_conservative_requires_two_penalties() -> None:
         market_breadth=_breadth(),
         over_concentration=True,
         has_unrealized_gain=False,
-        decision_style="conservative",
     )
     assert two_penalties["min_bucket"] == ACTION_BUCKET_CLEAR_ALL
     assert two_penalties["suggested_position_change_percent"] == -100.0
-
-
-def test_row5_threshold_is_uniform_across_decision_styles() -> None:
-    """第5档门槛（>=2 条 penalty 同时命中）不随 decision_style 松紧——只有第4档的
-    触发条件（情绪冰点 or/and 集中度超限）会因风格而松紧不同；第5档统一保持更高
-    门槛，避免 lenient 风格下第4/5档因门槛雷同而无法区分（见实现注释）。"""
-    for style in ("conservative", "tactical", "aggressive"):
-        one_penalty = resolve_escalation_floor(
-            sector_opportunity=_opportunity(penalties=["资金背离或持续流出"]),
-            evidence=_evidence("不足"),
-            market_breadth=_breadth(),
-            over_concentration=True,
-            has_unrealized_gain=False,
-            decision_style=style,
-        )
-        assert one_penalty["min_bucket"] == ACTION_BUCKET_DEEP_REDUCE, style
-
-        two_penalties = resolve_escalation_floor(
-            sector_opportunity=_opportunity(
-                penalties=["资金背离或持续流出", "单日涨幅过热"]
-            ),
-            evidence=_evidence("不足"),
-            market_breadth=_breadth(),
-            over_concentration=True,
-            has_unrealized_gain=False,
-            decision_style=style,
-        )
-        assert two_penalties["min_bucket"] == ACTION_BUCKET_CLEAR_ALL, style
 
 
 def test_action_bucket_constants_ordering() -> None:
@@ -405,7 +330,6 @@ def test_reasons_and_basis_are_consistent() -> None:
         market_breadth=None,
         over_concentration=False,
         has_unrealized_gain=False,
-        decision_style="conservative",
     )
     assert result["basis"] == "；".join(result["reasons"])
     assert len(result["reasons"]) == 2

@@ -69,12 +69,16 @@ def test_local_ocr_settings_are_gone(monkeypatch):
         assert not hasattr(s, removed), removed
 
 
-def test_tactical_prompt_tuning_is_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("FUND_AI_TACTICAL_PROMPT_TUNING_ENABLED", raising=False)
-
+def test_retired_style_and_news_gate_settings_are_gone():
+    """2026-08 决策风格收敛：战术调参与当日要闻门禁的配置项一并退役。"""
     settings = Settings(_env_file=None)
 
-    assert settings.tactical_prompt_tuning_enabled is False
+    for removed in (
+        "tactical_prompt_tuning_enabled",
+        "tactical_prompt_tuning_lookback_reports",
+        "news_require_today_for_add",
+    ):
+        assert not hasattr(settings, removed), removed
 
 
 def test_deepseek_resilience_defaults_are_bounded(monkeypatch):
@@ -83,6 +87,13 @@ def test_deepseek_resilience_defaults_are_bounded(monkeypatch):
         "FUND_AI_DEEPSEEK_MAX_TOKENS_REPORT",
         "FUND_AI_DEEPSEEK_CONNECTION_RETRIES",
         "FUND_AI_DEEPSEEK_TIMEOUT_SECONDS",
+        "FUND_AI_EASTMONEY_FAIR_ACQUIRE_TIMEOUT_SECONDS",
+        "FUND_AI_EASTMONEY_LANE_FLOOR_ANALYSIS",
+        "FUND_AI_EASTMONEY_LANE_FLOOR_DISCOVERY",
+        "FUND_AI_DEEPSEEK_MAX_CONCURRENT_STREAMS",
+        "FUND_AI_DEEPSEEK_MAX_CONCURRENT_REQUESTS",
+        "FUND_AI_SSE_SHARED_IO_WORKERS",
+        "FUND_AI_SSE_DISCOVERY_CONTEXT_WORKERS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -100,8 +111,17 @@ def test_deepseek_resilience_defaults_are_bounded(monkeypatch):
     assert settings.eastmoney_call_deadline_seconds == 30
     assert settings.eastmoney_max_concurrency == 8
     assert settings.eastmoney_acquire_timeout_seconds == 5
+    assert settings.eastmoney_fair_acquire_timeout_seconds == 15
+    assert settings.eastmoney_lane_floor_analysis == 3
+    assert settings.eastmoney_lane_floor_discovery == 3
     assert settings.eastmoney_circuit_failure_threshold == 3
     assert settings.eastmoney_circuit_cooldown_seconds == 15
+    assert settings.deepseek_max_concurrent_streams == 1
+    assert settings.deepseek_max_concurrent_requests == 3
+    assert settings.deepseek_stream_acquire_timeout_seconds == 180
+    assert settings.deepseek_acquire_timeout_seconds == 45
+    assert settings.sse_shared_io_workers == 48
+    assert settings.sse_discovery_context_workers == 4
 
 
 def test_holdings_cache_defaults_are_safe_for_mysql_multiworker(monkeypatch):

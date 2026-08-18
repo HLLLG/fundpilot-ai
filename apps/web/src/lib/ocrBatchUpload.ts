@@ -1,6 +1,6 @@
 import type { FundCodeResolution, FundSearchItem, Holding, ParsedTransaction } from "@/lib/api";
 import { pickBestFundMatch, pickUniqueFundMatch } from "@/lib/fundNameMatch";
-import { recordedTransactionKey } from "@/lib/tradeConfirmDates";
+import { countSameDayKeys, sameDayTransactionKey } from "@/lib/tradeConfirmDates";
 
 /** 一次相册多选上限。超出后仍识别前 N 张，并提示用户继续上传剩余截图。 */
 export const MAX_OCR_IMAGES = 20;
@@ -131,25 +131,23 @@ export async function readImagesFromClipboard(): Promise<File[]> {
 }
 
 export function batchTransactionKey(tx: ParsedTransaction): string {
-  if (tx.fund_code) {
-    return recordedTransactionKey(tx);
-  }
-  return `${tx.direction}|${tx.fund_name}|${tx.amount_yuan}|${tx.trade_time}`;
+  return sameDayTransactionKey(tx);
 }
 
-/** 多张交易截图合并：同码同方向同时间同金额视为同一笔，避免翻页重复。 */
+/** 多张交易截图合并：按「同码同天同方向同金额」占用已有名额，避免翻页把同一笔再加一次。 */
 export function mergeParsedTransactions(
   existing: ParsedTransaction[],
   incoming: ParsedTransaction[],
 ): ParsedTransaction[] {
-  const seen = new Set(existing.map((tx) => batchTransactionKey(tx)));
+  const remaining = countSameDayKeys(existing);
   const merged = [...existing];
   for (const tx of incoming) {
     const key = batchTransactionKey(tx);
-    if (seen.has(key)) {
+    const available = remaining.get(key) ?? 0;
+    if (available > 0) {
+      remaining.set(key, available - 1);
       continue;
     }
-    seen.add(key);
     merged.push(tx);
   }
   return merged;

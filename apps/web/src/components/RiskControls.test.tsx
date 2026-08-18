@@ -5,9 +5,6 @@ import { afterEach, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { RiskControls } from "@/components/RiskControls";
 
-vi.mock("@/components/InvestmentPresetSelector", () => ({
-  InvestmentPresetSelector: () => <div data-testid="investment-preset-selector" />,
-}));
 vi.mock("@/components/RolePromptEditor", () => ({
   RolePromptEditor: () => <div data-testid="role-prompt-editor" />,
 }));
@@ -17,14 +14,12 @@ afterEach(() => cleanup());
 function props(): ComponentProps<typeof RiskControls> {
   return {
     profile: {
-      style: "长期持有",
-      horizon: "半年至一年",
       max_drawdown_percent: 8,
       concentration_limit_percent: 35,
       expected_investment_amount: 30_000,
       prefer_dca: true,
       avoid_chasing: true,
-      decision_style: "conservative",
+      hold_days_target: 7,
     },
     rolePrompt: "默认角色",
     isRolePromptCustom: false,
@@ -78,6 +73,21 @@ it("shows a clickable label for the DCA preference", () => {
   render(<RiskControls {...props()} readingModeKey={null} />);
   fireEvent.click(screen.getByRole("button", { name: "高级设置" }));
   expect(screen.getByRole("checkbox", { name: "偏好定投" })).toBeInTheDocument();
+});
+
+it("shows the current stream stage while generating a report", () => {
+  render(
+    <RiskControls
+      {...props()}
+      readingModeKey="report-1"
+      isBusy
+      busyLabel="正在审校报告…"
+    />,
+  );
+  expect(screen.getByTestId("report-generate-stage")).toHaveTextContent(
+    "正在审校报告…",
+  );
+  expect(screen.getByRole("button", { name: "正在审校报告…" })).toBeDisabled();
 });
 
 it("shows only actionable blocking details instead of a generic review count", () => {

@@ -138,21 +138,17 @@ export type Holding = {
   holding_days?: number | null;
 };
 
-export type DecisionStyle = "conservative" | "tactical" | "aggressive";
-export type InvestmentPreset = "conservative_hold" | "aggressive_swing";
 export type SwingMonitorScope = "holdings" | "full_market" | "both";
 export type SwingAlertType = "take_profit" | "dip_buy" | "pullback" | "sector_dip";
 
+// 2026-08 决策风格收敛：style/horizon 自由文本、decision_style 三选一与
+// investment_preset 预设已删除，只保留数据推不出的偏好数字。
 export type InvestorProfile = {
-  style: string;
-  horizon: string;
   max_drawdown_percent: number;
   concentration_limit_percent: number;
   expected_investment_amount?: number | null;
   prefer_dca: boolean;
   avoid_chasing: boolean;
-  decision_style?: DecisionStyle;
-  investment_preset?: InvestmentPreset;
   round_trip_fee_percent?: number;
   min_net_profit_percent?: number;
   hold_days_target?: number;
@@ -1249,7 +1245,6 @@ export type DiscoveryAllocationPlan = {
     | "advisory_initial_tranche"
     | string;
   policy?: {
-    decision_style?: string;
     prefer_dca?: boolean;
     nominal_current_tranche_ratio?: number;
     applied_current_tranche_ratio?: number;
@@ -1779,7 +1774,6 @@ export type OutcomeLegacyReference = {
   hit_rate_percent?: number | null;
   metrics?: OutcomeMetricSummary;
   by_horizon?: Record<string, OutcomeHorizonStats>;
-  by_style?: Record<string, RecommendationAccuracyBucket>;
   summary_lines?: string[];
 };
 
@@ -2888,7 +2882,6 @@ export type NewsPreviewResponse = {
 };
 
 export type RecommendationAccuracyBucket = {
-  decision_style: string;
   paired_count: number;
   report_count?: number;
   recommendation_count?: number;
@@ -2933,7 +2926,6 @@ export type RecommendationAccuracy = {
   by_horizon?: Record<string, OutcomeHorizonStats>;
   metric_contract_version?: string;
   metrics?: OutcomeMetricSummary;
-  by_style?: Record<string, RecommendationAccuracyBucket>;
   summary_lines?: string[];
   legacy_reference?: OutcomeLegacyReference;
 };
@@ -3367,7 +3359,7 @@ export type FundTransaction = {
   amount_yuan: number;
   trade_time: string;
   confirm_date: string;
-  status: "pending" | "confirmed" | "superseded" | "skipped";
+  status: "pending" | "confirmed" | "superseded" | "skipped" | "reversed";
   shares_delta: number | null;
   nav_on_confirm: number | null;
   fee_yuan?: number | null;
@@ -3390,6 +3382,12 @@ export type ApplyTransactionsResult = {
   inserted: number;
   skipped: number;
   pending: number;
+};
+
+export type DeletePortfolioTransactionResult = {
+  holdings: Holding[];
+  transactions: FundTransaction[];
+  deleted_id: string;
 };
 
 export async function transactionsOcr(file: File): Promise<TransactionsOcrResult> {
@@ -3421,6 +3419,32 @@ export async function applyTransactions(
   if (!response.ok) {
     throw new Error(await response.text());
   }
+  return response.json();
+}
+
+export async function deletePortfolioTransaction(
+  transactionId: string,
+): Promise<DeletePortfolioTransactionResult> {
+  invalidatePortfolioHoldingsRequest();
+  const response = await apiFetch(
+    `${API_BASE}/api/transactions/${encodeURIComponent(transactionId)}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    try {
+      const parsed = JSON.parse(text) as { detail?: string };
+      if (parsed.detail) {
+        throw new Error(parsed.detail);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message !== text) {
+        throw error;
+      }
+    }
+    throw new Error(text);
+  }
+  invalidatePortfolioHoldingsRequest();
   return response.json();
 }
 

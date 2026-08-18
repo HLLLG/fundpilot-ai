@@ -75,6 +75,7 @@ type PerformanceTrendPanelProps = {
   initialFundHistory?: FundNavHistory | null;
   initialFundHistoryCoverageDays?: number;
   chartHeight?: number;
+  refreshKey?: number;
 };
 
 export function PerformanceTrendPanel({
@@ -88,6 +89,7 @@ export function PerformanceTrendPanel({
   initialFundHistory,
   initialFundHistoryCoverageDays = 0,
   chartHeight = 220,
+  refreshKey = 0,
 }: PerformanceTrendPanelProps) {
   const [days, setDays] = useState(63);
   const [fundHistory, setFundHistory] = useState<FundNavHistory | null>(null);
@@ -119,7 +121,7 @@ export function PerformanceTrendPanel({
     return () => {
       cancelled = true;
     };
-  }, [enabled, fundCode, showTransactions]);
+  }, [enabled, fundCode, showTransactions, refreshKey]);
 
   const tradeMarkers = useMemo(
     () => buildTradeMarkers(transactions),

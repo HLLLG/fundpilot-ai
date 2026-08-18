@@ -185,7 +185,7 @@ export async function streamDiscovery(
     });
   } catch (error) {
     if (connectAbort.signal.aborted && !options?.signal?.aborted) {
-      throw new Error("连接 API 超时，将回退到后台扫描");
+      throw new Error("连接 API 超时，请再点一次重新扫描");
     }
     throw error;
   } finally {
@@ -271,7 +271,7 @@ export async function streamDiscovery(
         throw new Error("荐基流长时间没有收到进度更新");
       }
       if (timeoutAbort.signal.aborted && !sawEvent) {
-        throw new Error("等待流式首包超时，将回退到后台扫描");
+        throw new Error("等待流式首包超时，请再点一次重新扫描");
       }
       const { done, value } = await reader.read();
       if (idleTimedOut) {

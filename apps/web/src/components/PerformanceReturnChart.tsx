@@ -139,6 +139,9 @@ type PerformanceReturnChartProps = {
   height?: number;
   showBenchmark?: boolean;
   markers?: TradeMarker[];
+  formatValue?: (value: number | null | undefined) => string;
+  emptyLabel?: string;
+  seriesNoun?: string;
 };
 
 function PerformanceReturnChartView({
@@ -146,6 +149,9 @@ function PerformanceReturnChartView({
   height = 220,
   showBenchmark = true,
   markers = [],
+  formatValue = formatSignedPercent,
+  emptyLabel = "净值数据不足，无法绘制走势图",
+  seriesNoun = "基金收益",
 }: PerformanceReturnChartProps) {
   const gradientId = useId().replace(/:/g, "");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -277,7 +283,7 @@ function PerformanceReturnChartView({
         className="flex items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500"
         style={{ height }}
       >
-        净值数据不足，无法绘制走势图
+        {emptyLabel}
       </div>
     );
   }
@@ -287,11 +293,12 @@ function PerformanceReturnChartView({
   const selectedMarker =
     markerPoints.find((marker) => `${marker.date}|${marker.kind}` === selectedMarkerKey) ?? null;
   const latest = chart.coords[chart.coords.length - 1];
-  const chartLabel = `基金累计收益走势图，${chart.coords[0].date}至${latest.date}，最新基金收益${formatSignedPercent(latest.fundPercent)}${
+  const chartLabel = `累计${seriesNoun}走势图，${chart.coords[0].date}至${latest.date}，最新${seriesNoun}${formatValue(latest.fundPercent)}${
     showBenchmark && latest.benchPercent != null
-      ? `，对比基准${formatSignedPercent(latest.benchPercent)}`
+      ? `，对比基准${formatValue(latest.benchPercent)}`
       : ""
   }。聚焦后可用左右方向键逐日查看`;
+  const yTickWidth = (value: number) => Math.max(40, formatValue(value).length * 5.2 + 10);
 
   const moveKeyboardCursor = (key: string) => {
     if (key === "Home") {
@@ -386,7 +393,7 @@ function PerformanceReturnChartView({
         <path d={chart.fundPath} fill="none" stroke={FUND_COLOR} strokeWidth={1} />
 
         <text x={chart.plotLeft + 4} y={chart.plotTop + 8} fontSize={8} className="fill-slate-500 font-medium tabular-nums">
-          {formatSignedPercent(chart.max)}
+          {formatValue(chart.max)}
         </text>
         <text
           x={chart.plotLeft + 4}
@@ -394,7 +401,7 @@ function PerformanceReturnChartView({
           fontSize={8}
           className="fill-slate-500 font-medium tabular-nums"
         >
-          {formatSignedPercent(chart.min)}
+          {formatValue(chart.min)}
         </text>
 
         {isHovering && active ? (
@@ -424,7 +431,7 @@ function PerformanceReturnChartView({
             <rect
               x={chart.plotLeft + 1}
               y={active.fundY - 8}
-              width={40}
+              width={yTickWidth(active.fundPercent)}
               height={14}
               rx={2}
               fill="#ffffff"
@@ -437,7 +444,7 @@ function PerformanceReturnChartView({
               className="font-semibold tabular-nums"
               fill="#b58b45"
             >
-              {formatSignedPercent(active.fundPercent)}
+              {formatValue(active.fundPercent)}
             </text>
             <rect
               x={active.x - 17}
@@ -565,9 +572,9 @@ function PerformanceReturnChartView({
               .map((item) => `${TRADE_AMOUNT_FORMATTER.format(item.amount_yuan)}元 ${formatMarkerDateTime(item.trade_time)}`)
               .join("，")}`
           : active
-            ? `${active.date}，基金收益${formatSignedPercent(active.fundPercent)}${
+            ? `${active.date}，${seriesNoun}${formatValue(active.fundPercent)}${
                 active.benchPercent != null
-                  ? `，对比基准${formatSignedPercent(active.benchPercent)}`
+                  ? `，对比基准${formatValue(active.benchPercent)}`
                   : ""
               }`
             : ""}

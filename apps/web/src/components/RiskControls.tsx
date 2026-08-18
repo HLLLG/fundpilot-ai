@@ -2,11 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { ChevronDown, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles } from "lucide-react";
-import type { DecisionStyle, InvestorProfile, SwingMonitorScope } from "@/lib/api";
+import type { InvestorProfile, SwingMonitorScope } from "@/lib/api";
 import { takeProfitThresholdPercent } from "@/lib/investmentPresets";
-import { InvestmentPresetSelector } from "@/components/InvestmentPresetSelector";
 import { RolePromptEditor } from "@/components/RolePromptEditor";
-import { StatusPill } from "@/components/StatusPill";
 
 const EXPECTED_INVESTMENT_MIN = 10_000;
 const EXPECTED_INVESTMENT_MAX = 100_000;
@@ -28,13 +26,7 @@ function profileSummary(profile: InvestorProfile): string {
   const invest = resolveExpectedInvestmentAmount(profile);
   const investLabel =
     invest >= 10_000 ? `${Math.round(invest / 10_000)}万` : `${invest}`;
-  const style =
-    profile.decision_style === "tactical"
-      ? "战术"
-      : profile.decision_style === "aggressive"
-        ? "激进"
-        : "稳健";
-  return `${style} · 浮亏 ${profile.max_drawdown_percent}% · 集中度 ${profile.concentration_limit_percent}% · 计划投入 ${investLabel}`;
+  return `浮亏 ${profile.max_drawdown_percent}% · 集中度 ${profile.concentration_limit_percent}% · 止盈线 ${takeProfitThresholdPercent(profile)}% · 计划投入 ${investLabel}`;
 }
 
 type RiskControlsProps = {
@@ -54,6 +46,8 @@ type RiskControlsProps = {
    */
   errorMessage?: string | null;
   readingModeKey?: string | null;
+  /** 流式生成时的当前阶段，替代按钮上的笼统「正在生成...」。 */
+  busyLabel?: string | null;
 };
 
 export function RiskControls({
@@ -69,6 +63,7 @@ export function RiskControls({
   blockingMessage = null,
   errorMessage = null,
   readingModeKey = null,
+  busyLabel = null,
 }: RiskControlsProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [rolePromptOpen, setRolePromptOpen] = useState(false);
@@ -77,6 +72,8 @@ export function RiskControls({
   useEffect(() => {
     setSettingsOpen(readingModeKey == null);
   }, [readingModeKey]);
+
+  const busyButtonLabel = isBusy ? busyLabel?.trim() || "正在生成..." : null;
 
   if (readingModeKey && !settingsOpen) {
     return (
@@ -87,6 +84,11 @@ export function RiskControls({
             <p className="mt-1 text-xs text-[var(--muted)]">
               深度分析 · {profileSummary(profile)}
             </p>
+            {busyButtonLabel ? (
+              <p className="mt-1 text-xs font-semibold text-[var(--brand-strong)]" data-testid="report-generate-stage">
+                {busyButtonLabel}
+              </p>
+            ) : null}
             {hasBlockingErrors && blockingMessage ? (
               <p className="mt-1 text-xs font-semibold text-[var(--danger-fg)]" role="alert">
                 {blockingMessage}
@@ -111,7 +113,7 @@ export function RiskControls({
               disabled={isBusy || hasBlockingErrors}
               className="btn-primary min-h-11"
             >
-              {isBusy ? "正在生成..." : hasBlockingErrors ? "请先处理严重项" : "重新生成"}
+              {busyButtonLabel ?? (hasBlockingErrors ? "请先处理严重项" : "重新生成")}
             </button>
           </div>
         </div>
@@ -134,21 +136,6 @@ export function RiskControls({
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <StatusPill
-            tone={
-              profile.decision_style === "aggressive"
-                ? "red"
-                : profile.decision_style === "tactical"
-                  ? "amber"
-                  : "green"
-            }
-          >
-            {profile.decision_style === "aggressive"
-              ? "激进"
-              : profile.decision_style === "tactical"
-                ? "战术"
-                : "稳健"}
-          </StatusPill>
           {readingModeKey ? (
             <button
               type="button"
@@ -163,12 +150,7 @@ export function RiskControls({
       </div>
 
       <div className="p-4 sm:p-5">
-      <div>
-        <p className="mb-2 text-[11px] font-bold text-slate-500">投资风格预设</p>
-        <InvestmentPresetSelector profile={profile} onChange={onChange} compact />
-      </div>
-
-      <div className="mt-4 overflow-hidden rounded-xl border border-slate-100">
+      <div className="overflow-hidden rounded-xl border border-slate-100">
         <div className="flex items-center gap-2 px-2">
           <button
             type="button"
@@ -237,11 +219,8 @@ export function RiskControls({
         className="btn-primary mt-4 w-full !rounded-xl"
       >
         <SlidersHorizontal size={17} />
-        {isBusy
-          ? "正在生成..."
-          : hasBlockingErrors
-            ? "请先处理严重项"
-            : "生成今日操作建议"}
+        {busyButtonLabel ??
+          (hasBlockingErrors ? "请先处理严重项" : "生成今日操作建议")}
       </button>
 
       <div className="mt-3 overflow-hidden rounded-xl border border-slate-100">
@@ -261,22 +240,6 @@ export function RiskControls({
           </p>
         ) : (
           <div id="report-advanced-settings" className="grid gap-3 border-t border-slate-100 p-3 sm:grid-cols-2">
-            <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-              <span className="text-[11px] font-bold text-slate-500">投资风格</span>
-              <input
-                value={profile.style}
-                onChange={(event) => onChange({ ...profile, style: event.target.value })}
-                className="mt-1.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-semibold outline-none focus:border-[var(--brand)]"
-              />
-            </label>
-            <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-              <span className="text-[11px] font-bold text-slate-500">持有周期</span>
-              <input
-                value={profile.horizon}
-                onChange={(event) => onChange({ ...profile, horizon: event.target.value })}
-                className="mt-1.5 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-semibold outline-none focus:border-[var(--brand)]"
-              />
-            </label>
             <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3">
               <span className="text-[11px] font-bold text-slate-500">最大浮亏线</span>
               <div className="mt-2 flex items-center gap-2">
@@ -336,121 +299,109 @@ export function RiskControls({
               </div>
             </label>
             <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
-              <span className="text-[11px] font-bold text-slate-500">决策风格</span>
-              <div className="mt-2 grid grid-cols-3 gap-2" role="group" aria-label="决策风格">
-                {(
-                  [
-                    ["conservative", "稳健"],
-                    ["tactical", "战术短线"],
-                    ["aggressive", "激进波段"],
-                  ] as const satisfies Array<[DecisionStyle, string]>
-                ).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    aria-pressed={(profile.decision_style ?? "conservative") === value}
-                    onClick={() => onChange({ ...profile, decision_style: value })}
-                    className={`min-h-11 rounded-lg border px-2 py-2 text-xs font-bold transition ${
-                      (profile.decision_style ?? "conservative") === value
-                        ? value === "aggressive"
-                          ? "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]"
-                          : value === "tactical"
-                            ? "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-fg)]"
-                            : "border-[var(--success-border)] bg-[var(--success-bg)] text-[var(--success-fg)]"
-                        : "border-slate-200 bg-white text-slate-600"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
+              <span className="text-[11px] font-bold text-slate-500">
+                预计最短持有天数（用于赎回费档位测算）
+              </span>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  type="range"
+                  min={1}
+                  max={180}
+                  value={profile.hold_days_target ?? 7}
+                  onChange={(event) =>
+                    onChange({ ...profile, hold_days_target: Number(event.target.value) })
+                  }
+                  className="w-full accent-[var(--brand)]"
+                />
+                <span className="w-12 text-right text-xs font-black tabular-nums">
+                  {profile.hold_days_target ?? 7} 天
+                </span>
               </div>
             </label>
-            {(profile.decision_style === "aggressive" || profile.swing_alerts_enabled) ? (
-              <>
-                <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
-                  <span className="text-[11px] font-bold text-slate-500">
-                    买卖合计手续费（%）· 扣费止盈线约 {takeProfitThresholdPercent(profile)}%
-                  </span>
-                  <div className="mt-2 flex items-center gap-2">
-                    <input
-                      type="range"
-                      min={0.5}
-                      max={3}
-                      step={0.1}
-                      value={profile.round_trip_fee_percent ?? 1.5}
-                      onChange={(event) =>
-                        onChange({
-                          ...profile,
-                          round_trip_fee_percent: Number(event.target.value),
-                        })
-                      }
-                      className="w-full accent-rose-500"
-                    />
-                    <span className="w-12 text-right text-xs font-black tabular-nums">
-                      {(profile.round_trip_fee_percent ?? 1.5).toFixed(1)}%
-                    </span>
-                  </div>
-                </label>
-                <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
-                  <span className="text-[11px] font-bold text-slate-500">期望净赚（%）</span>
-                  <div className="mt-2 flex items-center gap-2">
-                    <input
-                      type="range"
-                      min={0.5}
-                      max={3}
-                      step={0.5}
-                      value={profile.min_net_profit_percent ?? 1.0}
-                      onChange={(event) =>
-                        onChange({
-                          ...profile,
-                          min_net_profit_percent: Number(event.target.value),
-                        })
-                      }
-                      className="w-full accent-rose-500"
-                    />
-                    <span className="w-12 text-right text-xs font-black tabular-nums">
-                      {(profile.min_net_profit_percent ?? 1.0).toFixed(1)}%
-                    </span>
-                  </div>
-                </label>
-                <label className="flex min-h-11 items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2.5 text-sm font-semibold text-slate-700 sm:col-span-2">
-                  盘中波段盯盘提醒
-                  <input
-                    type="checkbox"
-                    checked={profile.swing_alerts_enabled ?? profile.decision_style === "aggressive"}
-                    onChange={(event) =>
-                      onChange({ ...profile, swing_alerts_enabled: event.target.checked })
-                    }
-                    className="h-4 w-4 accent-rose-500"
-                  />
-                </label>
-                <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
-                  <span className="text-[11px] font-bold text-slate-500">盯盘范围</span>
-                  <div className="mt-2 grid grid-cols-3 gap-2" role="group" aria-label="盯盘范围">
-                    {(
-                      [
-                        ["holdings", "仅持仓"],
-                        ["full_market", "全市场"],
-                        ["both", "两者"],
-                      ] as const satisfies Array<[SwingMonitorScope, string]>
-                    ).map(([value, label]) => (
-                      <button
-                        key={value}
-                        type="button"
-                        aria-pressed={(profile.swing_monitor_scope ?? "both") === value}
-                        onClick={() => onChange({ ...profile, swing_monitor_scope: value })}
-                        className={`min-h-11 rounded-lg border px-2 py-2 text-xs font-bold transition ${
-                          (profile.swing_monitor_scope ?? "both") === value
-                            ? "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]"
-                            : "border-slate-200 bg-white text-slate-600"
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </label>
-              </>
+            <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
+              <span className="text-[11px] font-bold text-slate-500">
+                买卖合计手续费（%）· 扣费止盈线约 {takeProfitThresholdPercent(profile)}%
+              </span>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  type="range"
+                  min={0.5}
+                  max={3}
+                  step={0.1}
+                  value={profile.round_trip_fee_percent ?? 1.5}
+                  onChange={(event) =>
+                    onChange({
+                      ...profile,
+                      round_trip_fee_percent: Number(event.target.value),
+                    })
+                  }
+                  className="w-full accent-rose-500"
+                />
+                <span className="w-12 text-right text-xs font-black tabular-nums">
+                  {(profile.round_trip_fee_percent ?? 1.5).toFixed(1)}%
+                </span>
+              </div>
+            </label>
+            <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
+              <span className="text-[11px] font-bold text-slate-500">期望净赚（%）</span>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  type="range"
+                  min={0.5}
+                  max={3}
+                  step={0.5}
+                  value={profile.min_net_profit_percent ?? 1.0}
+                  onChange={(event) =>
+                    onChange({
+                      ...profile,
+                      min_net_profit_percent: Number(event.target.value),
+                    })
+                  }
+                  className="w-full accent-rose-500"
+                />
+                <span className="w-12 text-right text-xs font-black tabular-nums">
+                  {(profile.min_net_profit_percent ?? 1.0).toFixed(1)}%
+                </span>
+              </div>
+            </label>
+            <label className="flex min-h-11 items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2.5 text-sm font-semibold text-slate-700 sm:col-span-2">
+              盘中波段盯盘提醒
+              <input
+                type="checkbox"
+                checked={profile.swing_alerts_enabled ?? false}
+                onChange={(event) =>
+                  onChange({ ...profile, swing_alerts_enabled: event.target.checked })
+                }
+                className="h-4 w-4 accent-rose-500"
+              />
+            </label>
+            {profile.swing_alerts_enabled ? (
+              <label className="block rounded-xl border border-slate-100 bg-slate-50/50 p-3 sm:col-span-2">
+                <span className="text-[11px] font-bold text-slate-500">盯盘范围</span>
+                <div className="mt-2 grid grid-cols-3 gap-2" role="group" aria-label="盯盘范围">
+                  {(
+                    [
+                      ["holdings", "仅持仓"],
+                      ["full_market", "全市场"],
+                      ["both", "两者"],
+                    ] as const satisfies Array<[SwingMonitorScope, string]>
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={(profile.swing_monitor_scope ?? "both") === value}
+                      onClick={() => onChange({ ...profile, swing_monitor_scope: value })}
+                      className={`min-h-11 rounded-lg border px-2 py-2 text-xs font-bold transition ${
+                        (profile.swing_monitor_scope ?? "both") === value
+                          ? "border-[var(--danger-border)] bg-[var(--danger-bg)] text-[var(--danger-fg)]"
+                          : "border-slate-200 bg-white text-slate-600"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </label>
             ) : null}
             <label className="flex min-h-11 items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2.5 text-sm font-semibold text-slate-700">
               偏好定投

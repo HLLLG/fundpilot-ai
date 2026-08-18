@@ -24,6 +24,7 @@ from app.services.holding_amount_sync import sync_holding_amounts_from_shares
 from app.services.holding_estimates import (
     _amount_includes_today_return,
     compute_daily_profit_from_rate,
+    compute_portfolio_total_assets,
     enrich_holdings_estimates,
     sum_daily_profit,
 )
@@ -135,14 +136,7 @@ def build_portfolio_holdings_response(
     )
     summary = get_portfolio_summary()
     payload = summary.model_dump(mode="json") if summary else {}
-    total_from_holdings = round(
-        sum(
-            (holding.settled_holding_amount or holding.holding_amount)
-            + (holding.daily_profit or 0)
-            for holding in holdings
-        ),
-        2,
-    )
+    total_from_holdings = compute_portfolio_total_assets(holdings)
     if total_from_holdings:
         payload["total_assets"] = total_from_holdings
     if holdings:
@@ -312,11 +306,14 @@ def build_fast_snapshot_holdings_response() -> dict | None:
     from app.services.fund_nav_service import prime_official_nav_cache
 
     prime_official_nav_cache(fund_codes, trade_date, cache_only=True)
+    from app.services.transaction_ledger import compute_effective_shares_map
+
     holdings = sync_holding_amounts_from_shares(
         holdings,
         persist_profiles=False,
         allow_nav_fetch=False,
         estimate_quotes={},
+        shares_override=compute_effective_shares_map(fund_codes),
     )
     holdings = [_fast_overlay_cached_official_nav(holding, trade_date) for holding in holdings]
     from app.services.pending_holding_preview import overlay_pending_transaction_previews
@@ -334,25 +331,8 @@ def build_fast_snapshot_holdings_response() -> dict | None:
             sum(float(item.get("daily_profit") or 0) for item in serialized)
         )
     total_assets = snapshot.get("total_assets")
-    official_nav_settled = serialized and all(
-        item.get("daily_return_percent_source") == "official_nav" for item in serialized
-    )
     if total_assets is None:
-        if official_nav_settled:
-            total_assets = _fast_round2(
-                sum(
-                    float(item.get("settled_holding_amount") or item.get("holding_amount") or 0)
-                    for item in serialized
-                )
-            )
-        else:
-            total_assets = _fast_round2(
-                sum(
-                    float(item.get("settled_holding_amount") or item.get("holding_amount") or 0)
-                    + float(item.get("daily_profit") or 0)
-                    for item in serialized
-                )
-            )
+        total_assets = compute_portfolio_total_assets(holdings)
     summary = {
         "total_assets": total_assets,
         "daily_profit": daily_profit,
@@ -806,10 +786,7 @@ def _repair_snapshot_holdings_unlocked(holdings: list[Holding]) -> None:
             holding_count=len(holdings),
         )
     else:
-        total_assets = round(
-            sum((h.settled_holding_amount or h.holding_amount) + (h.daily_profit or 0) for h in holdings),
-            2,
-        )
+        total_assets = compute_portfolio_total_assets(holdings)
         summary = summary.model_copy(
             update={
                 "total_assets": total_assets,
@@ -943,13 +920,7 @@ def _remove_holding_from_portfolio_unlocked(
 
     remaining = without_test_holdings(remaining)
 
-    total_assets = round(
-        sum(
-            (item.settled_holding_amount or item.holding_amount) + (item.daily_profit or 0)
-            for item in remaining
-        ),
-        2,
-    )
+    total_assets = compute_portfolio_total_assets(remaining)
     daily_profit = sum_daily_profit(remaining) if remaining else 0.0
     daily_return_percent = None
     if remaining and total_assets > daily_profit > 0:

@@ -22,12 +22,30 @@ def _transaction(**overrides) -> FundTransaction:
     return FundTransaction(**payload)
 
 
-def test_display_sort_puts_in_progress_above_confirmed() -> None:
-    confirmed_newer = _transaction(
-        id="c-new",
-        trade_time="2026-08-14 14:56:15",
+def test_display_sort_orders_by_trade_time_desc() -> None:
+    gold_aug14 = _transaction(
+        id="gold-14",
+        trade_time="2026-08-14 14:59:57",
         status="confirmed",
-        created_at="2026-08-14T06:56:15+00:00",
+        created_at="2026-08-14T06:59:57+00:00",
+    )
+    rare_earth = _transaction(
+        id="re-14",
+        trade_time="2026-08-14 14:57:23",
+        status="confirmed",
+        created_at="2026-08-14T06:57:23+00:00",
+    )
+    gold_aug17 = _transaction(
+        id="gold-17",
+        trade_time="2026-08-17 14:59:52",
+        status="confirmed",
+        created_at="2026-08-17T06:59:52+00:00",
+    )
+    medical = _transaction(
+        id="med-17",
+        trade_time="2026-08-17 14:59:35",
+        status="confirmed",
+        created_at="2026-08-17T06:59:35+00:00",
     )
     in_progress_older = _transaction(
         id="p-old",
@@ -35,23 +53,17 @@ def test_display_sort_puts_in_progress_above_confirmed() -> None:
         in_progress=True,
         created_at="2026-08-14T06:44:52+00:00",
     )
-    confirmed_older = _transaction(
-        id="c-old",
-        trade_time="2026-08-13 14:55:30",
-        status="confirmed",
-        created_at="2026-08-13T06:55:30+00:00",
-    )
-    in_progress_newer = _transaction(
-        id="p-new",
-        trade_time="2026-08-14 14:57:23",
-        in_progress=True,
-        created_at="2026-08-14T06:57:23+00:00",
-    )
 
     ordered = transaction_ledger.sort_transactions_for_display(
-        [confirmed_newer, in_progress_older, confirmed_older, in_progress_newer]
+        [gold_aug14, rare_earth, gold_aug17, medical, in_progress_older]
     )
-    assert [tx.id for tx in ordered] == ["p-new", "p-old", "c-new", "c-old"]
+    assert [tx.id for tx in ordered] == [
+        "gold-17",
+        "med-17",
+        "gold-14",
+        "re-14",
+        "p-old",
+    ]
 
 
 def test_old_parsed_transaction_remains_backward_compatible() -> None:
@@ -85,6 +97,17 @@ def test_transaction_identity_normalizes_code_and_trade_time() -> None:
     assert compact.fund_code == explicit.fund_code == "001234"
     assert compact.trade_time == explicit.trade_time == "2026-07-01 14:30:00"
     assert transaction_ledger._dedup_key(compact) == transaction_ledger._dedup_key(explicit)
+    assert transaction_ledger._same_day_identity(
+        fund_code="021959",
+        direction="buy",
+        amount_yuan=1000,
+        trade_time="2026-08-17 14:55:30",
+    ) == transaction_ledger._same_day_identity(
+        fund_code="021959",
+        direction="buy",
+        amount_yuan=1000.0,
+        trade_time="2026-08-17 14:59:52",
+    )
 
 
 def test_invalid_confirm_date_is_rejected_before_any_transaction_write() -> None:
@@ -357,6 +380,89 @@ def test_effective_shares_only_fold_confirmed_transactions(monkeypatch) -> None:
     assert transaction_ledger.compute_effective_shares_map(["000001"]) == {
         "000001": 110.0
     }
+
+
+def test_effective_shares_include_confirmed_buys_when_profile_shares_missing(
+    monkeypatch,
+) -> None:
+    from datetime import date
+
+    profile = FundProfile(
+        fund_code="021959",
+        fund_name="南方黄金股C",
+        holding_shares=None,
+        shares_baseline_date="2026-08-13",
+        holding_amount=516.27,
+    )
+    transactions = [
+        _transaction(
+            id="first",
+            fund_code="021959",
+            status="confirmed",
+            confirm_date="2026-08-14",
+            shares_delta=500,
+        ),
+        _transaction(
+            id="addon",
+            fund_code="021959",
+            status="confirmed",
+            confirm_date="2026-08-17",
+            shares_delta=1000,
+        ),
+    ]
+    monkeypatch.setattr(transaction_ledger, "list_fund_profiles", lambda: [profile])
+    monkeypatch.setattr(
+        transaction_ledger, "list_fund_transactions", lambda: transactions
+    )
+    monkeypatch.setattr(transaction_ledger, "_current_china_date", lambda: date(2026, 8, 18))
+
+    assert transaction_ledger.compute_effective_shares_map(["021959"]) == {
+        "021959": 1500.0
+    }
+
+
+def test_effective_shares_omit_deferred_profile_without_confirmed_trades(
+    monkeypatch,
+) -> None:
+    profile = FundProfile(
+        fund_code="021959",
+        fund_name="南方黄金股C",
+        holding_shares=None,
+        holding_amount=516.27,
+    )
+    monkeypatch.setattr(transaction_ledger, "list_fund_profiles", lambda: [profile])
+    monkeypatch.setattr(transaction_ledger, "list_fund_transactions", lambda: [])
+
+    assert transaction_ledger.compute_effective_shares_map(["021959"]) == {}
+
+
+def test_seed_updates_existing_holding_after_confirmed_addon(monkeypatch) -> None:
+    profile = FundProfile(
+        fund_code="021959",
+        fund_name="南方黄金股C",
+        holding_amount=516.27,
+        holding_shares=500.0,
+        shares_baseline_date="2026-08-13",
+    )
+    saved: list[FundProfile] = []
+    monkeypatch.setattr(
+        transaction_ledger,
+        "compute_effective_shares_map",
+        lambda _codes, **_kwargs: {"021959": 1500.0},
+    )
+    monkeypatch.setattr(transaction_ledger, "peek_cached_unit_nav", lambda _code: 1.03254)
+    monkeypatch.setattr(
+        transaction_ledger,
+        "save_fund_profile",
+        lambda value: saved.append(value) or value,
+    )
+
+    by_code = {"021959": profile}
+    transaction_ledger._seed_amounts_for_new_positions(["021959"], by_code)
+
+    assert saved[0].holding_amount == 1548.81
+    assert saved[0].settled_holding_amount == 1548.81
+    assert by_code["021959"].holding_amount == 1548.81
 
 
 def test_effective_shares_respects_as_of_cutoff(monkeypatch) -> None:
@@ -948,6 +1054,198 @@ def test_canonical_request_reuses_legacy_formatted_dedup_record(monkeypatch) -> 
     assert len(list_fund_transactions()) == 1
 
 
+def test_same_day_amount_rematch_skips_transaction_analysis_rerun(monkeypatch) -> None:
+    from app.database import list_fund_transactions
+
+    monkeypatch.setattr(
+        transaction_ledger,
+        "_seed_amounts_for_new_positions",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
+        lambda **_kwargs: [],
+    )
+    first = ParsedTransaction(
+        direction="buy",
+        fund_name="南方黄金股C",
+        fund_code="021959",
+        amount_yuan=1000,
+        confirmed_shares=1000,
+        trade_time="2026-08-17 14:55:30",
+        confirm_date="2026-08-17",
+    )
+    assert transaction_ledger.apply_parsed_transactions([first])["inserted"] == 1
+
+    rerun = transaction_ledger.apply_parsed_transactions(
+        [
+            ParsedTransaction(
+                direction="buy",
+                fund_name="南方黄金股指数C",
+                fund_code="021959",
+                amount_yuan=1000,
+                trade_time="2026-08-17 14:59:52",
+                confirm_date="2026-08-17",
+            )
+        ]
+    )
+    assert rerun["inserted"] == 0
+    assert rerun["skipped"] == 1
+    stored = list_fund_transactions(fund_code="021959")
+    assert len(stored) == 1
+    assert stored[0].trade_time == "2026-08-17 14:55:30"
+
+
+def test_same_day_rematch_does_not_swallow_other_day_or_amount(monkeypatch) -> None:
+    from app.database import list_fund_transactions
+
+    monkeypatch.setattr(
+        transaction_ledger,
+        "_seed_amounts_for_new_positions",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
+        lambda **_kwargs: [],
+    )
+    first = ParsedTransaction(
+        direction="buy",
+        fund_name="南方黄金股指数C",
+        fund_code="021959",
+        amount_yuan=1000,
+        confirmed_shares=1000,
+        trade_time="2026-08-17 14:55:30",
+        confirm_date="2026-08-17",
+    )
+    assert transaction_ledger.apply_parsed_transactions([first])["inserted"] == 1
+
+    batch = transaction_ledger.apply_parsed_transactions(
+        [
+            ParsedTransaction(
+                direction="buy",
+                fund_name="南方黄金股指数C",
+                fund_code="021959",
+                amount_yuan=1000,
+                trade_time="2026-08-17 14:59:52",
+                confirm_date="2026-08-17",
+            ),
+            ParsedTransaction(
+                direction="buy",
+                fund_name="南方黄金股指数C",
+                fund_code="021959",
+                amount_yuan=500,
+                confirmed_shares=500,
+                trade_time="2026-08-14 14:59:57",
+                confirm_date="2026-08-14",
+            ),
+        ]
+    )
+    assert batch["inserted"] == 1
+    assert batch["skipped"] == 1
+    stored = list_fund_transactions(fund_code="021959")
+    assert {(tx.trade_time[:10], tx.amount_yuan) for tx in stored} == {
+        ("2026-08-17", 1000.0),
+        ("2026-08-14", 500.0),
+    }
+
+
+def test_two_same_day_same_amount_buys_are_kept(monkeypatch) -> None:
+    from app.database import list_fund_transactions
+
+    monkeypatch.setattr(
+        transaction_ledger,
+        "_seed_amounts_for_new_positions",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
+        lambda **_kwargs: [],
+    )
+    result = transaction_ledger.apply_parsed_transactions(
+        [
+            ParsedTransaction(
+                direction="buy",
+                fund_name="南方黄金股指数C",
+                fund_code="021959",
+                amount_yuan=500,
+                confirmed_shares=500,
+                trade_time="2026-08-17 14:50:00",
+                confirm_date="2026-08-17",
+            ),
+            ParsedTransaction(
+                direction="buy",
+                fund_name="南方黄金股指数C",
+                fund_code="021959",
+                amount_yuan=500,
+                confirmed_shares=500,
+                trade_time="2026-08-17 14:52:00",
+                confirm_date="2026-08-17",
+            ),
+        ]
+    )
+    assert result["inserted"] == 2
+    assert result["skipped"] == 0
+    stored = list_fund_transactions(fund_code="021959")
+    assert [tx.trade_time for tx in stored] == [
+        "2026-08-17 14:50:00",
+        "2026-08-17 14:52:00",
+    ]
+
+
+def test_same_day_occupancy_keeps_second_same_amount_buy(monkeypatch) -> None:
+    from app.database import list_fund_transactions
+
+    monkeypatch.setattr(
+        transaction_ledger,
+        "_seed_amounts_for_new_positions",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
+        lambda **_kwargs: [],
+    )
+    first = ParsedTransaction(
+        direction="buy",
+        fund_name="南方黄金股指数C",
+        fund_code="021959",
+        amount_yuan=500,
+        confirmed_shares=500,
+        trade_time="2026-08-17 14:50:00",
+        confirm_date="2026-08-17",
+    )
+    assert transaction_ledger.apply_parsed_transactions([first])["inserted"] == 1
+
+    batch = transaction_ledger.apply_parsed_transactions(
+        [
+            ParsedTransaction(
+                direction="buy",
+                fund_name="南方黄金股指数C",
+                fund_code="021959",
+                amount_yuan=500,
+                confirmed_shares=500,
+                trade_time="2026-08-17 14:50:00",
+                confirm_date="2026-08-17",
+            ),
+            ParsedTransaction(
+                direction="buy",
+                fund_name="南方黄金股指数C",
+                fund_code="021959",
+                amount_yuan=500,
+                confirmed_shares=500,
+                trade_time="2026-08-17 14:52:00",
+                confirm_date="2026-08-17",
+            ),
+        ]
+    )
+    assert batch["inserted"] == 1
+    assert batch["skipped"] == 1
+    stored = list_fund_transactions(fund_code="021959")
+    assert [tx.trade_time for tx in stored] == [
+        "2026-08-17 14:50:00",
+        "2026-08-17 14:52:00",
+    ]
+
+
 class _FakeProfileService:
     def __init__(self) -> None:
         self._profiles_cache = None
@@ -1007,6 +1305,61 @@ def test_additional_buy_does_not_redefer_existing_position() -> None:
     assert profiles["001234"] is existing
     assert profiles["001234"].profit_accrual_deferred_until is None
     assert profiles["001234"].first_purchase_date == "2026-06-08"
+
+
+def test_additional_buy_does_not_stamp_later_purchase_over_first_seen() -> None:
+    existing = FundProfile(
+        fund_code="001234",
+        fund_name="测试基金",
+        holding_amount=3500,
+        first_seen_date="2026-06-01",
+        first_purchase_date=None,
+    )
+    profiles = {"001234": existing}
+    item = ParsedTransaction(
+        direction="buy",
+        fund_name="测试基金",
+        fund_code="001234",
+        amount_yuan=200,
+        trade_time="2026-08-14 14:43:38",
+        confirm_date="2026-08-14",
+    )
+    transaction_ledger._ensure_buy_profile(
+        item,
+        confirm_date="2026-08-14",
+        profiles_by_code=profiles,
+        profile_service=_FakeProfileService(),
+    )
+    assert profiles["001234"] is existing
+    assert profiles["001234"].first_purchase_date is None
+    assert profiles["001234"].first_seen_date == "2026-06-01"
+
+
+def test_earlier_buy_backfills_purchase_when_only_first_seen_exists() -> None:
+    existing = FundProfile(
+        fund_code="001234",
+        fund_name="测试基金",
+        holding_amount=2000,
+        first_seen_date="2026-08-18",
+        first_purchase_date=None,
+    )
+    profiles = {"001234": existing}
+    item = ParsedTransaction(
+        direction="buy",
+        fund_name="测试基金",
+        fund_code="001234",
+        amount_yuan=1500,
+        trade_time="2026-06-08 14:47:18",
+        confirm_date="2026-06-08",
+    )
+    transaction_ledger._ensure_buy_profile(
+        item,
+        confirm_date="2026-06-08",
+        profiles_by_code=profiles,
+        profile_service=_FakeProfileService(),
+    )
+    assert profiles["001234"].first_purchase_date == "2026-06-08"
+    assert profiles["001234"].first_seen_date == "2026-08-18"
 
 
 def test_earlier_additional_buy_backfills_first_purchase_date() -> None:
@@ -1138,3 +1491,316 @@ def test_markers_only_compatibility_insert_skips_buy_profile(monkeypatch) -> Non
     assert result["inserted"] == 1
     assert inserted[0].status == "confirmed"
     assert inserted[0].shares_delta is None
+
+
+def _stub_delete_side_effects(monkeypatch, *, nav: float = 1.03254) -> None:
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
+        lambda **_kwargs: [],
+    )
+    monkeypatch.setattr(transaction_ledger, "peek_cached_unit_nav", lambda _code: nav)
+    monkeypatch.setattr(transaction_ledger, "get_unit_nav_on_date", lambda *_args: nav)
+    monkeypatch.setattr(
+        transaction_ledger,
+        "get_latest_unit_nav",
+        lambda *_args, **_kwargs: nav,
+    )
+
+
+def test_delete_confirmed_buy_removes_row_and_keeps_amount(monkeypatch) -> None:
+    from app.database import get_fund_profile_by_code, list_fund_transactions
+
+    _stub_delete_side_effects(monkeypatch)
+    monkeypatch.setattr(
+        transaction_ledger,
+        "_seed_amounts_for_new_positions",
+        lambda *_args, **_kwargs: None,
+    )
+
+    transaction_ledger.apply_parsed_transactions(
+        [
+            ParsedTransaction(
+                direction="buy",
+                fund_name="华夏人工智能ETF联接C",
+                fund_code="008586",
+                amount_yuan=25,
+                confirmed_shares=12.3456789,
+                fee_yuan=0.5,
+                trade_time="2026-07-01 14:30:00",
+            )
+        ]
+    )
+    stored = list_fund_transactions(fund_code="008586")[0]
+    before = get_fund_profile_by_code("008586")
+    assert before is not None
+
+    result = transaction_ledger.delete_parsed_transaction(stored.id)
+
+    assert result["deleted_id"] == stored.id
+    assert result["transactions"] == []
+    assert list_fund_transactions() == []
+    after = get_fund_profile_by_code("008586")
+    assert after is not None
+    assert after.holding_amount == before.holding_amount
+    assert after.holding_shares == 12.345679
+    events = list_portfolio_ledger_events(user_id=1, fund_code="008586")
+    assert "reversed" not in [row["status"] for row in events]
+
+
+def test_delete_confirmed_addon_keeps_existing_amount(monkeypatch) -> None:
+    from app.database import get_fund_profile_by_code, list_fund_transactions, save_fund_profile
+
+    _stub_delete_side_effects(monkeypatch, nav=1.03254)
+    save_fund_profile(
+        FundProfile(
+            fund_code="021959",
+            fund_name="南方黄金股C",
+            holding_amount=516.27,
+            holding_shares=500.0,
+            shares_baseline_date="2026-08-13",
+        )
+    )
+    transaction_ledger.apply_parsed_transactions(
+        [
+            ParsedTransaction(
+                direction="buy",
+                fund_name="南方黄金股指数C",
+                fund_code="021959",
+                amount_yuan=1000,
+                confirmed_shares=1000,
+                trade_time="2026-08-17 14:55:30",
+                confirm_date="2026-08-17",
+            )
+        ]
+    )
+    after_apply = get_fund_profile_by_code("021959")
+    assert after_apply is not None
+    assert after_apply.holding_amount == 1548.81
+
+    stored = list_fund_transactions(fund_code="021959")[0]
+    transaction_ledger.delete_parsed_transaction(stored.id)
+
+    restored = get_fund_profile_by_code("021959")
+    assert restored is not None
+    assert restored.holding_amount == 1548.81
+    assert restored.settled_holding_amount == 1548.81
+    assert restored.holding_shares == 1500.0
+    assert list_fund_transactions(fund_code="021959") == []
+
+
+def test_delete_pending_does_not_change_settled_amount(monkeypatch) -> None:
+    from app.database import get_fund_profile_by_code, list_fund_transactions, save_fund_profile
+
+    _stub_delete_side_effects(monkeypatch, nav=1.03254)
+    save_fund_profile(
+        FundProfile(
+            fund_code="021959",
+            fund_name="南方黄金股C",
+            holding_amount=516.27,
+            holding_shares=500.0,
+            shares_baseline_date="2026-08-13",
+        )
+    )
+    transaction_ledger.apply_parsed_transactions(
+        [
+            ParsedTransaction(
+                direction="buy",
+                fund_name="南方黄金股指数C",
+                fund_code="021959",
+                amount_yuan=1000,
+                confirmed_shares=1000,
+                trade_time="2026-08-18 14:55:30",
+                confirm_date="2099-01-05",
+                in_progress=True,
+            )
+        ]
+    )
+    stored = list_fund_transactions(fund_code="021959")[0]
+    assert stored.status == "pending"
+    before = get_fund_profile_by_code("021959")
+    assert before is not None
+    assert before.holding_amount == 516.27
+
+    transaction_ledger.delete_parsed_transaction(stored.id)
+
+    after = get_fund_profile_by_code("021959")
+    assert after is not None
+    assert after.holding_amount == 516.27
+    assert list_fund_transactions() == []
+    events = list_portfolio_ledger_events(user_id=1, fund_code="021959")
+    assert "reversed" not in [row["status"] for row in events]
+
+
+def test_delete_pending_does_not_zero_deferred_ocr_amount(monkeypatch) -> None:
+    from app.database import get_fund_profile_by_code, list_fund_transactions, save_fund_profile
+
+    _stub_delete_side_effects(monkeypatch)
+    save_fund_profile(
+        FundProfile(
+            fund_code="021959",
+            fund_name="南方黄金股C",
+            holding_amount=516.27,
+            holding_shares=None,
+        )
+    )
+    transaction_ledger.apply_parsed_transactions(
+        [
+            ParsedTransaction(
+                direction="buy",
+                fund_name="南方黄金股指数C",
+                fund_code="021959",
+                amount_yuan=1000,
+                trade_time="2026-08-18 14:55:30",
+                confirm_date="2099-01-05",
+                in_progress=True,
+            )
+        ]
+    )
+    stored = list_fund_transactions(fund_code="021959")[0]
+    transaction_ledger.delete_parsed_transaction(stored.id)
+
+    after = get_fund_profile_by_code("021959")
+    assert after is not None
+    assert after.holding_amount == 516.27
+
+
+def test_delete_last_buy_keeps_transaction_created_amount(monkeypatch) -> None:
+    from app.database import get_fund_profile_by_code, list_fund_transactions
+
+    _stub_delete_side_effects(monkeypatch, nav=2.0)
+    transaction_ledger.apply_parsed_transactions(
+        [
+            ParsedTransaction(
+                direction="buy",
+                fund_name="华夏人工智能ETF联接C",
+                fund_code="008586",
+                amount_yuan=25,
+                confirmed_shares=12.5,
+                trade_time="2026-07-01 14:30:00",
+            )
+        ]
+    )
+    created = get_fund_profile_by_code("008586")
+    assert created is not None
+    assert created.source == "alipay-transaction"
+    assert created.holding_amount == 25.0
+
+    stored = list_fund_transactions(fund_code="008586")[0]
+    transaction_ledger.delete_parsed_transaction(stored.id)
+
+    kept = get_fund_profile_by_code("008586")
+    assert kept is not None
+    assert kept.holding_amount == 25.0
+    assert kept.settled_holding_amount == 25.0
+    assert kept.holding_shares == 12.5
+
+
+def test_delete_missing_transaction_raises(monkeypatch) -> None:
+    _stub_delete_side_effects(monkeypatch)
+    try:
+        transaction_ledger.delete_parsed_transaction("missing-id")
+    except transaction_ledger.TransactionNotFound as exc:
+        assert "未找到" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("missing transaction must raise")
+
+
+def test_second_delete_does_not_change_amount(monkeypatch) -> None:
+    from app.database import get_fund_profile_by_code, list_fund_transactions
+
+    _stub_delete_side_effects(monkeypatch, nav=2.0)
+    transaction_ledger.apply_parsed_transactions(
+        [
+            ParsedTransaction(
+                direction="buy",
+                fund_name="华夏人工智能ETF联接C",
+                fund_code="008586",
+                amount_yuan=25,
+                confirmed_shares=12.5,
+                trade_time="2026-07-01 14:30:00",
+            )
+        ]
+    )
+    stored = list_fund_transactions(fund_code="008586")[0]
+    transaction_ledger.delete_parsed_transaction(stored.id)
+    kept = get_fund_profile_by_code("008586")
+    assert kept is not None
+    assert kept.holding_amount == 25.0
+
+    try:
+        transaction_ledger.delete_parsed_transaction(stored.id)
+    except transaction_ledger.TransactionNotFound:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("second delete must raise")
+    assert get_fund_profile_by_code("008586").holding_amount == 25.0
+
+
+def test_delete_allows_reimport_of_same_trade(monkeypatch) -> None:
+    from app.database import list_fund_transactions
+
+    _stub_delete_side_effects(monkeypatch)
+    item = ParsedTransaction(
+        direction="buy",
+        fund_name="华夏人工智能ETF联接C",
+        fund_code="008586",
+        amount_yuan=25,
+        confirmed_shares=12.5,
+        trade_time="2026-07-01 14:30:00",
+    )
+    first = transaction_ledger.apply_parsed_transactions([item])
+    assert first["inserted"] == 1
+    stored = list_fund_transactions()[0]
+    transaction_ledger.delete_parsed_transaction(stored.id)
+
+    retry = transaction_ledger.apply_parsed_transactions([item])
+    assert retry["inserted"] == 1
+    assert retry["skipped"] == 0
+    assert len(list_fund_transactions()) == 1
+
+
+def test_delete_chart_only_transaction_keeps_profile_amount(monkeypatch) -> None:
+    from app.database import get_fund_profile_by_code, list_fund_transactions, save_fund_profile
+
+    _stub_delete_side_effects(monkeypatch, nav=1.03254)
+    save_fund_profile(
+        FundProfile(
+            fund_code="000001",
+            fund_name="测试基金",
+            holding_amount=100,
+            holding_shares=100,
+            shares_baseline_date="2026-06-30",
+        )
+    )
+    transaction_ledger.apply_parsed_transactions(
+        [
+            ParsedTransaction(
+                direction="buy",
+                fund_name="测试基金",
+                fund_code="000001",
+                amount_yuan=100,
+                trade_time="2026-07-01 14:30:00",
+            )
+        ],
+        apply_position=False,
+    )
+    stored = list_fund_transactions()[0]
+    assert stored.shares_delta is None
+
+    sync_calls = {"count": 0}
+
+    def fake_sync(**_kwargs):
+        sync_calls["count"] += 1
+        return []
+
+    monkeypatch.setattr(
+        "app.services.portfolio_holdings_service.sync_portfolio_from_profiles",
+        fake_sync,
+    )
+    transaction_ledger.delete_parsed_transaction(stored.id)
+
+    after = get_fund_profile_by_code("000001")
+    assert after is not None
+    assert after.holding_amount == 100
+    assert list_fund_transactions() == []
+    assert sync_calls["count"] == 0

@@ -1110,6 +1110,43 @@ def _get_pending_fund_transaction_on_connection(
     return _fund_transaction_from_row(row) if row is not None else None
 
 
+def _get_fund_transaction_on_connection(
+    connection: Any,
+    *,
+    user_id: int,
+    id: str,
+) -> FundTransaction | None:
+    lock = " FOR UPDATE" if str(getattr(connection, "dialect", "sqlite")) == "mysql" else ""
+    row = connection.execute(
+        "SELECT * FROM fund_transactions WHERE userId = ? AND id = ?" + lock,
+        (user_id, id),
+    ).fetchone()
+    return _fund_transaction_from_row(row) if row is not None else None
+
+
+def get_fund_transaction(id: str) -> FundTransaction | None:
+    user_id = _uid()
+    with _connect() as connection:
+        return _get_fund_transaction_on_connection(
+            connection,
+            user_id=user_id,
+            id=id,
+        )
+
+
+def _delete_fund_transaction_on_connection(
+    connection: Any,
+    *,
+    user_id: int,
+    id: str,
+) -> int:
+    cursor = connection.execute(
+        "DELETE FROM fund_transactions WHERE userId = ? AND id = ?",
+        (user_id, id),
+    )
+    return int(getattr(cursor, "rowcount", 0) or 0)
+
+
 def list_fund_transactions(fund_code: str | None = None) -> list[FundTransaction]:
     user_id = _uid()
     with _connect() as connection:
@@ -1219,9 +1256,10 @@ def _update_fund_transaction_on_connection(
 def delete_fund_transaction(id: str) -> None:
     user_id = _uid()
     with _connect() as connection:
-        connection.execute(
-            "DELETE FROM fund_transactions WHERE userId = ? AND id = ?",
-            (user_id, id),
+        _delete_fund_transaction_on_connection(
+            connection,
+            user_id=user_id,
+            id=id,
         )
         connection.commit()
 

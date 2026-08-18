@@ -20,12 +20,10 @@ RISK_AWARE_MODE = "qualified_risk_context"
 QUALIFIED_RISK_ONLY_MODE = "qualified_equal_risk_only"
 BLOCKED_MODE = "blocked_fail_closed"
 
-_STYLE_TRANCHE_RATIOS: dict[str, tuple[float, float]] = {
-    # (prefer_dca=True, prefer_dca=False)
-    "conservative": (0.25, 0.35),
-    "tactical": (0.30, 0.40),
-    "aggressive": (0.35, 0.50),
-}
+# 单批动用预算比例（2026-08 决策风格收敛后不再按风格分档）：信号强度已由概率分段/
+# 趋势档位/入场成熟度 cap 决定单方向投多少，这里只管预算节奏。偏定投时留更多子弹。
+_TRANCHE_RATIO_PREFER_DCA = 0.25
+_TRANCHE_RATIO_DEFAULT = 0.35
 
 
 @dataclass(frozen=True)
@@ -61,7 +59,6 @@ def allocate_discovery_candidates(
     concentration_denominator_yuan: float | int | None,
     concentration_limit_percent: float | int | None,
     prefer_dca: bool,
-    decision_style: str,
     risk_context: Mapping[str, Any] | None = None,
     priority_inputs: Mapping[str, Mapping[str, Any]] | None = None,
     current_tranche_ratio_cap: float | int | None = None,
@@ -115,8 +112,6 @@ def allocate_discovery_candidates(
         input_errors.append("concentration_limit_invalid")
     if not isinstance(prefer_dca, bool):
         input_errors.append("prefer_dca_invalid")
-    if decision_style not in _STYLE_TRANCHE_RATIOS:
-        input_errors.append("decision_style_invalid")
     if step is None:
         input_errors.append("amount_step_invalid")
     if current_tranche_ratio_cap is not None and (
@@ -205,7 +200,7 @@ def allocate_discovery_candidates(
     allocation_mode = (
         RISK_AWARE_MODE if qualified_tilt_available else QUALIFIED_RISK_ONLY_MODE
     )
-    nominal_ratio = _STYLE_TRANCHE_RATIOS[decision_style][0 if prefer_dca else 1]
+    nominal_ratio = _TRANCHE_RATIO_PREFER_DCA if prefer_dca else _TRANCHE_RATIO_DEFAULT
     tranche_ratio = (
         min(nominal_ratio, tranche_ratio_cap)
         if tranche_ratio_cap is not None
@@ -370,7 +365,6 @@ def allocate_discovery_candidates(
         "allocation_mode": allocation_mode,
         "amount_semantics": amount_semantics,
         "policy": {
-            "decision_style": decision_style,
             "prefer_dca": prefer_dca,
             "nominal_current_tranche_ratio": nominal_ratio,
             "applied_current_tranche_ratio": tranche_ratio,

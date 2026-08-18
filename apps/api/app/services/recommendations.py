@@ -196,41 +196,48 @@ def build_offline_fund_recommendation(
     *,
     nav_trend: dict | None = None,
 ) -> FundRecommendation:
-    if profile.decision_style == "tactical":
-        from app.services.tactical_recommendations import (
-            build_tactical_offline_fund_recommendation,
-        )
+    """唯一的离线规则构建器（2026-08 起不再按决策风格分流）。
 
-        return build_tactical_offline_fund_recommendation(
-            holding,
-            weight_percent,
-            weight_denominator,
-            profile,
-            market_news,
-            nav_trend=nav_trend,
-        )
-
-    if profile.decision_style == "aggressive":
-        from app.services.aggressive_swing_recommendations import (
-            build_aggressive_swing_offline_fund_recommendation,
-        )
-
-        return build_aggressive_swing_offline_fund_recommendation(
-            holding,
-            weight_percent,
-            weight_denominator,
-            profile,
-            market_news,
-            nav_trend=nav_trend,
-        )
+    原战术/激进两个专用构建器已删除；其中真正数据驱动的一条规则并入这里：
+    浮盈已覆盖扣费止盈线 **且** 出现回吐信号（隔日回吐/盘中冲高回落）时给出止盈
+    评估——单独越线不触发，避免把长线赢家在阈值处机械卖飞。
+    """
+    from app.services.holding_estimates import compute_estimated_holding_return_percent
+    from app.services.investment_presets import take_profit_threshold_percent
+    from app.services.sector_intraday_summary import summarize_sector_intraday_for_holding
+    from app.services.sector_momentum import build_sector_momentum_context
 
     action = "观察"
     points: list[str] = []
+
+    take_profit_line = take_profit_threshold_percent(profile)
+    est_holding_return = compute_estimated_holding_return_percent(holding)
+    momentum = build_sector_momentum_context(holding, nav_trend)
+    # 只读缓存：离线构建器在守卫/兜底路径逐持仓执行，缓存 miss 时绝不打行情网络
+    # （facts 阶段已预热同一缓存；miss 即当作无分时信号，不触发止盈判定）。
+    intraday = summarize_sector_intraday_for_holding(holding, cache_only=True)
+    reversal_signal = bool(
+        (momentum and momentum.get("pattern_label") == "two_day_reversal_down")
+        or (intraday and intraday.get("pattern_label") == "intraday_pullback")
+    )
 
     if weight_percent > profile.concentration_limit_percent:
         action = "减仓评估"
         points.append(
             f"仓位 {weight_percent:.1f}% 超过集中度上限 {profile.concentration_limit_percent:.0f}%，优先降仓。"
+        )
+    elif (
+        est_holding_return is not None
+        and est_holding_return >= take_profit_line
+        and reversal_signal
+    ):
+        action = "减仓评估"
+        reversal_label = (momentum or {}).get("pattern_label") or (intraday or {}).get(
+            "pattern_label"
+        )
+        points.append(
+            f"持有收益约 {est_holding_return:+.2f}% 已覆盖扣费止盈线 {take_profit_line:.1f}%"
+            f"（手续费+净赚目标），且出现回吐信号（{reversal_label}），建议评估分批止盈。"
         )
     elif holding.sector_return_percent is not None and holding.sector_return_percent > 5:
         action = "暂停追涨"

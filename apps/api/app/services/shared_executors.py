@@ -106,7 +106,7 @@ def get_shared_io_executor() -> ThreadPoolExecutor:
 #: `held={}`，随后 6 只持仓被数据门禁全部降为观察。
 #:
 #: 池子是**进程级单例**，所以还要留出并发报告的余量：这些线程绝大部分时间阻塞在
-#: `shared_io`（32 workers）上等 provider，线程本身几乎不占资源，宁可宽一点。
+#: `shared_io`（默认 48 workers）上等 provider，线程本身几乎不占资源，宁可宽一点。
 ANALYSIS_ENHANCEMENT_TASK_COUNT = 6
 _ANALYSIS_CONTEXT_CONCURRENT_REPORTS = 2
 

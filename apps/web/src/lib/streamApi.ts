@@ -71,6 +71,7 @@ type StreamEvent =
   | { type: "done"; report_id: string; report: Report }
   | { type: "error"; message: string };
 
+const CONNECT_TIMEOUT_MS = 30_000;
 const FIRST_EVENT_TIMEOUT_MS = 90_000;
 // The API's model request timeout is 300s. A healthy analysis stream emits a
 // stage heartbeat every 12s, so this is only a broken-stream safety net and
@@ -120,6 +121,21 @@ function analysisPayload(
     analysis_mode: "deep",
     system_role_prompt: systemRolePrompt?.trim() || null,
   };
+}
+
+function mergeAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSignal {
+  const controller = new AbortController();
+  for (const signal of signals) {
+    if (!signal) {
+      continue;
+    }
+    if (signal.aborted) {
+      controller.abort();
+      break;
+    }
+    signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+  return controller.signal;
 }
 
 function parseSseLine(line: string): StreamEvent | null {
@@ -176,23 +192,37 @@ export async function streamAnalysis(
     idleTimeoutMs?: number;
   },
 ): Promise<void> {
-  const response = await apiFetch(`${API_BASE}/api/analyze/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(
-      analysisPayload(
-        holdings,
-        profile,
-        options?.ocrText,
-        options?.systemRolePrompt,
+  const connectAbort = new AbortController();
+  const connectTimer = window.setTimeout(() => connectAbort.abort(), CONNECT_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await apiFetch(`${API_BASE}/api/analyze/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        analysisPayload(
+          holdings,
+          profile,
+          options?.ocrText,
+          options?.systemRolePrompt,
+        ),
       ),
-    ),
-    signal: options?.signal,
-    timeoutMs: 0,
-  });
+      signal: mergeAbortSignals(options?.signal, connectAbort.signal),
+      timeoutMs: 0,
+    });
+  } catch (error) {
+    if (connectAbort.signal.aborted && !options?.signal?.aborted) {
+      throw new Error("连接 API 超时，请再点一次生成日报");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(connectTimer);
+  }
   if (!response.ok || !response.body) {
     throw new Error(await response.text());
   }
+
+  events.onStage?.("connected", "已连接服务端，正在启动分析…");
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -240,14 +270,14 @@ export async function streamAnalysis(
         throw new DOMException("The operation was aborted.", "AbortError");
       }
       if (idleTimedOut) {
-        throw new Error("流式生成长时间没有进展 (long time without progress)，已切换到后台任务。");
+        throw new Error("流式生成长时间没有进展 (long time without progress)，请再点一次生成日报。");
       }
       if (timeoutAbort.signal.aborted && !sawEvent) {
-        throw new Error("流式连接超时，将回退到异步分析");
+        throw new Error("流式连接超时，请再点一次生成日报");
       }
       const { done, value } = await reader.read();
       if (idleTimedOut) {
-        throw new Error("流式生成长时间没有进展 (long time without progress)，已切换到后台任务。");
+        throw new Error("流式生成长时间没有进展 (long time without progress)，请再点一次生成日报。");
       }
       if (done) {
         break;

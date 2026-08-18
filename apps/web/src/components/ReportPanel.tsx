@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { InlineNotice } from "@/components/InlineNotice";
 import { ReportCaveatsNotice } from "@/components/ReportCaveatsNotice";
 import { ReportChatDrawer } from "@/components/ReportChatDrawer";
 import { ReportDetailsHub } from "@/components/ReportDetailsHub";
@@ -39,16 +40,6 @@ export function ReportPanel({
 }: ReportPanelProps) {
   const [isExporting, setIsExporting] = useState(false);
 
-  if (streaming && !report) {
-    return (
-      <ReportSkeleton
-        streaming={streaming}
-        onCancel={onCancelStream}
-        onFollowup={onStreamFollowup}
-      />
-    );
-  }
-
   const handleExportMarkdown = async () => {
     if (!report) return;
 
@@ -66,6 +57,16 @@ export function ReportPanel({
       setIsExporting(false);
     }
   };
+
+  if (streaming && !report) {
+    return (
+      <ReportSkeleton
+        streaming={streaming}
+        onCancel={onCancelStream}
+        onFollowup={onStreamFollowup}
+      />
+    );
+  }
 
   if (!report) {
     return (
@@ -103,6 +104,19 @@ export function ReportPanel({
 
   return (
     <div className="report-workspace min-w-0" data-testid="report-workspace">
+      {streaming ? (
+        <div className="mb-4 space-y-3">
+          <ReportSkeleton
+            streaming={streaming}
+            onCancel={onCancelStream}
+            onFollowup={onStreamFollowup}
+          />
+          <InlineNotice
+            tone="info"
+            message="新日报正在生成，下方继续显示上次报告，完成后会自动替换。"
+          />
+        </div>
+      ) : null}
       <section
         className="report-shell min-w-0 space-y-4 animate-fade-up"
         data-testid="report-ready"

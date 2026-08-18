@@ -36,20 +36,19 @@ import {
   applyPortfolioHoldings,
   applyTransactions,
   deletePortfolioHolding,
+  deletePortfolioTransaction,
   parseOcrUpload,
   searchFunds,
   transactionsOcr,
   saveAnalysisPromptRemote,
   saveInvestorProfileRemote,
   settleOfficialNav,
-  startAnalyzeJob,
   type PortfolioSummary,
 } from "@/lib/api";
 import {
   streamAnalysis,
   submitStreamFollowup,
   appendStreamTokenBuffer,
-  markStreamingReportBackgroundFallback,
   streamTimestamp,
   type FundRecommendationPartial,
   type StreamingReportState,
@@ -58,7 +57,7 @@ import type { StreamingDiscoveryState } from "@/lib/discoveryStreamApi";
 import { useAuth } from "@/components/AuthProvider";
 import { notifyDesktop, ensureNotificationPermission } from "@/lib/notifications";
 import { BRAND } from "@/lib/brand";
-import { formatThinkingNote, stageShortLabel } from "@/lib/streamingStageMeta";
+import { formatThinkingNote } from "@/lib/streamingStageMeta";
 import {
   loadAnalysisPrompt,
   loadDashboardTab,
@@ -233,17 +232,14 @@ const AlipayOcrConfirmModal = dynamic(
   { loading: () => <DeferredInteractionLoading label="截图持仓确认" /> },
 );
 const defaultProfile: InvestorProfile = {
-  style: "稳健",
-  horizon: "半年到一年",
   max_drawdown_percent: 8,
   concentration_limit_percent: 35,
   expected_investment_amount: 30_000,
-  prefer_dca: true,
-  avoid_chasing: true,
-  decision_style: "conservative",
-  investment_preset: "conservative_hold",
+  prefer_dca: false,
+  avoid_chasing: false,
   round_trip_fee_percent: 1.5,
   min_net_profit_percent: 1.0,
+  hold_days_target: 7,
   swing_alerts_enabled: false,
   swing_monitor_scope: "both",
 };
@@ -1011,168 +1007,167 @@ export function Dashboard() {
     const systemRolePrompt = activeAnalysisRolePrompt(analysisPrompt);
     setIsSubmitting(true);
     setAnalyzeError(null);
-    try {
-      try {
-        void ensureNotificationPermission();
-        userLeftReportDuringStreamRef.current = false;
-        const abortController = new AbortController();
-        streamAbortRef.current = abortController;
-        latestAnalysisReportIdRef.current = orderedReports[0]?.id ?? null;
-        const startedAt = streamTimestamp();
-        lastAnalysisStageRef.current = {
-          stage: "fund_data",
-          label: "正在连接流式分析...",
-          at: startedAt,
-          startedAt,
-        };
-        setStreamingReport({
-          stage: "fund_data",
-          stageLabel: "正在连接流式分析…",
-          fundCodes: targetHoldings.map((holding) => holding.fund_code),
-          fundNames: targetHoldings.map((holding) => holding.fund_name),
-          partialByCode: {},
-          stageLog: [],
-          thinkingNotes: [],
-          startedAt,
-          tokenBuffer: "",
-          followupNotes: [],
-        });
-        setActiveTab("report");
-        requestAnimationFrame(() => {
-          reportSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
 
-        await streamAnalysis(
-          targetHoldings,
-          profile,
-          {
-            onSession: (sessionId) =>
-              setStreamingReport((current) =>
-                current ? { ...current, sessionId } : current,
-              ),
-            onStage: (stage, label) =>
-              setStreamingReport((current) => {
-                if (!current) {
-                  return current;
-                }
-                const at = streamTimestamp();
-                lastAnalysisStageRef.current = {
-                  stage,
-                  label,
-                  at,
-                  startedAt: current.startedAt,
-                };
-                const entry = { stage, label, at };
-                const stageLog = [
-                  ...current.stageLog.filter((item) => item.stage !== stage),
-                  entry,
-                ];
-                return { ...current, stage, stageLabel: label, stageLog };
-              }),
-            onSkeleton: (fundCodes, fundNames) =>
-              setStreamingReport((current) =>
-                current ? { ...current, fundCodes, fundNames } : current,
-              ),
-            onToken: (content) =>
-              setStreamingReport((current) =>
-                current
-                  ? {
-                      ...current,
-                      tokenBuffer: appendStreamTokenBuffer(current.tokenBuffer, content),
-                    }
-                  : current,
-              ),
-            onPartial: (field, value) => {
-              setStreamingReport((current) => {
-                if (!current) {
-                  return current;
-                }
-                const note = formatThinkingNote(field, value);
-                const thinkingNotes =
-                  note && !current.thinkingNotes.includes(note)
-                    ? [...current.thinkingNotes, note]
-                    : current.thinkingNotes;
-                if (field === "title") {
-                  return { ...current, title: String(value), thinkingNotes };
-                }
-                if (field === "summary") {
-                  return { ...current, summary: String(value), thinkingNotes };
-                }
-                if (field === "caveats" && Array.isArray(value)) {
-                  return {
-                    ...current,
-                    caveats: value.map(String),
-                    thinkingNotes,
-                  };
-                }
-                if (field === "fund_recommendation" && value && typeof value === "object") {
-                  const rec = value as FundRecommendationPartial;
-                  const code = rec.fund_code;
-                  if (!code) {
+    const beginStreamUi = () => {
+      const abortController = new AbortController();
+      streamAbortRef.current = abortController;
+      userLeftReportDuringStreamRef.current = false;
+      latestAnalysisReportIdRef.current = orderedReports[0]?.id ?? null;
+      const startedAt = streamTimestamp();
+      lastAnalysisStageRef.current = {
+        stage: "fund_data",
+        label: "正在连接流式分析...",
+        at: startedAt,
+        startedAt,
+      };
+      setStreamingReport({
+        stage: "fund_data",
+        stageLabel: "正在连接流式分析…",
+        fundCodes: targetHoldings.map((holding) => holding.fund_code),
+        fundNames: targetHoldings.map((holding) => holding.fund_name),
+        partialByCode: {},
+        stageLog: [],
+        thinkingNotes: [],
+        startedAt,
+        tokenBuffer: "",
+        followupNotes: [],
+      });
+      setActiveTab("report");
+      requestAnimationFrame(() => {
+        reportSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      return abortController;
+    };
+
+    try {
+      void ensureNotificationPermission();
+      let lastError: unknown = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0) {
+          await new Promise((resolve) => window.setTimeout(resolve, 300));
+        }
+        const abortController = beginStreamUi();
+        try {
+          await streamAnalysis(
+            targetHoldings,
+            profile,
+            {
+              onSession: (sessionId) =>
+                setStreamingReport((current) =>
+                  current ? { ...current, sessionId } : current,
+                ),
+              onStage: (stage, label) =>
+                setStreamingReport((current) => {
+                  if (!current) {
                     return current;
                   }
-                  return {
-                    ...current,
-                    thinkingNotes,
-                    partialByCode: {
-                      ...current.partialByCode,
-                      [code]: { ...current.partialByCode[code], ...rec },
-                    },
+                  const at = streamTimestamp();
+                  lastAnalysisStageRef.current = {
+                    stage,
+                    label,
+                    at,
+                    startedAt: current.startedAt,
                   };
-                }
-                return current;
-              });
+                  const entry = { stage, label, at };
+                  const stageLog = [
+                    ...current.stageLog.filter((item) => item.stage !== stage),
+                    entry,
+                  ];
+                  return { ...current, stage, stageLabel: label, stageLog };
+                }),
+              onSkeleton: (fundCodes, fundNames) =>
+                setStreamingReport((current) =>
+                  current ? { ...current, fundCodes, fundNames } : current,
+                ),
+              onToken: (content) =>
+                setStreamingReport((current) =>
+                  current
+                    ? {
+                        ...current,
+                        tokenBuffer: appendStreamTokenBuffer(current.tokenBuffer, content),
+                      }
+                    : current,
+                ),
+              onPartial: (field, value) => {
+                setStreamingReport((current) => {
+                  if (!current) {
+                    return current;
+                  }
+                  const note = formatThinkingNote(field, value);
+                  const thinkingNotes =
+                    note && !current.thinkingNotes.includes(note)
+                      ? [...current.thinkingNotes, note]
+                      : current.thinkingNotes;
+                  if (field === "title") {
+                    return { ...current, title: String(value), thinkingNotes };
+                  }
+                  if (field === "summary") {
+                    return { ...current, summary: String(value), thinkingNotes };
+                  }
+                  if (field === "caveats" && Array.isArray(value)) {
+                    return {
+                      ...current,
+                      caveats: value.map(String),
+                      thinkingNotes,
+                    };
+                  }
+                  if (field === "fund_recommendation" && value && typeof value === "object") {
+                    const rec = value as FundRecommendationPartial;
+                    const code = rec.fund_code;
+                    if (!code) {
+                      return current;
+                    }
+                    return {
+                      ...current,
+                      thinkingNotes,
+                      partialByCode: {
+                        ...current.partialByCode,
+                        [code]: { ...current.partialByCode[code], ...rec },
+                      },
+                    };
+                  }
+                  return current;
+                });
+              },
+              onDone: (completedReport) => {
+                const stayOnCurrentTab = userLeftReportDuringStreamRef.current;
+                userLeftReportDuringStreamRef.current = false;
+                streamAbortRef.current = null;
+                setStreamingReport(null);
+                void handleJobComplete(completedReport, {
+                  navigateToReport: !stayOnCurrentTab,
+                });
+              },
+              onError: (message) => {
+                throw new Error(message);
+              },
             },
-            onDone: (completedReport) => {
-              const stayOnCurrentTab = userLeftReportDuringStreamRef.current;
-              userLeftReportDuringStreamRef.current = false;
-              streamAbortRef.current = null;
-              setStreamingReport(null);
-              void handleJobComplete(completedReport, {
-                navigateToReport: !stayOnCurrentTab,
-              });
+            {
+              systemRolePrompt,
+              signal: abortController.signal,
             },
-            onError: (message) => {
-              throw new Error(message);
-            },
-          },
-          {
-            systemRolePrompt,
-            signal: abortController.signal,
-          },
-        );
-        return;
-      } catch (streamError) {
-        streamAbortRef.current = null;
-        userLeftReportDuringStreamRef.current = false;
-        if (streamError instanceof DOMException && streamError.name === "AbortError") {
-          setStreamingReport(null);
-          lastAnalysisStageRef.current = null;
+          );
           return;
+        } catch (streamError) {
+          streamAbortRef.current = null;
+          userLeftReportDuringStreamRef.current = false;
+          if (streamError instanceof DOMException && streamError.name === "AbortError") {
+            setStreamingReport(null);
+            lastAnalysisStageRef.current = null;
+            return;
+          }
+          lastError = streamError;
         }
-        // 降级到后台分析时不再弹提示：JobStatusFloat 会轮询任务，完成后自动载入报告。
       }
-
-      const jobId = await startAnalyzeJob(
-        targetHoldings,
-        profile,
-        undefined,
-        systemRolePrompt,
-      );
-      setActiveJobId(jobId);
-      setStreamingReport((current) =>
-        markStreamingReportBackgroundFallback(
-          current,
-          jobId,
-          lastAnalysisStageRef.current
-            ? `停在「${stageShortLabel(lastAnalysisStageRef.current.stage)}」`
-            : "流式生成中断",
-        ),
+      setStreamingReport(null);
+      lastAnalysisStageRef.current = null;
+      setAnalyzeError(
+        `${userFacingErrorMessage(lastError, "流式生成中断")}。没有转入后台任务，请再点一次生成日报。`,
       );
     } catch (error) {
-      // 生成是这一屏的主操作，失败必须说一句 —— 否则按钮弹回可用态，用户无法
-      // 区分"失败了"和"点了没反应"。文案就近展示在按钮旁，不走全局提示。
-      setAnalyzeError(userFacingErrorMessage(error, "提交分析任务失败，请稍后重试。"));
+      setStreamingReport(null);
+      lastAnalysisStageRef.current = null;
+      setAnalyzeError(userFacingErrorMessage(error, "流式生成失败，请稍后重试。"));
     } finally {
       setIsSubmitting(false);
     }
@@ -1552,6 +1547,10 @@ export function Dashboard() {
     ],
   );
 
+  const handleDeleteTransaction = useCallback(async (transactionId: string) => {
+    return deletePortfolioTransaction(transactionId);
+  }, []);
+
   const handleBatchUpload = async (selectedFiles: File[]) => {
     if (!selectedFiles.length) {
       return;
@@ -1791,6 +1790,7 @@ export function Dashboard() {
                 }}
                 onSelectHolding={setSelectedHoldingKey}
                 onOpenAnalysis={() => setActiveTab("dashboard")}
+                onDeleteTransaction={handleDeleteTransaction}
               />
             </div>
           ) : null}
@@ -1834,6 +1834,7 @@ export function Dashboard() {
                 onRolePromptReset={handleRolePromptReset}
                 onAnalyze={() => void handleAnalyze()}
                 isBusy={isSubmitting}
+                busyLabel={streamingReport?.stageLabel}
                 hasBlockingErrors={blockingErrors}
                 blockingMessage={blockingMessage}
                 errorMessage={analyzeError}
@@ -2051,6 +2052,7 @@ export function Dashboard() {
           onDeleteHolding={handleDeleteHolding}
           onAdjustHolding={handleAdjustHolding}
           onApplyTransaction={handleSingleFundTransaction}
+          onDeleteTransaction={handleDeleteTransaction}
         />
       ) : selectedHoldingPreview ? (
         <YangjibaoFundDetail

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  countSameDayKeys,
+  markAlreadyRecordedTransactions,
   recordedTransactionKey,
   resolveConfirmDate,
   resolveFirstReturnDate,
+  sameDayTransactionKey,
 } from "./tradeConfirmDates";
 
 describe("tradeConfirmDates", () => {
@@ -30,5 +33,80 @@ describe("tradeConfirmDates", () => {
         trade_time: "2026-08-13 14:55:30",
       }),
     ).toBe("000960|buy|2026-08-13 14:55:30|2000");
+  });
+
+  it("treats the same fund/day/amount as one trade even when seconds differ", () => {
+    expect(
+      sameDayTransactionKey({
+        direction: "buy",
+        fund_code: "021959",
+        amount_yuan: 1000,
+        trade_time: "2026-08-17 14:55:30",
+      }),
+    ).toBe(
+      sameDayTransactionKey({
+        direction: "buy",
+        fund_code: "021959",
+        amount_yuan: 1000,
+        trade_time: "2026-08-17 14:59:52",
+      }),
+    );
+    const recorded = countSameDayKeys([
+      {
+        direction: "buy",
+        fund_code: "021959",
+        amount_yuan: 1000,
+        trade_time: "2026-08-17 14:55:30",
+      },
+    ]);
+    expect(
+      markAlreadyRecordedTransactions(
+        [
+          {
+            direction: "buy",
+            fund_code: "021959",
+            amount_yuan: 1000,
+            trade_time: "2026-08-17 14:59:52",
+          },
+          {
+            direction: "buy",
+            fund_code: "021959",
+            amount_yuan: 500,
+            trade_time: "2026-08-14 14:59:57",
+          },
+        ],
+        recorded,
+      ),
+    ).toEqual([true, false]);
+  });
+
+  it("marks only as many same-day rows as already stored", () => {
+    const recorded = countSameDayKeys([
+      {
+        direction: "buy",
+        fund_code: "021959",
+        amount_yuan: 500,
+        trade_time: "2026-08-17 14:50:00",
+      },
+    ]);
+    expect(
+      markAlreadyRecordedTransactions(
+        [
+          {
+            direction: "buy",
+            fund_code: "021959",
+            amount_yuan: 500,
+            trade_time: "2026-08-17 14:50:00",
+          },
+          {
+            direction: "buy",
+            fund_code: "021959",
+            amount_yuan: 500,
+            trade_time: "2026-08-17 14:52:00",
+          },
+        ],
+        recorded,
+      ),
+    ).toEqual([true, false]);
   });
 });

@@ -153,7 +153,6 @@ def _guard(facts) -> FundRecommendation:
         AnalysisRequest(
             holdings=[_holding()],
             profile=InvestorProfile(
-                decision_style="conservative",
                 max_drawdown_percent=15,
                 concentration_limit_percent=100,
                 expected_investment_amount=100_000,
@@ -167,7 +166,6 @@ def _guard(facts) -> FundRecommendation:
             alerts=[],
         ),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
     return guarded[0]

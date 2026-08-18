@@ -221,3 +221,49 @@ def test_confirmed_share_detection_catches_mixed_quality_position(
     )
 
     assert portfolio_ledger_service.has_user_confirmed_position_shares("008586") is True
+
+
+def test_confirmed_addon_updates_existing_amount_without_live_nav(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holding = Holding(
+        fund_code="021959",
+        fund_name="南方黄金股C",
+        holding_amount=516.27,
+        settled_holding_amount=516.27,
+    )
+    profile = FundProfile(
+        fund_code="021959",
+        fund_name="南方黄金股C",
+        holding_amount=516.27,
+        settled_holding_amount=516.27,
+        holding_shares=500.0,
+        shares_baseline_date="2026-08-14",
+    )
+    monkeypatch.setattr(
+        holding_amount_sync,
+        "get_official_nav_return",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        holding_amount_sync,
+        "get_latest_unit_nav",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_nav_service.peek_cached_unit_nav",
+        lambda *_args, **_kwargs: None,
+    )
+
+    refreshed, _ = holding_amount_sync._sync_one_holding(
+        holding,
+        profile=profile,
+        trade_date="2026-08-18",
+        estimate_quote=None,
+        persist_profile=False,
+        shares_override={"021959": 1500.0},
+        allow_nav_fetch=False,
+    )
+
+    assert refreshed.settled_holding_amount == 1548.81
+    assert refreshed.holding_amount == 1548.81

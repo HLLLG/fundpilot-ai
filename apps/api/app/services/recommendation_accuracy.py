@@ -73,7 +73,6 @@ def build_recommendation_accuracy(
             "by_horizon": empty_by_horizon,
             "metric_contract_version": METRIC_CONTRACT_VERSION,
             "metrics": empty_by_horizon[f"T+{normalized_horizons[0]}"]["metrics"],
-            "by_style": {},
             "summary_lines": [],
             "legacy_reference": {
                 "excluded_from_formal_v2": True,
@@ -88,7 +87,6 @@ def build_recommendation_accuracy(
                     f"T+{normalized_horizons[0]}"
                 ]["metrics"],
                 "by_horizon": empty_by_horizon,
-                "by_style": {},
                 "summary_lines": [],
             },
         }
@@ -108,10 +106,11 @@ def build_recommendation_accuracy(
                 nav_cache[code] = None
         return nav_cache[code]
 
+    # 2026-08 决策风格收敛：不再按 conservative/tactical/aggressive 分桶，全部
+    # 归入单一口径（历史报告里残留的旧 decision_style 字段直接忽略）。
     buckets: dict[str, dict[str, Any]] = {}
     legacy_buckets: dict[str, dict[str, Any]] = {}
     for report in reports:
-        style = _decision_style(report)
         formal_outcome = build_recommendation_outcomes(
             report,
             None,
@@ -128,7 +127,7 @@ def build_recommendation_accuracy(
 
             persist_daily_outcome_result(report, formal_outcome)
         if int(formal_outcome.get("recommendation_count") or 0) > 0:
-            bucket = buckets.setdefault(style, _new_bucket(style, normalized_horizons))
+            bucket = buckets.setdefault("all", _new_bucket(normalized_horizons))
             _accumulate_bucket(bucket, formal_outcome, normalized_horizons)
 
         legacy_outcome = build_recommendation_outcomes(
@@ -142,7 +141,7 @@ def build_recommendation_accuracy(
         )
         if int(legacy_outcome.get("recommendation_count") or 0) > 0:
             legacy_bucket = legacy_buckets.setdefault(
-                style, _new_bucket(style, normalized_horizons)
+                "all", _new_bucket(normalized_horizons)
             )
             _accumulate_bucket(legacy_bucket, legacy_outcome, normalized_horizons)
 
@@ -202,7 +201,6 @@ def build_recommendation_accuracy(
         "by_horizon": overall,
         "metric_contract_version": METRIC_CONTRACT_VERSION,
         "metrics": primary.get("metrics") or {},
-        "by_style": buckets,
         "summary_lines": _summary_lines(buckets, normalized_horizons),
         "legacy_reference": {
             "excluded_from_formal_v2": True,
@@ -215,7 +213,6 @@ def build_recommendation_accuracy(
             "coverage_percent": legacy_primary["coverage_percent"],
             "metrics": legacy_primary.get("metrics") or {},
             "by_horizon": legacy_overall,
-            "by_style": legacy_buckets,
             "summary_lines": _summary_lines(legacy_buckets, normalized_horizons),
         },
         "nav_fetch": {
@@ -225,9 +222,8 @@ def build_recommendation_accuracy(
     }
 
 
-def _new_bucket(style: str, horizons: tuple[int, ...]) -> dict[str, Any]:
+def _new_bucket(horizons: tuple[int, ...]) -> dict[str, Any]:
     return {
-        "decision_style": style,
         "report_count": 0,
         "paired_count": 0,
         "recommendation_count": 0,
@@ -417,31 +413,18 @@ def _finalize_metric_stats(metrics: dict[str, dict[str, Any]]) -> None:
         value["hit_rate_percent"] = round(hits / mature * 100.0, 1) if mature else None
 
 
-def _decision_style(report: dict[str, Any]) -> str:
-    facts = report.get("analysis_facts") or {}
-    portfolio = facts.get("portfolio") or {}
-    style = portfolio.get("decision_style")
-    if style in {"tactical", "conservative", "aggressive"}:
-        return style
-    profile = report.get("profile") or {}
-    if profile.get("decision_style") in {"tactical", "conservative", "aggressive"}:
-        return str(profile["decision_style"])
-    return "conservative"
-
-
 def _summary_lines(
     buckets: dict[str, dict[str, Any]],
     horizons: tuple[int, ...],
 ) -> list[str]:
-    labels = {"tactical": "战术短线", "aggressive": "激进波段", "conservative": "稳健"}
     lines: list[str] = []
     primary_key = f"T+{horizons[0]}"
-    for style, bucket in buckets.items():
+    for bucket in buckets.values():
         stats = bucket["by_horizon"][primary_key]
         rate = stats.get("hit_rate_percent")
         rate_text = f"，方向命中率 {rate}%" if rate is not None else ""
         lines.append(
-            f"{labels.get(style, style)}：{primary_key} 成熟 {stats['mature_count']}/"
+            f"{primary_key} 成熟 {stats['mature_count']}/"
             f"{stats['eligible_count']} 条（覆盖率 {stats['coverage_percent']}%）{rate_text}；"
             f"观察/复核类 {bucket['observation_count']} 条单列。"
         )

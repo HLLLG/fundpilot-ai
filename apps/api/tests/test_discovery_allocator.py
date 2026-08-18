@@ -101,7 +101,6 @@ def _allocate(
     denominator: float = 20_000,
     concentration: float = 35,
     prefer_dca: bool = True,
-    decision_style: str = "conservative",
     risk_context: dict | None = None,
     priority_inputs: dict | None = None,
     tranche_ratio_cap: float | None = None,
@@ -118,7 +117,6 @@ def _allocate(
         concentration_denominator_yuan=denominator,
         concentration_limit_percent=concentration,
         prefer_dca=prefer_dca,
-        decision_style=decision_style,
         risk_context=risk_context,
         priority_inputs=priority_inputs,
         current_tranche_ratio_cap=tranche_ratio_cap,
@@ -271,7 +269,6 @@ def test_missing_risk_context_blocks_all_executable_amounts() -> None:
         concentration_denominator_yuan=20_000,
         concentration_limit_percent=35,
         prefer_dca=True,
-        decision_style="conservative",
         risk_context=None,
     )
 
@@ -299,26 +296,23 @@ def test_qualified_risk_only_plan_allocates_current_verified_tranche() -> None:
 
 def test_current_tranche_ratio_uses_profile_policy() -> None:
     candidate = _candidate("000001", "科技")
-    conservative = _allocate([candidate], decision_style="conservative")
-    aggressive = _allocate(
-        [candidate], decision_style="aggressive", prefer_dca=False
-    )
+    with_dca = _allocate([candidate])
+    without_dca = _allocate([candidate], prefer_dca=False)
 
-    assert conservative["policy"]["applied_current_tranche_ratio"] == 0.25
-    assert conservative["budget"]["current_tranche_cap_yuan"] == 2_500
-    assert aggressive["policy"]["applied_current_tranche_ratio"] == 0.5
-    assert aggressive["budget"]["current_tranche_cap_yuan"] == 5_000
+    assert with_dca["policy"]["applied_current_tranche_ratio"] == 0.25
+    assert with_dca["budget"]["current_tranche_cap_yuan"] == 2_500
+    assert without_dca["policy"]["applied_current_tranche_ratio"] == 0.35
+    assert without_dca["budget"]["current_tranche_cap_yuan"] == 3_500
 
 
 def test_entry_maturity_can_cap_initial_tranche_without_changing_profile_policy() -> None:
     plan = _allocate(
         [_candidate("000001", "科技")],
-        decision_style="aggressive",
         prefer_dca=False,
         tranche_ratio_cap=0.20,
     )
 
-    assert plan["policy"]["nominal_current_tranche_ratio"] == 0.50
+    assert plan["policy"]["nominal_current_tranche_ratio"] == 0.35
     assert plan["policy"]["current_tranche_ratio_cap"] == 0.20
     assert plan["policy"]["applied_current_tranche_ratio"] == 0.20
     assert plan["budget"]["current_tranche_cap_yuan"] == 2_000
@@ -382,7 +376,6 @@ def test_request_level_sector_cap_prevents_one_theme_from_taking_all() -> None:
         budget=10_000,
         denominator=1_000_000,
         concentration=10,
-        decision_style="aggressive",
         prefer_dca=False,
     )
 
@@ -591,7 +584,6 @@ def test_duplicate_fund_code_fails_closed_independent_of_payload_difference() ->
         {"existing_sector_exposure_yuan": None},
         {"concentration_denominator_yuan": 0},
         {"concentration_limit_percent": 101},
-        {"decision_style": "unknown"},
     ],
 )
 def test_critical_global_input_missing_blocks(override: dict) -> None:
@@ -602,7 +594,6 @@ def test_critical_global_input_missing_blocks(override: dict) -> None:
         "concentration_denominator_yuan": 20_000,
         "concentration_limit_percent": 35,
         "prefer_dca": True,
-        "decision_style": "conservative",
         "risk_context": _risk_context(["000001"]),
     }
     kwargs.update(override)

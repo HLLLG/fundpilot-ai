@@ -336,7 +336,6 @@ def resolve_escalation_floor(
     market_breadth: dict | None,
     over_concentration: bool,
     has_unrealized_gain: bool,
-    decision_style: str,
     direction_exit: dict | None = None,
     nav_trend: dict | None = None,
 ) -> dict[str, object]:
@@ -362,7 +361,6 @@ def resolve_escalation_floor(
         market_breadth=market_breadth,
         over_concentration=over_concentration,
         has_unrealized_gain=has_unrealized_gain,
-        decision_style=decision_style,
     )
     direction = _resolve_direction_exit_floor(direction_exit)
     fund_lag = _resolve_fund_lag_floor(nav_trend, sector_opportunity)
@@ -490,7 +488,6 @@ def _resolve_risk_divergence_floor(
     market_breadth: dict | None,
     over_concentration: bool,
     has_unrealized_gain: bool,
-    decision_style: str,
 ) -> dict[str, object]:
     """双向 guard 的"升级下限"判定（M2.1）。
 
@@ -526,8 +523,10 @@ def _resolve_risk_divergence_floor(
     "仅在极端情形下触发"的兜底档，误差容忍度更高；待 M1.3 的量价背离回测在生产
     环境验证出真实历史窗口后，可考虑扩展签名直接传入原始 edge_percent 做更精确判定。
 
-    `decision_style` 只影响第 4/5 档的门槛松紧（tactical/aggressive 更容易触发），
-    不是触发的必要条件——conservative 风格下证据极强时同样可以触发第 4/5 档。
+    第 4 档触发条件为「大盘冰点 或 集中度超限」其一命中（2026-08 决策风格收敛后统一
+    取原短线风格的 or 判定）：前置条件已经要求量价背离显著、方向不构成机会且基金自身
+    证据不足，这时任一风险共振信号都足以支撑升档——用户此前的实际亏损案例正是"守卫
+    只防乐观、不防迟钝"造成的浮盈回吐。
     """
     if not sector_opportunity or sector_opportunity.get("opportunity_available") is not False:
         return dict(_NO_ESCALATION)
@@ -535,8 +534,6 @@ def _resolve_risk_divergence_floor(
     has_strong_divergence = str(sector_opportunity.get("confidence") or "") == "高"
     if not has_strong_divergence:
         return dict(_NO_ESCALATION)
-
-    lenient = decision_style in {"tactical", "aggressive"}
 
     reasons: list[str] = ["量价背离信号显著，且当前持仓板块方向不构成机会"]
     min_bucket: int = ACTION_BUCKET_PAUSE
@@ -573,22 +570,15 @@ def _resolve_risk_divergence_floor(
             and (breadth.get("sentiment_level_change") or 0) <= -2
         )
         breadth_extreme = sentiment_ice and sentiment_dropping
-        row4_triggered = (
-            (breadth_extreme or over_concentration)
-            if lenient
-            else (breadth_extreme and over_concentration)
-        )
-        if row4_triggered:
+        if breadth_extreme or over_concentration:
             min_bucket = ACTION_BUCKET_DEEP_REDUCE
             percent = -50.0
-            reasons.append("大盘情绪骤冷叠加持仓集中度超限，风险共振加剧")
+            reasons.append("大盘情绪骤冷或持仓集中度超限，风险共振加剧")
 
-            # 注意：第5档门槛（>=2 条 penalties）不随 decision_style 松紧——第4档已经
-            # 通过"or/and"切换让 lenient 风格更容易触发，若第5档也同步降到与"触发
-            # 第4档"完全相同的门槛（即恒真，因为 M1.4 disqualified 场景天然自带至少
-            # 1 条 penalty），会让第5档在 lenient 风格下形同虚设、与第4档无法区分。
-            # 因此第5档统一保留"至少2条 penalty 同时命中"的更高门槛，作为比第4档
-            # 更严格的独立信号，而不是第4档的简单加强版。
+            # 注意：第5档门槛（>=2 条 penalties）刻意高于第4档——若降到与"触发第4档"
+            # 完全相同的门槛（即恒真，因为 M1.4 disqualified 场景天然自带至少 1 条
+            # penalty），第5档会形同虚设、与第4档无法区分。因此保留"至少2条 penalty
+            # 同时命中"作为比第4档更严格的独立信号，而不是第4档的简单加强版。
             penalty_count = len(sector_opportunity.get("penalties") or [])
             if penalty_count >= 2:
                 min_bucket = ACTION_BUCKET_CLEAR_ALL

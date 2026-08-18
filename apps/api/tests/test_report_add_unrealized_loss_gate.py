@@ -93,7 +93,7 @@ def _v3_row(direction_score: float = _TOP_TIER_SCORE, **overrides) -> dict:
     return row
 
 
-def _request(*, decision_style: str = "conservative") -> AnalysisRequest:
+def _request() -> AnalysisRequest:
     return AnalysisRequest(
         holdings=[
             Holding(
@@ -104,7 +104,6 @@ def _request(*, decision_style: str = "conservative") -> AnalysisRequest:
             )
         ],
         profile=InvestorProfile(
-            decision_style=decision_style,
             # 放宽浮亏线与集中度，避免这两道**另外的**门禁参与进来：本文件要观察的是
             # 档位封顶，而不是"浮亏超限改减仓"。
             max_drawdown_percent=50,
@@ -311,7 +310,7 @@ def _guarded(facts: dict, action: str = "分批加仓") -> FundRecommendation:
             )
         ],
         [],
-        _request(decision_style="tactical"),
+        _request(),
         RiskAssessment(
             level="medium",
             weighted_return_percent=1.2,
@@ -319,7 +318,6 @@ def _guarded(facts: dict, action: str = "分批加仓") -> FundRecommendation:
             alerts=[],
         ),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
     return guarded[0]

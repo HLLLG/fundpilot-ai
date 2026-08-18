@@ -134,7 +134,6 @@ def daily_contract(
         request,
         _risk(),
         [],
-        [],
         nav_trends_by_code=None,
         facts=facts,
     )

@@ -11,7 +11,6 @@ from app.models import (
     InvestorProfile,
     NewsItem,
     RiskAssessment,
-    TopicBrief,
 )
 from app.services.decision_guard_shared import (
     ACTION_BUCKET_ADD,
@@ -36,9 +35,7 @@ from app.services.daily_action_proposal import (
     DailyActionProposal,
     propose_daily_action,
 )
-from app.services.market_signal import has_today_market_signal
 from app.services.holding_lot_maturity import describe_reduction_lot_impact
-from app.services.investment_presets import is_short_term_style
 from app.services.sector_labels import normalize_sector_label
 from app.services.transaction_behavior_review import recent_transaction_conflict_note
 from app.services.sector_opportunity_scoring import (
@@ -84,7 +81,6 @@ def apply_recommendation_guards(
     request: AnalysisRequest,
     risk: RiskAssessment,
     market_news: list[NewsItem] | None = None,
-    topic_briefs: list[TopicBrief] | None = None,
     *,
     nav_trends_by_code: dict[str, dict] | None = None,
     facts: dict | None = None,
@@ -97,27 +93,19 @@ def apply_recommendation_guards(
         nav_trends_by_code=nav_trends_by_code,
     )
     settings = get_settings()
-    decision_style = request.profile.decision_style
-    tactical = decision_style == "tactical"
-    aggressive = decision_style == "aggressive"
-    short_term = is_short_term_style(decision_style)
     guard_policy = (
         resolve_signal_guard_policy(
             request.holdings,
-            lookback_reports=settings.tactical_prompt_tuning_lookback_reports,
             backtest_days=settings.sector_signal_backtest_days,
         )
-        if settings.tactical_prompt_tuning_enabled or settings.sector_signal_backtest_enabled
+        if settings.sector_signal_backtest_enabled
         else {
-            "tighten_tactical": False,
             "enforce_reversal_block": True,
             "enforce_pullback_block": True,
             "hints": [],
             "reason": None,
         }
     )
-    tuning = guard_policy
-    today_signal = has_today_market_signal(market_news, topic_briefs)
     ic_status = _factor_ic_status_from_facts(facts)
     # 组合级判定，逐只持仓复用同一个结论，不必每条重算。
     drawdown_cap_reason = _portfolio_drawdown_cap_reason(facts, risk, request.profile)
@@ -172,8 +160,6 @@ def apply_recommendation_guards(
             risk,
             holding,
             request,
-            tactical=tactical,
-            aggressive=aggressive,
             portfolio_drawdown_capped=drawdown_cap_reason is not None,
         )
         escalation = resolve_escalation_floor(
@@ -182,7 +168,6 @@ def apply_recommendation_guards(
             market_breadth=(facts or {}).get("market_breadth"),
             over_concentration=bool((facts_row or {}).get("over_concentration")),
             has_unrealized_gain=((facts_row or {}).get("estimated_holding_return_percent") or 0) > 0,
-            decision_style=decision_style,
             # 方向退出必须在 guard 侧也生效，否则模型可以把它说没了。取值优先用板块机会行
             # 上挂的那份（analysis_facts 透传过来的同一对象）。
             direction_exit=(
@@ -194,9 +179,6 @@ def apply_recommendation_guards(
             # 基金层第三源：与 analysis_facts._attach_escalation_to_holdings 传同一个
             # facts 键，guard 侧与 facts 侧的升级判定不得各看一套数据。
             nav_trend=(facts_row or {}).get("nav_trend"),
-        )
-        today_news_required_missing = bool(
-            not short_term and settings.news_require_today_for_add and not today_signal
         )
 
         # `decision_evidence_allows_action` 只关心方向（add/reduce/none）。用 LLM 草案的
@@ -233,7 +215,6 @@ def apply_recommendation_guards(
                 sector_absence_reason=sector_absence_reason,
             ),
             reversal_blocked=reversal_blocked,
-            today_news_required_missing=today_news_required_missing,
             execution_blocked=execution_blocked,
         )
         proposal_enforced = settings.daily_action_proposal_mode == "enforced"
@@ -253,17 +234,11 @@ def apply_recommendation_guards(
             snapshot_note = "关键持仓或行情数据未达到时点可用条件，因此暂不提供加减仓操作。"
 
         reversal_note = None
-        if reversal_blocked:
-            if _action_bucket(normalized) >= 3 or _action_bucket(rec.action) >= 3:
-                if tactical:
-                    normalized = "观察"
-                    reversal_note = "涨后回吐或盘中冲高回落，战术模式已限制追涨加仓。"
-                else:
-                    normalized = "暂停追涨"
-                    reversal_note = "涨后回吐或盘中冲高回落，已限制追涨加仓（板块短线信号）。"
-            elif tactical and tuning.get("tighten_tactical") and _action_bucket(normalized) >= 2:
-                normalized = "观察"
-                reversal_note = "历史涨后回吐命中率偏低，战术模式已自动收紧：回吐场景优先观察。"
+        if reversal_blocked and (
+            _action_bucket(normalized) >= 3 or _action_bucket(rec.action) >= 3
+        ):
+            normalized = "暂停追涨"
+            reversal_note = "涨后回吐或盘中冲高回落，已限制追涨加仓（板块短线信号）。"
 
         if (
             offline is not None
@@ -297,15 +272,6 @@ def apply_recommendation_guards(
                     f"板块方向证据不足（{'、'.join(weak_reasons)}），"
                     "已将加仓类动作降为「观察」。"
                 )
-
-        if (
-            not short_term
-            and settings.news_require_today_for_add
-            and not today_signal
-            and _action_bucket(normalized) >= ACTION_BUCKET_ADD
-        ):
-            normalized = "暂停追涨"
-            max_bucket = min(max_bucket, ACTION_BUCKET_PAUSE)
 
         # M2.1 双向 guard：证据强烈指向风险升级时，即使前面几步的降级仍停在"观察"，
         # 这里作为最终的保守下限强制继续拉低（甚至拉到"减仓评估/大幅减仓评估/清仓评估"）。
@@ -472,16 +438,7 @@ def apply_recommendation_guards(
             or weak_note
             or drawdown_note
         )
-        if (
-            not note
-            and not short_term
-            and settings.news_require_today_for_add
-            and not today_signal
-            and _action_bucket(rec.action.strip()) >= ACTION_BUCKET_ADD
-            and normalized != rec.action.strip()
-        ):
-            note = "无当日可引用要闻，已限制激进加仓类动作（更贴盘面、防幻觉）。"
-        elif not note and proposal_enforced and proposal_note is not None:
+        if not note and proposal_enforced and proposal_note is not None:
             # enforced 模式下"系统提议与模型草案不一致"本身就是最该让用户看到的一句。
             note = proposal_note
         elif (
@@ -630,26 +587,6 @@ def apply_recommendation_guards(
         hint = "部分关键持仓或行情数据未达到时点可用条件：本次只做观察和风险提示，暂不显示仓位动作与金额。"
         safe_portfolio = [line for line in portfolio if not contains_executable_decision_text(line)]
         portfolio = [hint, *safe_portfolio[:1]]
-    elif not short_term and settings.news_require_today_for_add and not today_signal:
-        hint = "当日无已引用要闻支撑，组合级建议以观察/控风险为主，不宜激进加仓。"
-        if not portfolio or hint not in portfolio[0]:
-            portfolio = [hint, *portfolio]
-    elif aggressive:
-        from app.services.investment_presets import take_profit_threshold_percent
-
-        threshold = take_profit_threshold_percent(request.profile)
-        hint = (
-            f"激进波段模式：跌深分批买、持有收益达 {threshold:.1f}%（含手续费）优先止盈，"
-            f"目标持有 {request.profile.hold_days_target} 天内，仍须遵守集中度与浮亏线。"
-        )
-        if not portfolio or hint not in portfolio[0]:
-            portfolio = [hint, *portfolio]
-    elif tactical:
-        hint = "战术短线模式：建议侧重当日/次日盘面与板块动能，仍须遵守集中度与风险复核线。"
-        if tuning.get("tighten_tactical") and tuning.get("reason"):
-            hint = str(tuning["reason"])
-        if not portfolio or hint not in portfolio[0]:
-            portfolio = [hint, *portfolio]
     if isinstance(facts, dict):
         facts["data_evidence_guard"] = {
             "execution_blocked": bool(evidence_blocked_codes),
@@ -1801,20 +1738,10 @@ def _promote_to_proposed_add(
 def _offline_action_is_a_risk_veto(offline_action: str) -> bool:
     """离线规则引擎这次是否真的**触发**了一条风险意见。
 
-    三个离线构建器（保守 / 战术 / 激进）结构相同：`action` 初值都是「观察」，只有命中
-    集中度超限、涨后回吐、追高、深亏等具体条件时才改写成别的动作。所以「观察」是它的
-    **无意见默认值**，不是一个结论。
-
-    此前这里的判定是 `not short_term`，导致两个方向都不对：
-
-    * 短线/激进风格**完全跳过**这道对照。可它们各有专门的离线构建器（会输出「减仓评估」
-      等真实风险意见），算了却整份丢掉，只在 points 里留一句"未与离线规则取更保守值"。
-    * 稳健风格反过来被无意见的「观察」**硬封顶**。`conservative_action_text` 取 min，
-      而「观察」的 bucket 低于「分批加仓」，于是只要离线没触发任何条件，加仓就被一个
-      "我没意见"的默认值否掉——这正是日报比荐基迟钝的原因之一。
-
-    现在改成：只要离线**给出了非默认动作**，就对所有风格生效（风险否决权）；离线停在
-    「观察」时不参与封顶（把判断交给方向层、证据层与风险层这些真正看得见证据的门禁）。
+    离线构建器的 `action` 初值是「观察」，只有命中集中度超限、止盈线+回吐、追高、深亏
+    等具体条件时才改写成别的动作。所以「观察」是它的**无意见默认值**，不是一个结论：
+    离线给出非默认动作时才参与封顶（风险否决权）；停在「观察」时不参与，把判断交给
+    方向层、证据层与风险层这些真正看得见证据的门禁。
     """
     action = normalize_action_text(offline_action)
     return _action_bucket(action) != ACTION_BUCKET_WATCH
@@ -1929,24 +1856,16 @@ def _max_allowed_bucket(
     holding,
     request: AnalysisRequest,
     *,
-    tactical: bool = False,
-    aggressive: bool = False,
     portfolio_drawdown_capped: bool = False,
 ) -> int:
     if risk.suggested_action == "risk_review":
         return 2
     if risk.level == "high":
         return 2
-    # 峰谷回撤封顶对短线风格同样生效：它衡量的是这个组合实际回吐过多少，
-    # 与「是否愿意追当日涨幅」无关。
+    # 峰谷回撤封顶：它衡量的是这个组合实际回吐过多少，与「是否愿意追当日涨幅」无关。
     if portfolio_drawdown_capped:
         return 2
-    if (
-        not tactical
-        and not aggressive
-        and holding is not None
-        and request.profile.avoid_chasing
-    ):
+    if holding is not None and request.profile.avoid_chasing:
         sector = getattr(holding, "sector_return_percent", None)
         if sector is not None and sector > 5:
             return 2

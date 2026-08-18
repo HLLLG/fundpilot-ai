@@ -46,9 +46,8 @@ def _no_live_intraday_signal(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _profile(decision_style: str = "tactical", *, prefer_dca: bool = False) -> InvestorProfile:
+def _profile(*, prefer_dca: bool = False) -> InvestorProfile:
     return InvestorProfile(
-        decision_style=decision_style,
         max_drawdown_percent=15,
         concentration_limit_percent=100,
         expected_investment_amount=100_000,
@@ -59,7 +58,6 @@ def _profile(decision_style: str = "tactical", *, prefer_dca: bool = False) -> I
 
 def _request(
     *,
-    decision_style: str = "tactical",
     holding_return_percent: float | None = None,
     prefer_dca: bool = False,
 ) -> AnalysisRequest:
@@ -73,7 +71,7 @@ def _request(
                 holding_return_percent=holding_return_percent,
             )
         ],
-        profile=_profile(decision_style, prefer_dca=prefer_dca),
+        profile=_profile(prefer_dca=prefer_dca),
     )
 
 
@@ -146,7 +144,6 @@ def _guard(
         request or _request(),
         risk,
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
     return guarded[0]
@@ -163,10 +160,9 @@ def test_breached_peak_to_trough_drawdown_blocks_adding_while_in_loss() -> None:
     assert any("真实峰谷回撤" in point for point in rec.points)
 
 
-def test_drawdown_cap_also_applies_to_conservative_style() -> None:
+def test_drawdown_cap_also_applies_with_prefer_dca() -> None:
     """封顶衡量的是这个组合实际回吐过多少，与是否愿意追当日涨幅无关。"""
     request = _request(
-        decision_style="conservative",
         holding_return_percent=-8.0,
         prefer_dca=True,
     )

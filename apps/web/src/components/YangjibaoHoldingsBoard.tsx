@@ -14,7 +14,7 @@ import {
   RefreshCw,
   ScanLine,
 } from "lucide-react";
-import { type Holding, type PortfolioSummary } from "@/lib/api";
+import { type DeletePortfolioTransactionResult, type Holding, type PortfolioSummary } from "@/lib/api";
 import { hydrateTradingSession } from "@/lib/tradingSessionClient";
 import { readTradingSessionCache } from "@/lib/holdingDetailCache";
 import { SectorMappingModal } from "@/components/SectorMappingModal";
@@ -35,6 +35,7 @@ import {
   getHoldingUnitCost,
   resolveSectorBoardReturnPercent,
   sumDailyProfit,
+  portfolioOfficialNavSettled,
   sumPortfolioTotalAssets,
   navigableHoldings,
   holdingIdentityKey,
@@ -98,6 +99,7 @@ type YangjibaoHoldingsBoardProps = {
   onBatchTransaction?: () => void;
   onSelectHolding?: (holding: HoldingIdentity) => void;
   onOpenAnalysis?: () => void;
+  onDeleteTransaction?: (transactionId: string) => Promise<DeletePortfolioTransactionResult>;
 };
 
 const updatedBadgeClassName =
@@ -248,6 +250,7 @@ export function YangjibaoHoldingsBoard({
   onBatchTransaction,
   onSelectHolding,
   onOpenAnalysis,
+  onDeleteTransaction,
 }: YangjibaoHoldingsBoardProps) {
   const [quoteTradeDate, setQuoteTradeDate] = useState<string | null>(() => {
     const cached = readTradingSessionCache();
@@ -298,11 +301,7 @@ export function YangjibaoHoldingsBoard({
   const computedDaily = sumDailyProfit(settledHoldings);
   const totalAssets = computedTotal || portfolioSummary?.total_assets || null;
   const dailyProfit = settledHoldings.length > 0 ? computedDaily : null;
-  const officialDailyCount = settledHoldings.filter(
-    (holding) => holding.daily_return_percent_source === "official_nav",
-  ).length;
-  const allOfficialDaily =
-    settledHoldings.length > 0 && officialDailyCount === settledHoldings.length;
+  const allOfficialDaily = portfolioOfficialNavSettled(settledHoldings);
   const dailyColumnLabel = allOfficialDaily ? "当日" : "估算";
 
   const handleSort = (columnKey: HoldingsMetricKey) => {
@@ -870,7 +869,12 @@ export function YangjibaoHoldingsBoard({
         onClose={dismissMapping}
         onSelect={(candidate) => void selectMapping(candidate)}
       />
-      {ledgerOpen ? <HoldingsTransactionLedgerModal onClose={() => setLedgerOpen(false)} /> : null}
+      {ledgerOpen ? (
+        <HoldingsTransactionLedgerModal
+          onClose={() => setLedgerOpen(false)}
+          onDeleteTransaction={onDeleteTransaction}
+        />
+      ) : null}
     </section>
   );
 }

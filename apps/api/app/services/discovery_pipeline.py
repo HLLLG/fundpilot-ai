@@ -110,11 +110,14 @@ def run_discovery(
     request: DiscoveryRequest,
     on_progress: ProgressCallback | None = None,
 ) -> FundDiscoveryReport:
-    if getattr(get_settings(), "langgraph_enabled", True):
-        from app.services.graphs.discovery_scan import run_discovery_graph
+    from app.services.provider_lane import LANE_DISCOVERY, provider_lane
 
-        return run_discovery_graph(request, on_progress)
-    return run_discovery_impl(request, on_progress)
+    with provider_lane(LANE_DISCOVERY):
+        if getattr(get_settings(), "langgraph_enabled", True):
+            from app.services.graphs.discovery_scan import run_discovery_graph
+
+            return run_discovery_graph(request, on_progress)
+        return run_discovery_impl(request, on_progress)
 
 
 def run_discovery_impl(

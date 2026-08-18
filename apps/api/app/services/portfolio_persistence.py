@@ -11,7 +11,9 @@ from app.database import (
 from app.models import Holding, PortfolioSummary
 from app.services.holding_amount_sync import sync_holding_amounts_from_shares
 from app.services.holding_estimates import (
+    compute_portfolio_total_assets,
     enrich_holdings_estimates,
+    holding_settled_principal,
     overlay_official_nav_returns,
     sum_daily_profit,
 )
@@ -248,21 +250,11 @@ def _persist_holdings_after_sector_refresh_unlocked(
         return enriched
 
     summary = get_portfolio_summary()
-    total_assets = round(
-        sum(
-            (h.settled_holding_amount or h.holding_amount) + (h.daily_profit or 0)
-            for h in enriched
-        ),
-        2,
-    )
+    total_assets = compute_portfolio_total_assets(enriched)
     daily_profit = sum_daily_profit(enriched)
     daily_return_percent = None
-    # 2026-07-04 修复：此前用 `total_assets > daily_profit > 0` 做门槛，要求 daily_profit
-    # 严格大于 0——平盘（daily_profit=0）或亏损（daily_profit<0）的交易日会被整个跳过，
-    # daily_return_percent 永久写成 None（而不是正确算出 0 或负的收益率）。只要分母
-    # （昨日结算总资产）为正，任何符号的 daily_profit 都应该能算出收益率；对齐
-    # official_nav_settlement.py::_persist_settlement_holdings 的正确写法。
-    previous = total_assets - daily_profit
+    # 分母用结算本金，避免估算收益未计入总资产时被减成昨日资产偏少。
+    previous = round(sum(holding_settled_principal(h) for h in enriched), 2)
     if previous > 0:
         daily_return_percent = round(daily_profit / previous * 100, 2)
 

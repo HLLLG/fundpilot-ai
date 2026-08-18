@@ -54,14 +54,11 @@ describe("streamDiscovery", () => {
     await streamDiscovery(
       [{ fund_code: "519674", fund_name: "测试", holding_amount: 1000, return_percent: 1 }],
       {
-        style: "稳健",
-        horizon: "半年",
         max_drawdown_percent: 8,
         concentration_limit_percent: 35,
         expected_investment_amount: 10000,
         prefer_dca: true,
         avoid_chasing: true,
-        decision_style: "conservative",
       },
       {
         onStage: (stage) => stages.push(stage),
@@ -104,14 +101,11 @@ describe("streamDiscovery", () => {
     const pending = streamDiscovery(
       [{ fund_code: "519674", fund_name: "test", holding_amount: 1000, return_percent: 1 }],
       {
-        style: "steady",
-        horizon: "half-year",
         max_drawdown_percent: 8,
         concentration_limit_percent: 35,
         expected_investment_amount: 10000,
         prefer_dca: true,
         avoid_chasing: true,
-        decision_style: "conservative",
       },
       {},
       { idleTimeoutMs: 50 },
@@ -142,14 +136,11 @@ describe("streamDiscovery", () => {
       streamDiscovery(
         [{ fund_code: "519674", fund_name: "test", holding_amount: 1000, return_percent: 1 }],
         {
-          style: "steady",
-          horizon: "half-year",
           max_drawdown_percent: 8,
           concentration_limit_percent: 35,
           expected_investment_amount: 10000,
           prefer_dca: true,
           avoid_chasing: true,
-          decision_style: "conservative",
         },
         {},
       ),

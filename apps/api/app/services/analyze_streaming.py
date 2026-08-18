@@ -70,6 +70,7 @@ from app.services.decision_time_call import (
     call_with_optional_time,
     prefetch_fund_announcements_compat,
 )
+from app.services.provider_lane import LANE_ANALYSIS, provider_lane
 from app.services.shared_executors import (
     get_analysis_context_executor,
     get_shared_io_executor,
@@ -91,6 +92,20 @@ def stream_analysis(
 ) -> Iterator[dict[str, Any]]:
     """把 run_analysis 拆成可流式产出 SSE 事件的版本（fast / deep）。"""
     stop = stop_event or threading.Event()
+    with provider_lane(LANE_ANALYSIS):
+        yield from _stream_analysis_on_lane(
+            request,
+            user_id=user_id,
+            stop=stop,
+        )
+
+
+def _stream_analysis_on_lane(
+    request: AnalysisRequest,
+    *,
+    user_id: int,
+    stop: threading.Event,
+) -> Iterator[dict[str, Any]]:
     ctx_token = set_request_user_id(user_id)
     settings = get_settings()
     decision_clock = capture_decision_clock()

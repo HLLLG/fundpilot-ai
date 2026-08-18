@@ -30,6 +30,7 @@ from app.services.deepseek_http import (
     deepseek_request_headers,
     deepseek_timeout,
     get_deepseek_http_client,
+    post_deepseek_chat,
 )
 from app.services.shared_executors import get_discovery_context_executor
 from app.services.streaming_heartbeat import raise_if_stream_cancelled
@@ -228,7 +229,8 @@ def _llm_judge(
         "task": task_prompt,
     }
     try:
-        response = get_deepseek_http_client(settings).post(
+        response = post_deepseek_chat(
+            get_deepseek_http_client(settings),
             deepseek_chat_url(settings),
             headers=deepseek_request_headers(settings),
             json={

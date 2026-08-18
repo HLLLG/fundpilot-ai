@@ -480,67 +480,108 @@ def _remember_holding_detail_cache(holding: Holding, response: HoldingDetailResp
     )
 
 
+def _parse_profile_iso_date(value: str | None) -> date | None:
+    raw = (value or "").strip()[:10]
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _calendar_holding_days(start: date, *, today: date | None = None) -> int:
+    """自然日持有天数：今天减建仓日。"""
+    as_of = today or date.today()
+    return max(0, (as_of - start).days)
+
+
+def _ocr_holding_start_date(profile: FundProfile | None) -> date | None:
+    if profile is None or profile.holding_days is None:
+        return None
+    as_of = _holding_days_as_of_date(profile)
+    if as_of is None:
+        return None
+    return as_of - timedelta(days=max(0, int(profile.holding_days)))
+
+
+def _snapshot_holding_start_date(
+    holding: Holding,
+    *,
+    snapshots: list[dict[str, Any]] | None,
+) -> date | None:
+    if snapshots is None:
+        snapshots = list_portfolio_daily_snapshots(limit=365)
+    if not snapshots:
+        return None
+
+    first_date: str | None = None
+    for snapshot in reversed(snapshots):
+        for item in snapshot.get("holdings") or []:
+            if _holding_matches(item, holding):
+                first_date = str(snapshot.get("snapshot_date") or "")
+                break
+        if first_date:
+            break
+    if not first_date:
+        return None
+    try:
+        return datetime.fromisoformat(first_date).date()
+    except ValueError:
+        return _parse_profile_iso_date(first_date)
+
+
+def resolve_holding_start_date(
+    profile: FundProfile | None,
+    holding: Holding,
+    *,
+    snapshots: list[dict[str, Any]] | None = None,
+) -> tuple[date | None, str | None]:
+    """持有起点取各来源中最早的一天。
+
+    加仓导入常把最近成交日写成 ``first_purchase_date``，不能压过更早的
+    首次出现日 / OCR 回推日 / 日快照。份额基准日会在同步时改写成当天，不用。
+    """
+    candidates: list[tuple[date, str]] = []
+    if profile is not None:
+        purchase = _parse_profile_iso_date(profile.first_purchase_date)
+        if purchase is not None:
+            candidates.append((purchase, "user"))
+        seen = _parse_profile_iso_date(profile.first_seen_date)
+        if seen is not None:
+            candidates.append((seen, "first_seen"))
+        ocr_start = _ocr_holding_start_date(profile)
+        if ocr_start is not None:
+            candidates.append((ocr_start, "ocr_detail"))
+    snapshot_start = (
+        _snapshot_holding_start_date(holding, snapshots=snapshots)
+        if snapshots is not None
+        else None
+    )
+    if snapshot_start is not None:
+        candidates.append((snapshot_start, "snapshot"))
+    if not candidates:
+        return None, None
+    start, source = min(candidates, key=lambda item: item[0])
+    return start, source
+
+
 def _resolve_holding_days(
     profile: FundProfile | None,
     holding: Holding,
     *,
     snapshot_loader: Callable[[], list[dict[str, Any]]] | None = None,
+    today: date | None = None,
 ) -> tuple[int | None, str | None]:
-    if profile and profile.first_purchase_date:
-        try:
-            purchase = date.fromisoformat(profile.first_purchase_date)
-            return max(0, (date.today() - purchase).days), "user"
-        except ValueError:
-            pass
-
-    anchor = _first_seen_anchor_date(profile)
-    if anchor is not None:
-        try:
-            seen = date.fromisoformat(anchor)
-            return max(0, (date.today() - seen).days), "first_seen"
-        except ValueError:
-            pass
-
     snapshots = snapshot_loader() if snapshot_loader is not None else None
-    snapshot_days = _holding_days_from_snapshots(holding, snapshots=snapshots)
-    ocr_days = profile.holding_days if profile else None
-    aged_ocr_days: int | None = None
-
-    if ocr_days is not None:
-        as_of = _holding_days_as_of_date(profile)
-        if as_of is not None:
-            aged_ocr_days = ocr_days + max(0, (date.today() - as_of).days)
-        else:
-            aged_ocr_days = ocr_days
-
-    if snapshot_days is not None and aged_ocr_days is not None:
-        if snapshot_days >= aged_ocr_days:
-            return snapshot_days, "snapshot"
-        return aged_ocr_days, "ocr_detail"
-    if aged_ocr_days is not None:
-        return aged_ocr_days, "ocr_detail"
-    if snapshot_days is not None:
-        return snapshot_days, "snapshot"
-    return None, None
-
-
-def _first_seen_anchor_date(profile: FundProfile | None) -> str | None:
-    if profile is None:
-        return None
-    if profile.first_seen_date:
-        anchor = profile.first_seen_date
-        if profile.shares_baseline_date:
-            try:
-                baseline = date.fromisoformat(profile.shares_baseline_date)
-                seen = date.fromisoformat(anchor)
-                if baseline < seen:
-                    anchor = profile.shares_baseline_date
-            except ValueError:
-                pass
-        return anchor
-    if profile.shares_baseline_date and not profile.first_purchase_date:
-        return profile.shares_baseline_date
-    return None
+    start, source = resolve_holding_start_date(
+        profile,
+        holding,
+        snapshots=snapshots,
+    )
+    if start is None:
+        return None, None
+    return _calendar_holding_days(start, today=today), source
 
 
 def _holding_days_as_of_date(profile: FundProfile | None) -> date | None:
@@ -553,32 +594,6 @@ def _holding_days_as_of_date(profile: FundProfile | None) -> date | None:
             pass
     # Legacy profiles: anchor aging from today so the value starts growing tomorrow.
     return date.today()
-
-
-def _holding_days_from_snapshots(
-    holding: Holding,
-    *,
-    snapshots: list[dict[str, Any]] | None = None,
-) -> int | None:
-    if snapshots is None:
-        snapshots = list_portfolio_daily_snapshots(limit=365)
-    if not snapshots:
-        return None
-
-    first_date: str | None = None
-    for snapshot in reversed(snapshots):
-        for item in snapshot.get("holdings") or []:
-            if _holding_matches(item, holding):
-                first_date = str(snapshot.get("snapshot_date") or "")
-                break
-    if not first_date:
-        return None
-
-    try:
-        start = datetime.fromisoformat(first_date).date()
-    except ValueError:
-        return None
-    return max(0, (date.today() - start).days)
 
 
 def _holding_matches(item: dict, holding: Holding) -> bool:

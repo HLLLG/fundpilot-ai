@@ -20,6 +20,7 @@ from app.services.deepseek_http import (
     deepseek_chat_url,
     deepseek_request_headers,
     get_deepseek_http_client,
+    post_deepseek_chat,
 )
 from app.services.sector_labels import is_generic_style_phrase, normalize_sector_label
 
@@ -95,7 +96,8 @@ def infer_sector_via_llm(
     timeout = httpx.Timeout(connect=8, read=_LLM_READ_TIMEOUT_SECONDS, write=10, pool=8)
 
     try:
-        response = get_deepseek_http_client(settings).post(
+        response = post_deepseek_chat(
+            get_deepseek_http_client(settings),
             deepseek_chat_url(settings),
             headers=deepseek_request_headers(settings),
             json=request_payload,

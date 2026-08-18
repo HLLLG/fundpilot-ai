@@ -16,7 +16,7 @@ from app.models import (
     TopicBrief,
 )
 from app.request_context import try_get_request_user_id
-from app.services.investment_presets import is_short_term_style, take_profit_threshold_percent
+from app.services.investment_presets import take_profit_threshold_percent
 from app.services.holding_estimates import build_holding_display_metrics
 from app.services.holding_metrics import (
     compute_estimated_daily_return_percent,
@@ -334,7 +334,6 @@ def _guard_policy_unavailable() -> dict[str, Any]:
     return {
         "enforce_reversal_block": True,
         "enforce_pullback_block": True,
-        "tighten_tactical": False,
         "reason": "guard_policy_timeout",
         "backtest_summary_lines": [],
     }
@@ -344,7 +343,6 @@ def _attach_escalation_to_holdings(
     per_fund: list[dict],
     *,
     market_breadth: dict | None,
-    profile: InvestorProfile,
     direction_exit_by_fund_code: dict[str, dict] | None = None,
 ) -> None:
     """给每个持仓行挂上 M2.1 的双向 guard 升级判定结果（key: `escalation`）。
@@ -373,7 +371,6 @@ def _attach_escalation_to_holdings(
             market_breadth=market_breadth,
             over_concentration=bool(row.get("over_concentration")),
             has_unrealized_gain=(row.get("estimated_holding_return_percent") or 0) > 0,
-            decision_style=profile.decision_style,
             direction_exit=direction_exit,
             # 基金层第三源：该持仓自己的净值走势，用于"载体跑输板块"的加仓禁止。
             nav_trend=row.get("nav_trend"),
@@ -885,7 +882,6 @@ def build_analysis_facts(
             "weight_denominator": round(weight_denominator, 2),
             "weight_denominator_basis": weight_denominator_basis,
             "expected_investment_amount": profile.expected_investment_amount,
-            "decision_style": profile.decision_style,
             "holding_count": len(holdings),
             "weighted_return_percent": risk.weighted_return_percent,
             "risk_level": risk.level,
@@ -895,15 +891,11 @@ def build_analysis_facts(
             # Freeze the user's transaction-cost assumption for point-in-time
             # outcome evaluation. It is never presented as an actual platform fee.
             "round_trip_fee_percent": profile.round_trip_fee_percent,
-            **(
-                {
-                    "min_net_profit_percent": profile.min_net_profit_percent,
-                    "take_profit_threshold_percent": take_profit_threshold_percent(profile),
-                    "hold_days_target": profile.hold_days_target,
-                }
-                if profile.decision_style == "aggressive"
-                else {}
-            ),
+            # 止盈线常驻披露（2026-08 决策风格收敛）：手续费+净赚目标是用户偏好数字，
+            # 数据推不出来，因此始终喂给模型与守卫，不再只在激进模式下出现。
+            "min_net_profit_percent": profile.min_net_profit_percent,
+            "take_profit_threshold_percent": take_profit_threshold_percent(profile),
+            "hold_days_target": profile.hold_days_target,
         },
         "alerts": [alert.model_dump() for alert in risk.alerts],
         "holdings": per_fund,
@@ -944,7 +936,6 @@ def build_analysis_facts(
     _attach_escalation_to_holdings(
         per_fund,
         market_breadth=facts["market_breadth"],
-        profile=profile,
         direction_exit_by_fund_code=(
             sector_opportunity.get("direction_exit_by_fund_code")
             if isinstance(sector_opportunity, dict)
@@ -988,12 +979,9 @@ def build_analysis_facts(
     facts["guard_policy"] = {
         "enforce_reversal_block": guard_policy.get("enforce_reversal_block", True),
         "enforce_pullback_block": guard_policy.get("enforce_pullback_block", True),
-        "tighten_tactical": guard_policy.get("tighten_tactical", False),
         "reason": guard_policy.get("reason"),
         "backtest_summary_lines": guard_policy.get("backtest_summary_lines") or [],
     }
-    if is_short_term_style(profile.decision_style):
-        facts["prompt_tuning"] = guard_policy
     if tradeability_profiles is not None:
         facts["transaction_execution_semantics"] = {
             "schema_version": "holding_transaction_execution_semantics.v1",

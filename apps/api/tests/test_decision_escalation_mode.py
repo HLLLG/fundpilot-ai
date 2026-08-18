@@ -114,7 +114,6 @@ def _guard(facts: dict) -> FundRecommendation:
         _request(),
         _risk(),
         _TODAY_NEWS,
-        [],
         facts=facts,
     )
     return guarded[0]

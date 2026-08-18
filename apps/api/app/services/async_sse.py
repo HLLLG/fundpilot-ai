@@ -11,6 +11,24 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# HTTP/2 and some reverse proxies hold the first response frames until the
+# stream has enough bytes. A leading comment pad forces the first flush so
+# the browser can resolve fetch() instead of sitting on the connect timeout.
+SSE_HTTP2_PADDING = ": " + ("*" * 2048) + "\n\n"
+
+
+def format_sse_event(payload: dict[str, Any]) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def sse_connected_prelude(label: str) -> tuple[str, str]:
+    return (
+        format_sse_event(
+            {"type": "stage", "stage": "connected", "label": label}
+        ),
+        SSE_HTTP2_PADDING,
+    )
+
 
 async def sse_from_sync_iterator(
     items: Iterator[dict[str, Any]],
@@ -90,7 +108,7 @@ async def sse_from_sync_iterator(
                 continue
             if payload is None:
                 break
-            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            yield format_sse_event(payload)
     except asyncio.CancelledError:
         stop.set()
         raise

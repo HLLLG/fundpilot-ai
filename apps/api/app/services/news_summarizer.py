@@ -13,6 +13,7 @@ from app.services.deepseek_http import (
     deepseek_chat_url,
     deepseek_request_headers,
     get_deepseek_http_client,
+    post_deepseek_chat,
 )
 from app.services.news_freshness import normalize_news_now
 
@@ -142,7 +143,8 @@ def _summarize_topic_with_flash(
         write=30,
         pool=10,
     )
-    response = get_deepseek_http_client(settings).post(
+    response = post_deepseek_chat(
+        get_deepseek_http_client(settings),
         deepseek_chat_url(settings),
         headers=deepseek_request_headers(settings),
         json=request_payload,

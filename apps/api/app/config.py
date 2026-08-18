@@ -66,13 +66,13 @@ class Settings(BaseSettings):
     # Process-wide pools replace per-SSE-request fan-out pools. Analysis and
     # discovery context assembly are isolated so one pipeline cannot starve
     # the other, while the wider I/O pool absorbs bounded nested fan-out.
-    sse_shared_io_workers: int = 32
+    sse_shared_io_workers: int = 48
     # 必须 >= 单份日报的增强项任务数（见 shared_executors.ANALYSIS_ENHANCEMENT_TASK_COUNT）：
     # 池子比任务数小时，后提交的任务会用自己的超时预算去排队，`sector_opportunity` 作为第 5 个
     # 提交项因此可能压根没启动就被判超时（2026-08-11 14:30 实测）。低于下界的取值会被
     # `get_analysis_context_executor` 抬到下界。
     sse_analysis_context_workers: int = 12
-    sse_discovery_context_workers: int = 2
+    sse_discovery_context_workers: int = 4
     # Bounded in-process telemetry avoids a new Prometheus/OTel deployment on
     # the current single-host topology. Only aggregate samples and sanitized
     # route/query fingerprints are retained.
@@ -132,10 +132,6 @@ class Settings(BaseSettings):
     news_per_topic: int = 5
     news_tool_max_rounds: int = 1
     news_sources: str = "eastmoney,cls,announcement,macro"
-    # 旧日报复盘口径尚未按真实 T+N 收益与成熟样本重建，禁止默认参与 Prompt 调参。
-    # 保留环境变量覆盖能力，仅供修复后的受控验证显式开启。
-    tactical_prompt_tuning_enabled: bool = False
-    tactical_prompt_tuning_lookback_reports: int = 30
     sector_signal_backtest_enabled: bool = True
     sector_signal_backtest_days: int = 120
     sector_signal_backtest_min_triggers: int = 10
@@ -183,7 +179,6 @@ class Settings(BaseSettings):
     akshare_worker_max_tasks: int = 50
     akshare_worker_max_lifetime_seconds: int = 1800
     akshare_worker_acquire_timeout_seconds: float = 10.0
-    news_require_today_for_add: bool = True
     db_auto_import_path: Path | None = None
     sector_quotes_enabled: bool = True
     # 覆盖 auto_interval 直至下次后台刷新（默认 180s 间隔 + 60s 余量）
@@ -241,8 +236,25 @@ class Settings(BaseSettings):
     eastmoney_call_deadline_seconds: float = 30
     eastmoney_max_concurrency: int = 8
     eastmoney_acquire_timeout_seconds: float = 5
+    # When another pipeline is already using or waiting for Eastmoney, wait
+    # longer than the solo acquire timeout so a busy peer can release slots
+    # instead of the new stream failing locally with PoolTimeout.
+    eastmoney_fair_acquire_timeout_seconds: float = 15
+    # Reserved floors while a peer lane is active or waiting. A lone
+    # analysis/discovery stream can still use the full global concurrency.
+    # ``0`` disables the floor for that lane.
+    eastmoney_lane_floor_analysis: int = 3
+    eastmoney_lane_floor_discovery: int = 3
     eastmoney_circuit_failure_threshold: int = 3
     eastmoney_circuit_cooldown_seconds: float = 15
+    # Long-lived report streams are serialized by default so two SSE
+    # pipelines do not both sit on a 180s DeepSeek completion. Non-stream
+    # calls (news / judge / infer) use a separate, larger gate. ``0``
+    # disables that gate.
+    deepseek_max_concurrent_streams: int = 1
+    deepseek_max_concurrent_requests: int = 3
+    deepseek_stream_acquire_timeout_seconds: float = 180
+    deepseek_acquire_timeout_seconds: float = 45
     # Cross-worker account write serialization. A bounded wait fails with 503
     # instead of allowing two stale read-modify-write operations to overlap.
     portfolio_mutation_lock_timeout_seconds: float = 30.0

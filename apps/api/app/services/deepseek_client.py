@@ -19,6 +19,7 @@ from app.services.deepseek_http import (
     deepseek_request_headers,
     deepseek_timeout,
     get_deepseek_http_client,
+    post_deepseek_chat,
 )
 from app.models import (
     AnalysisRequest,
@@ -313,7 +314,6 @@ class DeepSeekClient:
                 "role": "system",
                 "content": _system_prompt(
                     news_enabled,
-                    request.profile.decision_style,
                     request.system_role_prompt,
                     session=bundle.session,
                 ),
@@ -502,7 +502,8 @@ class DeepSeekClient:
             tools=tools,
             response_format=response_format,
         )
-        response = get_deepseek_http_client(self.settings).post(
+        response = post_deepseek_chat(
+            get_deepseek_http_client(self.settings),
             deepseek_chat_url(self.settings),
             headers=deepseek_request_headers(self.settings),
             json=payload,
@@ -525,7 +526,6 @@ class DeepSeekClient:
 
 def _system_prompt(
     news_enabled: bool,
-    decision_style: str = "conservative",
     system_role_prompt: str | None = None,
     *,
     session: dict | None = None,
@@ -533,8 +533,6 @@ def _system_prompt(
     from app.services.analysis_prompt import resolve_role_prompt
 
     decision_now = resolve_decision_local_datetime(session)
-    tactical = decision_style == "tactical"
-    aggressive = decision_style == "aggressive"
     base = resolve_role_prompt(system_role_prompt)
     base += f"当前分析时点约为 {decision_now}。"
     if news_enabled:
@@ -546,31 +544,15 @@ def _system_prompt(
         )
     else:
         base += "若无新闻数据，须说明信息缺口并给出条件化方案。"
-    if aggressive:
-        base += (
-            "当前为激进波段模式：持有周期约 3～7 天，跌深企稳可分批买入，"
-            "持有收益达扣费止盈线（手续费 + 净赚目标，见 profile 或 analysis_facts.portfolio.take_profit_threshold_percent）"
-            "优先减仓落袋；须结合 nav_trend.recent_5d_change_percent、sector_intraday 分时企稳与 sector_return_percent；"
-            "不追涨当日大涨板块，不得承诺收益。"
-        )
-    elif tactical:
-        base += (
-            "当前为战术短线模式：在遵守集中度与风险复核前提下，优先最大化当日收盘前与下一交易日的战术收益空间；"
-            "须结合 sector_intraday（分时形态）、sector_momentum（涨后回吐等）、stock_connect_flow 与 news.freshness_label；"
-            "stock_connect_flow 中的南向数据仅作港股资金面的独立参考；"
-            "对「涨一天跌一天」场景须明确次日冲高回落时的止盈/观望条件，但仍不得承诺收益。"
-        )
-        settings = get_settings()
-        if settings.tactical_prompt_tuning_enabled:
-            from app.services.prompt_tuning import resolve_prompt_tuning_hints
-
-            tuning = resolve_prompt_tuning_hints(
-                lookback_reports=settings.tactical_prompt_tuning_lookback_reports,
-            )
-            for hint in tuning.get("hints") or []:
-                base += hint
-    else:
-        base += "当前为稳健模式：偏保守，避免追涨，加仓需有当日要闻或明确盘面支撑。"
+    # 单一数据驱动决策风格（2026-08 收敛）：动作凭结构化证据说话，方向与力度由
+    # 趋势/资金/证据档位决定，不再按稳健/战术/激进预设倾向。
+    base += (
+        "决策凭已提供的结构化数据判断：加仓须有板块方向（sector_opportunity）、"
+        "资金流与基金证据支撑，不追涨当日大涨板块；"
+        "持有收益达扣费止盈线（analysis_facts.portfolio.take_profit_threshold_percent）"
+        "且出现走弱/回吐信号时，优先考虑分批止盈；"
+        "方向退出信号（direction_exit）出现时不得以长期逻辑掩盖减仓需求；不得承诺收益。"
+    )
     base += "最终回复必须是完整 JSON，不要 Markdown，控制篇幅避免截断。"
     return append_output_requirements_to_system(base)
 
@@ -611,7 +593,6 @@ def build_analysis_chat_messages(
             "role": "system",
             "content": _system_prompt(
                 runtime.news_enabled,
-                request.profile.decision_style,
                 request.system_role_prompt,
                 session=analysis_bundle.session,
             ),
@@ -1155,7 +1136,6 @@ def _apply_recommendation_guards_by_holding_order(
     request: AnalysisRequest,
     risk: RiskAssessment,
     market_news: list[NewsItem] | None,
-    topic_briefs: list[TopicBrief] | None,
     *,
     nav_trends_by_code: dict[str, dict] | None,
     facts: dict | None,
@@ -1177,7 +1157,6 @@ def _apply_recommendation_guards_by_holding_order(
             request,
             risk,
             market_news,
-            topic_briefs,
             nav_trends_by_code=nav_trends_by_code,
             facts=facts,
         )
@@ -1204,7 +1183,6 @@ def _apply_recommendation_guards_by_holding_order(
         guard_request,
         risk,
         market_news,
-        topic_briefs,
         nav_trends_by_code=guard_nav_trends,
         facts=guard_facts,
     )
@@ -1346,7 +1324,6 @@ def _finalize_recommendations(
         request,
         risk,
         market_news,
-        topic_briefs,
         nav_trends_by_code=nav_trends_by_code,
         facts=facts,
     )
@@ -1382,20 +1359,6 @@ def _append_pipeline_caveats(caveats: list[str], facts: dict) -> list[str]:
         result.append(
             f"分析管线：{mode} 模式 / 模型 {model}{judge_note}；"
             f"当日要闻 {pipeline.get('today_news_count', 0)} 条。"
-        )
-    decision_style = (facts.get("portfolio") or {}).get("decision_style", "conservative")
-    if (
-        decision_style not in {"tactical", "aggressive"}
-        and pipeline.get("has_today_market_signal") is False
-        and get_settings().news_require_today_for_add
-    ):
-        result.append("当日无已标注「今日」的要闻，系统已限制激进加仓类建议。")
-    elif decision_style == "tactical":
-        result.append("战术短线模式已启用：守卫未因缺少当日要闻而压制加仓类建议，请自行承担短线波动风险。")
-    elif decision_style == "aggressive":
-        threshold = (facts.get("portfolio") or {}).get("take_profit_threshold_percent", 2.5)
-        result.append(
-            f"激进波段模式已启用：跌深买入、达 {threshold}% 扣费止盈线优先减仓，请自行承担短线波动风险。"
         )
     window = session.get("decision_window")
     if window and window not in result:
@@ -1490,7 +1453,6 @@ def _offline_report(
         request,
         risk,
         news,
-        briefs,
         nav_trends_by_code=nav_trends,
         facts=bundle.facts,
     )

@@ -1,7 +1,6 @@
 from types import SimpleNamespace
 
-from app.config import get_settings, refresh_settings
-from app.services import prompt_tuning, recommendation_accuracy, signal_guard_policy
+from app.services import recommendation_accuracy, signal_guard_policy
 
 
 def test_forward_accuracy_is_experimental_and_ineligible_for_tuning(monkeypatch):
@@ -115,70 +114,23 @@ def test_only_audited_persisted_v2_events_enter_formal_accuracy(monkeypatch):
     assert result["legacy_reference"]["recommendation_count"] == 0
 
 
-def test_disabled_prompt_tuning_does_not_feed_experimental_accuracy_into_guard(monkeypatch):
+def test_guard_policy_is_backtest_only_and_never_reads_accuracy(monkeypatch):
+    """决策风格收敛后守卫策略只消费板块信号回测，复盘统计不参与调参。"""
     settings = SimpleNamespace(
-        tactical_prompt_tuning_enabled=False,
-        tactical_prompt_tuning_lookback_reports=30,
         sector_signal_backtest_days=120,
         sector_signal_backtest_min_triggers=10,
     )
     monkeypatch.setattr(signal_guard_policy, "get_settings", lambda: settings)
     monkeypatch.setattr(
         signal_guard_policy,
-        "resolve_accuracy_tuning",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            AssertionError("disabled experimental accuracy tuning must not be loaded")
-        ),
-    )
-    monkeypatch.setattr(
-        signal_guard_policy,
         "build_signal_backtest_context",
         lambda *_args, **_kwargs: {"by_rule": {}, "has_data": False},
     )
 
     policy = signal_guard_policy.resolve_signal_guard_policy(sector_labels=[])
 
-    assert policy["tighten_tactical"] is False
+    assert policy["enforce_reversal_block"] is True
+    assert policy["enforce_pullback_block"] is True
     assert policy["hints"] == []
-    assert policy["stats"]["accuracy"] == {"disabled": True}
-
-
-def test_explicitly_enabled_prompt_tuning_still_rejects_ineligible_accuracy(monkeypatch):
-    """即使显式打开环境开关，legacy 指标也不能绕过评价器 eligibility 硬门。"""
-    monkeypatch.setenv("FUND_AI_TACTICAL_PROMPT_TUNING_ENABLED", "true")
-    refresh_settings()
-    assert get_settings().tactical_prompt_tuning_enabled is True
-    monkeypatch.setattr(
-        prompt_tuning,
-        "build_recommendation_accuracy",
-        lambda **_kwargs: {
-            "auto_tuning_eligible": False,
-            "metric_status": "legacy_experimental",
-            "warning": "旧口径不可用于自动调参。",
-            "paired_days": 12,
-            "by_style": {
-                "tactical": {
-                    "reversal": {
-                        "up_then_down_count": 8,
-                        "up_then_down_aggressive_miss": 8,
-                    }
-                }
-            },
-        },
-    )
-    monkeypatch.setattr(
-        signal_guard_policy,
-        "build_signal_backtest_context",
-        lambda *_args, **_kwargs: {"by_rule": {}, "has_data": False},
-    )
-
-    policy = signal_guard_policy.resolve_signal_guard_policy(sector_labels=[])
-
-    assert policy["tighten_tactical"] is False
-    assert policy["hints"] == []
-    assert policy["stats"]["accuracy"]["disabled"] is True
-    assert policy["stats"]["accuracy"]["disabled_reason"] == "accuracy_not_eligible"
-
-    # 避免 get_settings 的进程缓存把显式 true 泄漏到同一 pytest 进程的后续用例。
-    monkeypatch.setenv("FUND_AI_TACTICAL_PROMPT_TUNING_ENABLED", "false")
-    refresh_settings()
+    assert policy["reason"] is None
+    assert "accuracy" not in policy["stats"]

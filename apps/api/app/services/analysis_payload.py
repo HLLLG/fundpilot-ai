@@ -17,7 +17,7 @@ from app.models import (
     RiskAssessment,
     TopicBrief,
 )
-from app.services.investment_presets import is_short_term_style, take_profit_threshold_percent
+from app.services.investment_presets import take_profit_threshold_percent
 from app.services.analysis_facts import build_analysis_facts
 from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS
 from app.services.analysis_runtime import AnalysisMode
@@ -692,33 +692,23 @@ def compact_topic_briefs(
 
 
 def slim_profile_for_llm(profile: InvestorProfile) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "style": profile.style,
-        "horizon": profile.horizon,
-        "decision_style": profile.decision_style,
+    return {
         "prefer_dca": profile.prefer_dca,
         "avoid_chasing": profile.avoid_chasing,
         "max_drawdown_percent": profile.max_drawdown_percent,
         "concentration_limit_percent": profile.concentration_limit_percent,
         "expected_investment_amount": profile.expected_investment_amount,
+        "round_trip_fee_percent": profile.round_trip_fee_percent,
+        "min_net_profit_percent": profile.min_net_profit_percent,
+        "take_profit_threshold_percent": take_profit_threshold_percent(profile),
+        "hold_days_target": profile.hold_days_target,
     }
-    if profile.decision_style == "aggressive":
-        payload.update(
-            {
-                "round_trip_fee_percent": profile.round_trip_fee_percent,
-                "min_net_profit_percent": profile.min_net_profit_percent,
-                "take_profit_threshold_percent": take_profit_threshold_percent(profile),
-                "hold_days_target": profile.hold_days_target,
-            }
-        )
-    return payload
 
 
 def trim_analysis_facts_for_llm(
     facts: dict[str, Any],
     *,
     analysis_mode: AnalysisMode = "deep",
-    decision_style: str = "conservative",
     phase: AnalysisPayloadPhase = 3,
 ) -> dict[str, Any]:
     trimmed = dict(facts)
@@ -766,8 +756,6 @@ def trim_analysis_facts_for_llm(
         if safe_management_fee is not None:
             copy["management_fee_annual_recurring"] = safe_management_fee
             has_management_fee = True
-        if phase >= 2 and not is_short_term_style(decision_style):
-            copy.pop("signal_backtest", None)
         if phase >= 1:
             nav = copy.get("nav_trend")
             if isinstance(nav, dict):
@@ -888,15 +876,14 @@ def trim_analysis_facts_for_llm(
             "market_top": market_top,
         }
 
-    if phase >= 2 and not is_short_term_style(decision_style):
-        trimmed.pop("stock_connect_flow", None)
-        trimmed.pop("signal_backtest", None)
-        trimmed.pop("prompt_tuning", None)
+    # 2026-08 决策风格收敛：signal_backtest / stock_connect_flow 不再按风格裁掉——
+    # 单一数据驱动风格下这些短线证据始终喂给模型（fast 模式仍按体积精简）。
+    if phase >= 2:
         guard = trimmed.get("guard_policy")
         if isinstance(guard, dict):
             trimmed["guard_policy"] = {
                 k: guard[k]
-                for k in ("enforce_reversal_block", "enforce_pullback_block", "tighten_tactical", "reason")
+                for k in ("enforce_reversal_block", "enforce_pullback_block", "reason")
                 if k in guard
             }
 
@@ -921,8 +908,7 @@ def trim_analysis_facts_for_llm(
         }
 
     # market_breadth 是自上而下的大盘情绪信号（用户此前踩坑的案例正是"板块微涨但大盘
-    # 整体转冷"），与 stock_connect_flow/signal_backtest 偏短线定位不同，不因 decision_style
-    # 是稳健模式而整体裁掉；fast 模式下仅保留 LLM 真正用得到的精简字段控制体积。
+    # 整体转冷"）；fast 模式下仅保留 LLM 真正用得到的精简字段控制体积。
     if phase >= 2 and analysis_mode == "fast" and isinstance(trimmed.get("market_breadth"), dict):
         breadth = trimmed["market_breadth"]
         if breadth.get("available"):
@@ -1651,7 +1637,6 @@ def build_user_payload(
     facts = trim_analysis_facts_for_llm(
         bundle.facts,
         analysis_mode=analysis_mode,
-        decision_style=request.profile.decision_style or "conservative",
         phase=phase,
     )
 

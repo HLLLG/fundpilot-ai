@@ -2,15 +2,32 @@
 
 import { useEffect, useState } from "react";
 import { FundTransactionList } from "@/components/FundTransactionList";
-import { getFundTransactions, type FundTransaction } from "@/lib/api";
+import {
+  getFundTransactions,
+  type DeletePortfolioTransactionResult,
+  type FundTransaction,
+} from "@/lib/api";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
+
+function visibleFundTransactions(transactions: FundTransaction[], fundCode: string) {
+  return transactions.filter(
+    (tx) =>
+      tx.fund_code === fundCode && tx.status !== "skipped" && tx.status !== "superseded",
+  );
+}
 
 export function FundHoldingTransactions({
   fundCode,
   enabled = true,
+  refreshKey = 0,
+  onDeleteTransaction,
+  onTransactionsChanged,
 }: {
   fundCode: string;
   enabled?: boolean;
+  refreshKey?: number;
+  onDeleteTransaction?: (transactionId: string) => Promise<DeletePortfolioTransactionResult>;
+  onTransactionsChanged?: () => void;
 }) {
   const [transactions, setTransactions] = useState<FundTransaction[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,11 +43,7 @@ export function FundHoldingTransactions({
     void getFundTransactions(fundCode)
       .then((result) => {
         if (!cancelled) {
-          setTransactions(
-            result.transactions.filter(
-              (tx) => tx.status !== "skipped" && tx.status !== "superseded",
-            ),
-          );
+          setTransactions(visibleFundTransactions(result.transactions, fundCode));
         }
       })
       .catch((loadError: unknown) => {
@@ -41,7 +54,7 @@ export function FundHoldingTransactions({
     return () => {
       cancelled = true;
     };
-  }, [enabled, fundCode]);
+  }, [enabled, fundCode, refreshKey]);
 
   return (
     <section className="rounded-xl border border-slate-100 bg-white px-3">
@@ -53,7 +66,15 @@ export function FundHoldingTransactions({
       ) : transactions == null ? (
         <p className="py-6 text-center text-sm text-slate-500">正在加载交易记录…</p>
       ) : (
-        <FundTransactionList transactions={transactions} emptyText="这只基金还没有导入交易记录" />
+        <FundTransactionList
+          transactions={transactions}
+          emptyText="这只基金还没有导入交易记录"
+          onDeleteTransaction={onDeleteTransaction}
+          onDeleted={(result) => {
+            setTransactions(visibleFundTransactions(result.transactions, fundCode));
+            onTransactionsChanged?.();
+          }}
+        />
       )}
     </section>
   );

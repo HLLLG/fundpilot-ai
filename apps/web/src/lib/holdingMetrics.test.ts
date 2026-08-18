@@ -15,6 +15,8 @@ import {
   dedupeHoldingsByCode,
   navigableHoldings,
   patchHoldingRecord,
+  portfolioOfficialNavSettled,
+  sumPortfolioTotalAssets,
 } from "@/lib/holdingMetrics";
 import { getDailyProfit } from "@/lib/holdingDisplay";
 
@@ -328,5 +330,61 @@ describe("holding list extra columns", () => {
     expect(formatHoldingUnitCost(0.8378)).toBe("0.8378");
     expect(formatHoldingDays(14)).toBe("14天");
     expect(formatHoldingDays(null)).toBe("—");
+  });
+});
+
+describe("sumPortfolioTotalAssets", () => {
+  it("keeps estimated daily profit out of total assets", () => {
+    const holdings: Holding[] = [
+      {
+        fund_code: "015788",
+        fund_name: "鹏扬中证数字经济主题ETF联接C",
+        holding_amount: 10000,
+        settled_holding_amount: 10000,
+        return_percent: 0,
+        daily_profit: 50,
+        daily_return_percent: 0.5,
+        daily_return_percent_source: "sector_estimate",
+      },
+      {
+        fund_code: "002610",
+        fund_name: "博时黄金ETF联接A",
+        holding_amount: 8000,
+        settled_holding_amount: 8000,
+        return_percent: 0,
+        daily_profit: 58.92,
+        daily_return_percent: 0.74,
+        daily_return_percent_source: "sector_estimate",
+      },
+    ];
+    expect(portfolioOfficialNavSettled(holdings)).toBe(false);
+    expect(sumPortfolioTotalAssets(holdings)).toBe(18000);
+  });
+
+  it("adds official daily profit only after every holding has official NAV", () => {
+    const holdings: Holding[] = [
+      {
+        fund_code: "015788",
+        fund_name: "鹏扬中证数字经济主题ETF联接C",
+        holding_amount: 10000,
+        settled_holding_amount: 10000,
+        return_percent: 0,
+        daily_profit: 50,
+        daily_return_percent: 0.5,
+        daily_return_percent_source: "official_nav",
+      },
+      {
+        fund_code: "002610",
+        fund_name: "博时黄金ETF联接A",
+        holding_amount: 8000,
+        settled_holding_amount: 8000,
+        return_percent: 0,
+        daily_profit: 58.92,
+        daily_return_percent: 0.74,
+        daily_return_percent_source: "official_nav",
+      },
+    ];
+    expect(portfolioOfficialNavSettled(holdings)).toBe(true);
+    expect(sumPortfolioTotalAssets(holdings)).toBe(18108.92);
   });
 });
