@@ -1,321 +1,226 @@
+<div align="center">
+
+<img src="apps/web/public/social-card.jpg" alt="FundPilot AI" width="128" />
+
 # FundPilot AI
 
-私人基金投研助手：上传支付宝/养基宝总览截图更新账户汇总，按个人风控规则生成 DeepSeek 深度投研日报；**推荐基金** Tab 从免费全量基金目录中筛出有证据、通过质量门的近期机会。
+**截个图，就懂你的基金。**
 
-你的默认终端路径是：
+私人基金投研助手：上传支付宝 / 养基宝截图更新持仓，按个人风控生成 DeepSeek 深度日报，并从全量基金目录中筛出有证据、过质量门的近期机会。
 
-```bash
-/d/Code/HL_Project/fundpilot-ai
-```
+[在线体验](https://www.hllingxi.cn) · [项目上下文](docs/PROJECT_CONTEXT.md) · [部署指南](docs/deploy/lighthouse-cicd.md) · [安全说明](docs/SECURITY.md)
 
-所以下面的命令都按 **Git Bash / MINGW64** 写法提供。
+[![CI](https://github.com/HLLLG/fundpilot-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/HLLLG/fundpilot-ai/actions/workflows/ci.yml)
+[![Frontend Perf](https://github.com/HLLLG/fundpilot-ai/actions/workflows/frontend-perf.yml/badge.svg)](https://github.com/HLLLG/fundpilot-ai/actions/workflows/frontend-perf.yml)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.128+-009688?logo=fastapi&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)
+
+</div>
+
+---
+
+面向个人或不超过 5 人的私有部署。不自动下单，不对接券商，报告只作投研辅助，不构成投资建议。
+
+## 目录
+
+- [功能](#功能)
+- [技术栈](#技术栈)
+- [快速开始](#快速开始)
+- [推荐使用流程](#推荐使用流程)
+- [推荐基金](#推荐基金)
+- [环境变量](#环境变量)
+- [仓库结构](#仓库结构)
+- [开发与验证](#开发与验证)
+- [部署](#部署)
+- [文档](#文档)
+- [隐私与边界](#隐私与边界)
 
 ## 功能
 
-- 支持上传截图或粘贴 OCR 文本。
-- 截图识别走云端 qwen-vl-ocr（阿里云百炼），实测端到端 2~4 秒；未配置 key 时仍可手动录入。
-- 支持上传养基宝总览截图，以及**支付宝「我的基金」持有列表**截图（预览确认后更新账户汇总）。
-- 总览 OCR 缺少基金代码时，优先用 **AkShare 基金名称表**查码，本地 `fund_profiles` 元数据按名称兜底。
-- OCR 会自动维护估算金额、板块和购入日等元数据，并可直接用于方向与百分比建议；C 端不要求二次确认平台真实份额。实际份额、总成本、现金与费用若未录入仍保持 unknown，不按 0 猜测。
-- 养基宝总览 OCR：识别多只基金、区分当日/持有收益（未收盘时当日列为 `-` 则不填当日收益）；**OCR 漏负号**时按收益率/账户总收益/独立行减号规则补符号（当日收益额、板块涨跌与收益率一致）。详见 `docs/PROJECT_CONTEXT.md`。
-- **持有**页养基宝式账户汇总：基金代码、名称、金额、持有/当日收益、板块涨跌；当日收益盘中按关联板块估算（标 ≈）；**持有收益**盘中 = 昨日结算 + 板块估算（与传给模型的 `estimated_holding_return_percent` 一致），官方净值公布后改用截图/档案已含当日的值。列表另有持仓占比、持有份额、持有成本、持有天数（默认横向滑出；数据来自档案/详情缓存/净值缓存，缺省显示 —）。导入交易的「进行中」会先以在途预览出现在看板（不计收益、不加总资产），确认日净值公布后自动入账；看板可打开交易记录。
-- 手动修改持有金额会同步重建估算份额、成本和收益率基线，后续净值/板块刷新不会跳回旧金额；已确认真实份额的仓位须通过同步加仓/减仓或重新确认份额对账，清仓使用删除持仓。
-- **导入交易**（支付宝「交易分析」截图）写买入/卖出流水，不对齐「同步持仓」。去重键为代码+方向+成交时间+金额；同一笔从「进行中」改成「已成功」再导入会冲突，等确认日净值自动入账即可。
-- **行情** Tab：无子 Tab。头部 A 股五指数 + 美股期货；主题板块小倍式涨幅榜（有符号连涨天数、主力净流入、列头排序）；休市锁定后后台不再打源。
-- **盈亏分析**页：收益走势（我的收益 vs 沪深300）、盈亏日历、当日 TOP5、持仓分布图。
-- 内置稳健型风控规则：最大浮亏线、单只基金集中度、偏定投、拒绝追高（规则守卫 + 传入 AI `profile`）。
-- DeepSeek V4 Pro 生成日报；新闻来自东财/基金公告/宏观主题（可配置），生成前用 **Flash 按主题摘要**（`topic_briefs`），主报告使用有界预取证据。
-- 报告含**逐基金操作建议**、**主题要闻摘要**与**新闻原文列表**；利好/利空标题须能对应原文（`news_citation` 守卫）。
-- **后台异步分析**：点击「生成报告」后后台执行，右下角悬浮面板查看进度；完成后桌面通知（需开启通知权限）。
-- **生产专职后台 Worker**：市场/板块刷新、基金板块预计算与启用时的 Prompt shadow 不再随每个 Uvicorn 进程重复启动；独立容器通过 MySQL/OS 全局 leader lease、会话保活和 PID 心跳 fail-closed 监督，部署必须等 Worker 健康并通过决策质量 dry-run。
-- **按领域组织的接口边界**：Factor 证据、市场诊断和决策质量运维端点由独立 FastAPI Router 承载；前端把鉴权请求核心、Factor 证据、市场诊断拆成域模块，旧 `@/lib/api` 继续作为兼容门面。可展开诊断组件共用可取消、可重试的懒加载状态钩子，避免各自复制请求生命周期。
-- **证据成熟度控制台**：盈亏分析页可查看 Worker、PIT 基金池/Factor IC、DecisionScore shadow 和决策质量前向标签的真实积累进度；缺失数据明确显示“尚无证据”，17.5/19.5 个月仅为理论最短研究窗口，任何状态都不会自动启用新模型。
-- **不可变 NAV 首次观测账本**：交易日晚间从同一份公开基金目录同时捕获成员 PIT 与当时可见的净值；首次观测时间绝不回填，修订只追加新行，周度研究按历史截止时点读取最早可见版本。真实观测尚未形成至少 250 个可用因子点前继续使用既有 membership-PIT v3/v2，禁止用历史 NAV 冒充 observation PIT 或自动晋级。
-- **DecisionScore v2 与压力测试**：影子评分按基金类型只接受正式合同基准或精确跟踪参考，v1/v2 样本隔离；组合风险页可按需查看当前权重的历史最差 1/5/20 日与 95% 单日期望损失。两者都不参与自动推荐或调仓，缺任一持仓证据时不出数。
-- **逐笔实际手续费采集**：同步单笔或批量交易时可选填原平台实际手续费；未知保持 `null`，不会按 0。风险页单独展示已确认交易的费用证据覆盖率，历史费用不外推为新候选的未来渠道费率。
-- 日报与推荐基金主生成统一使用**深度分析**；旧快速报告仍可查看。
-- 报告支持与上一份日报**对比差异**并可**导出 Markdown**；仓位建议使用相对当前估算持仓的动态百分比，并同步展示“约 ¥金额”，不冒充可执行固定金额。
-- **报告追问**：日报阅读区提供按需对话抽屉（桌面右侧、移动端底部），支持 Markdown、快速/深度追问和深度模式按需补拉新闻；对话按报告存 SQLite，可**导出对话 Markdown**。
-- API 支持 **SQLite 全库备份/恢复**；风控参数与追问模式保存在浏览器本地，风控画像同步至数据库。
-- SQLite 本地保存历史日报；日报阅读区可通过上一份/下一份和历史抽屉检索、切换或删除，荐基历史使用独立的有界侧轨/抽屉工作区。
-- 基金详情页：**业绩走势**（近1月～3年、本基金 vs 沪深300）、历史净值滚动加载；**持有天数**可点选首次购入日期；关联板块分时图。
-- **邮箱注册/登录**（JWT，默认 30 天有效）；用户菜单 → **账号设置** 查看当前账号。
-- **推荐基金** Tab：默认 **市场优选**，也可选择 **组合补缺**；从免费全量基金目录、方向成熟度与确定性质量门形成有界候选，支持关注方向、预算、历史推荐、候选池、T+5/T+20/T+60 复盘与追问。详见下文「推荐基金」。
-- **页面缓存：** Dashboard 主 Tab sessionStorage 记忆；行情主题榜/指数不写浏览器缓存；盈亏分析、业绩走势、持仓详情等 SWR 缓存；板块涨跌后台轻量轮询，手动刷新走精确模式。
-- **日报数据口径**：AI 分析使用 `estimated_holding_return_percent`，与持有页「持有」列一致（盘中含板块估算）。
-- **动态仓位建议**：加仓按板块机会强度映射为当前持仓的 5% / 10% / 15% / 20%，再由交易与集中度门禁收紧；减仓固定使用 1/4 / 1/3 / 1/2 / 1/1。金额只作持仓估值折算展示。
-- **加仓要求该仓自己先转正**：估算持有收益 ≤ 0 时，加仓档位一律封到最低档（分段试仓系数仍在其后相乘，所以实际可低至 2%）。这道门禁量的是**你自己的成本**，与板块方向分、结构修复度都不重叠——此前一只浮亏 8% 的持仓只要方向在线上，就会拿到与浮盈 8% 那只完全相同的档位。判据与减仓侧的浮盈提档共用同一个数。**这是目前唯一有前瞻检验支撑的加仓侧规则**（`apps/api/scripts/run_position_sizing_backtest.py` 逐 episode 配对：9 组参数均值差全为正、7 组 |t|≥2，且平均投出与费用双降），但样本只有 71 个 episode、单一下行区间、标的是板块指数，因此只加了这道条件门禁、**没有改动任何档位数值**。同一份回测也说明「每涨 10% 加一笔」的金字塔买入法在这套信号上打不响（平均只投出 25.6% 预算，比现状更少），而退出规则对结果的影响比加仓档位大一到两个数量级。
-- **方向退出判定（什么时候该走）**：发现基金负责「什么时候进」，日报负责已持仓的「加 / 减 / 退」。持仓方向的趋势强度跌破退出线即产出确定性减仓档位（首日 1/4、有浮盈时 1/3、连续跌破 3 个交易日升为 1/2、方向判定为不具备参与条件时 1/2 并在同时连续跌破时升为清仓评估）；趋势仍在线上但已明显转弱时只收回加仓资格、不要求卖出。判定结果在日报卡片「专业依据」里展示趋势与退出线、连续跌破天数、买入时的方向基线与恢复条件。**连续跌破天数与相对回落幅度这两个门槛尚未回测**，界面与 Prompt 都如实标注，不宣称历史胜率。
-- **方向状态每交易日自动落库**：退出判定要数「连续跌破几个交易日」，这依赖逐日的方向状态账本。`.github/workflows/sector-direction-capture.yml` 每交易日 19:10（Asia/Shanghai）对全白名单板块捕获一次并写入 `sector_direction_states`（无 LLM 调用，生产实测约 6 秒）。**不跑这个定时任务，连续天数会长期停在 1，「大幅减仓」那一档实际不可达。** 补历史用 `python scripts/capture_sector_direction_states.py --backfill-days N`，口径见 `apps/api/scripts/README.md`。
-- **决策准确性 V2**：日报与荐基会冻结决策时点持仓、数据证据、费用假设和基准映射，并按基金自身估值日分别评价毛方向、假设费后正收益、合同基准毛超额和合同基准假设费后超额；legacy 报告只作参考，不进入正式分母。完整契约见 [项目上下文](docs/PROJECT_CONTEXT.md#现行权威契约)。
-- **候选排序 D4（内部 shadow）**：冻结荐基 `prescreen` 全集、K=3 与保守次日入场的共同 T+20 路径；audit/outcome 使用数据库可见后的独立 receipt，日历/NAV 使用 live adapter stdout、请求参数、版本、解析与规范化 hash 绑定的追加式来源 receipt，只有完整 source-verified 标签才计算 Precision/NDCG/regret。它不同于报告 UI 的单基金 T+5/T+20/T+60 复盘，无普通用户界面，也不会自动修改 Prompt、权重、Guard 或交易。边界见 [项目上下文](docs/PROJECT_CONTEXT.md#8-决策质量-shadow-与晋级边界)。
-- **配对 Prompt D5（默认关闭、当前冻结休眠）**：旧实验只覆盖“全市场 + 快速 + 默认角色”；主扫描统一深度后不再产生新 eligible 请求，既有样本不迁移、不冒充深度样本。边界同见 [项目上下文](docs/PROJECT_CONTEXT.md#8-决策质量-shadow-与晋级边界)。
+| 模块 | 做什么 |
+|------|--------|
+| **持仓台账** | 上传支付宝「我的基金」或养基宝总览截图，预览确认后写入账户汇总；也可粘贴 OCR 文本或手动录入 |
+| **导入交易** | 支付宝「交易分析」截图写入买卖流水。进行中交易先以上看板（不计收益、不加总资产），确认日净值公布后再入账 |
+| **行情** | A 股五指数、美股期货、主题板块涨幅榜（连涨天数、主力净流入、列头排序）；休市锁定后后台不再打源 |
+| **盈亏分析** | 收益走势（相对沪深 300）、盈亏日历、当日 TOP5、持仓分布；组合风险与压力测试按需展开 |
+| **投研日报** | 按个人风控画像生成逐基金操作建议、主题要闻摘要与新闻原文列表；后台异步执行，完成后可桌面通知 |
+| **推荐基金** | 从免费全量目录做有界候选，经质量门后给出「今日可布局 / 等待合适位置 / 方向观察」 |
+| **报告追问** | 日报与荐基报告内按需对话（快速 / 深度）；深度模式可补拉持仓、目录、方向账本或新闻 |
+| **账号** | 邮箱注册 / 登录（JWT，默认 30 天）；持仓、日报、荐基按用户隔离 |
 
-**主报告分析模式：** 日报与推荐基金的新生成请求固定使用深度分析（Pro + 有界扩展证据 + 可选审校）；旧客户端传 `fast` 时服务端会兼容升级，历史快速报告仍可读取。
+持仓看板按养基宝式展示代码、金额、持有 / 当日收益和板块涨跌。盘中当日收益按关联板块估算（标 ≈）；真实份额、成本、现金与费用未录入时保持 unknown，不按 0 猜测。
 
-**追问模式（报告页按需对话抽屉）：**
+日报与荐基的新生成固定走**深度分析**。仓位建议是相对当前估算持仓的动态百分比，并同步展示「约 ¥金额」，不冒充可执行固定金额。
 
-| 模式 | 说明 |
-|------|------|
-| 快速 | Flash；仅基于已生成日报与历史对话作答。 |
-| 深度 | Pro；可按需查当前持仓、报告依据、基金目录、方向账本或新闻，也可在你明确要求时触发既有日报/荐基任务。仓位比例与质量门仍由原流水线决定。 |
+## 技术栈
 
-**管线轨迹（可观测、不改决策权）：** 深度追问、日报任务与荐基任务的节点回放写在报告诊断「管线轨迹」。落库只记节点名、归属（代码 / 模型工人 / 追问工具循环）和阶段计数，不含 Prompt、持仓或工具原文。主报告生成仍由原流水线决定仓位与质量门；LangGraph 只负责编排与回放。关闭：`FUND_AI_LANGGRAPH_ENABLED=false`。完整契约见 [项目上下文](docs/PROJECT_CONTEXT.md#报告追问快速-vs-深度)。
+```mermaid
+flowchart LR
+  Web["Next.js 前端"] --> API["FastAPI"]
+  API --> DB[("SQLite / MySQL")]
+  API --> OCR["阿里云百炼 qwen-vl-ocr"]
+  API --> LLM["DeepSeek V4 Pro / Flash"]
+  API --> Market["公开行情与新闻"]
+```
+
+| 层 | 选型 |
+|----|------|
+| 前端 | Next.js 16、React 19、TypeScript、Tailwind CSS 4 |
+| 后端 | FastAPI、Pydantic v2、Uvicorn；生产将请求进程与专职 Worker 分离 |
+| 存储 | 本地 SQLite（`data/app.db`）；生产 MySQL |
+| 识别 | 阿里云百炼 `qwen-vl-ocr`（未配置 Key 时改用手动输入） |
+| 模型 | DeepSeek V4 Pro（主报告）/ Flash（摘要与快速追问） |
+| 行情 | 东方财富、AkShare 等公开源 |
+
+## 快速开始
+
+需要 **Python 3.12**、**Node.js 22**。Windows 可用 Git Bash 或 PowerShell。
+
+```bash
+git clone https://github.com/HLLLG/fundpilot-ai.git
+cd fundpilot-ai
+cp .env.example .env
+```
+
+编辑 `.env`，至少填入：
+
+```env
+FUND_AI_DEEPSEEK_API_KEY=sk-...
+FUND_AI_JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+```
+
+截图识别另需 `FUND_AI_VLM_OCR_API_KEY`（阿里云百炼）。不配也能手动录入持仓，其它分析不受影响。
+
+**本地请把 `FUND_AI_DATABASE_URL` 留空**，使用 `data/app.db`。若填了本机连不上的生产 MySQL，连接层可能回落 SQLite，但份额 / 交易等真值写入会被拒绝，界面会报「主数据库暂不可用」。
+
+一条命令同时启动前后端：
+
+```bash
+# Git Bash / macOS / Linux
+bash scripts/dev.sh
+```
+
+```powershell
+# Windows PowerShell
+.\scripts\dev.ps1
+```
+
+浏览器打开 [http://127.0.0.1:3001](http://127.0.0.1:3001)。默认监听 `8000`（API）与 `3001`（Web）；端口已被占用时启动脚本会拒绝再起一份。
+
+<details>
+<summary>分别启动前后端</summary>
+
+```bash
+# 后端
+cd apps/api
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+# 前端（另一个终端）
+cd apps/web
+npm install
+npm run dev
+```
+
+前端 dev 使用 webpack，避开 Windows 下偶发的 Turbopack panic。仅在主动改 API 时设置 `FUND_AI_DEV_RELOAD=true` 打开热重载。
+
+</details>
+
+## 推荐使用流程
+
+1. 打开 `/register` 注册，或 `/login` 登录。
+2. 在 **持仓** 页用「新增持有」上传支付宝 / 养基宝总览截图；买卖流水走「导入交易」。
+3. 预览确认后写入账户汇总。进行中交易先出现在看板，确认日净值公布后再计入持仓。
+4. **行情** 看主题板块与指数；**我的 → 盈亏分析** 看收益走势、日历与分布。
+5. **推荐基金** 选择市场优选或组合补缺，可选关注方向与预算，扫描今日机会。
+6. **生成日报** 确认风控画像与 AI 角色后生成深度日报；右下角浮层查看进度。
+7. 在报告页追问、对比上一份日报，或导出 Markdown。换机迁移可走数据库导出 / 导入 API，导入前先备份原库。
 
 ## 推荐基金
 
-「推荐基金」与「生成日报」共用同一套风控画像（`InvestorProfile`），但使用**独立的 AI 角色设定**与报告存储，不会把荐新基混进日报 Prompt。
-
-**适用场景：** 想了解“未来 20～60 个交易日哪些方向值得研究、今天是否适合开始布局”时，从免费全量目录构建有界候选并进行确定性质量筛选（不自动下单，不承诺收益）。
-
-**扫描模式：**
-
-| 模式 | 说明 |
-|------|------|
-| 市场优选（默认） | 多样化召回顺势、蓄势和回调承接方向，再按成熟度与基金质量横向比较 |
-| 组合补缺 | 优先组合低配置且证据成熟的方向，持仓暴露与预算进入确定性门禁 |
-
-**关注方向：** 可选最多 3 个优先方向；用户关注方向优先进入证据召回，但不能绕过资金、价格、质量、申赎、费用、预算和集中度门禁。
-
-**使用步骤：**
-
-```text
-1. 先在「持有」页恢复/更新持仓（组合补缺会参考组合结构；市场优选仅把持仓作为风险背景）
-2. 打开「推荐基金」Tab，选择扫描模式（默认「市场优选」）
-3. 可选：勾选关注方向（最多 3 个）、设置预算
-4. 可选：展开「AI 角色设定」微调荐基风格（会持久化，下次扫描生效）
-5. 点击「扫描今日机会」（固定深度分析）
-6. 右下角 DiscoveryJobStatusFloat 查看进度；完成后查看推荐报告
-7. 桌面历史侧轨或移动历史抽屉可检索、切换和删除往日报告；报告内可展开候选池与 T+N 复盘；点击推荐卡片可预览基金详情
-8. 在报告下方用追问面板细化需求（SSE 流式，同日报追问）
-```
-
-**自动质量与入场判断：** 系统先补齐规模、成立日、经理、净值和回撤，再执行 `eligible / watch_only / excluded` 质量门；方向另分为“今日可布局 / 等待合适位置 / 方向观察”。极端短期上涨不会直接变成买入，长期趋势接近高位也不会仅因“创新高”而永久等待。
-
-**分析模式（扫描）：** 固定深度分析。扫描为后台异步任务，通过 `GET /api/jobs/{id}` 轮询状态；报告内追加提问仍可选择快速/深度。
-
-**与日报的区别：**
+「推荐基金」与「生成日报」共用同一套风控画像，但使用独立的 AI 角色与报告存储，不会把荐新基混进日报 Prompt。
 
 | | 生成日报 | 推荐基金 |
 |---|----------|----------|
 | 分析对象 | 已有持仓 | 全量目录筛出的有界候选 |
 | AI 角色 | `analysis-prompt` | `discovery-prompt` |
-| 输出 | `fund_recommendations` 调仓建议 | `FundDiscoveryReport` 荐基报告 |
-| 历史 | 阅读区 `ReportNavigator` + `ReportHistoryDrawer` | `DiscoveryHistoryWorkspace` 有界侧轨/抽屉 |
+| 输出 | 逐基金调仓建议 | 荐基报告（可执行 / 等待 / 观察） |
+| 历史 | 阅读区导航 + 历史抽屉 | 独立侧轨 / 抽屉工作区 |
 
-API 与架构见 [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md)（推荐基金 V2/V3、全市场扫描等行为以本文为准）。
+| 扫描模式 | 说明 |
+|----------|------|
+| 市场优选（默认） | 多样化召回顺势、蓄势和回调承接方向，再按成熟度与基金质量横向比较 |
+| 组合补缺 | 优先组合低配置且证据成熟的方向；持仓暴露与预算进入确定性门禁 |
 
-## 目录
-
-```text
-apps/api        FastAPI 后端（app/routes 为领域路由，app/services 为领域服务）
-apps/web        Next.js 前端（src/lib/api 为 API 域模块，src/lib/api.ts 为兼容门面）
-data            SQLite 数据库（云端可迁 MySQL）
-uploads         本地上传截图
-scripts         dev.sh / dev.ps1 / migrate_sqlite_to_mysql.py / diagnose-sector-quotes.sh
-docs            项目上下文与 Lighthouse / 安全运维手册
-.github/workflows  CI、前端性能、部署，以及三个数据类定时任务：
-                   方向状态每交易日捕获（退出判定的连续天数依赖它）、
-                   Factor IC 研究池捕获与刷新、决策结果 T+N 结算
-```
-
-> 新增由定时任务通过 `docker compose exec api python scripts/<name>` 调用的脚本时，
-> 必须同时更新**四处**：根目录 `Dockerfile`（生产真正使用的那份）、`apps/api/Dockerfile`、
-> 以及两份 `.dockerignore` 的白名单——镜像刻意不整目录拷 `scripts/`。漏掉任何一处，
-> 定时任务只会每晚在 Actions 日志里静默失败，界面上看不出任何异常。
-> `apps/api/tests/test_capture_script_is_packaged.py` 会把这四处一起锁住。
-
-面向 AI 或新开发者的架构与业务说明见 **[docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md)**，可在新对话开头 `@` 该文件，避免重复扫描全仓库。
+关注方向最多 3 个，优先进入证据召回，但不能绕过资金、价格、质量、费用、预算和集中度门禁。主扫描固定深度分析、后台异步执行；报告内追问仍可选快速 / 深度。
 
 ## 环境变量
 
-在项目根目录复制模板：
-
-```bash
-cp .env.example .env
-```
-
-编辑 `.env`，将 DeepSeek 控制台复制的 API Key 填入 `FUND_AI_DEEPSEEK_API_KEY`（勿提交到 Git）：
-
-```text
-FUND_AI_DEEPSEEK_API_KEY=
-FUND_AI_DEEPSEEK_MODEL=deepseek-v4-pro
-FUND_AI_DEEPSEEK_MODEL_FAST=deepseek-v4-flash
-FUND_AI_DEEPSEEK_TIMEOUT_SECONDS=300
-FUND_AI_DEEPSEEK_MAX_TOKENS=32768
-FUND_AI_DEEPSEEK_MAX_TOKENS_REPORT=32768
-FUND_AI_DEEPSEEK_CONNECTION_RETRIES=2
-# 可选的内部 paired Prompt 实验；默认关闭。密钥必须使用独立随机值且不得提交。
-FUND_AI_PROMPT_SHADOW_ENABLED=false
-FUND_AI_PROMPT_SHADOW_ASSIGNMENT_SECRET=
-FUND_AI_PROMPT_SHADOW_SAMPLE_BASIS_POINTS=10000
-FUND_AI_PROMPT_SHADOW_MAX_CHALLENGER_CALLS_PER_DAY=100
-FUND_AI_NEWS_ENABLED=true
-FUND_AI_NEWS_MAX_TOPICS=5
-FUND_AI_NEWS_PER_TOPIC=5
-FUND_AI_NEWS_TOOL_MAX_ROUNDS=3
-FUND_AI_NEWS_SOURCES=eastmoney,announcement,macro
-FUND_AI_NEWS_SUMMARIZE=true
-FUND_AI_NEWS_MACRO_TOPIC=上证指数
-NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
-FUND_AI_JWT_SECRET=change-me-to-a-random-secret-at-least-32-chars
-```
-
-鉴权与云端（可选，详见 `.env.example` 与 [Lighthouse 自动部署指南](docs/deploy/lighthouse-cicd.md)）：
+根目录复制 `.env.example` 为 `.env`。`.env` 已被 gitignore，不要提交。完整列表见模板与 [项目上下文](docs/PROJECT_CONTEXT.md#环境变量)。
 
 | 变量 | 说明 |
 |------|------|
-| `FUND_AI_JWT_SECRET` | JWT 签名密钥（本地开发也建议设置） |
-| `FUND_AI_JWT_ACCESS_EXPIRE_MINUTES` | JWT 有效期（分钟）；默认 43200（30 天） |
-| `FUND_AI_DATABASE_URL` | 设则使用 MySQL；**本地开发请留空**（用 `data/app.db`），见下方「本地开发的数据库配置」|
-| `FUND_AI_MYSQL_SCHEMA_LOCK_TIMEOUT_SECONDS` | 多进程启动时 MySQL schema 锁等待秒数；默认 60，进程内并发自动合并 |
-| `WEB_CONCURRENCY` | Uvicorn worker 进程数；4 核轻量服务器生产默认 2，本地开发仍为 1 |
-| `FUND_AI_RUNTIME_ROLE` | `all`（本地默认）/`api`/`worker`；生产 Compose 已将请求与长期后台任务分离 |
-| `FUND_AI_BACKGROUND_WORKER_*` | leader 锁等待/重试、心跳间隔及过期门槛；默认 `5/5/10/45` 秒 |
-| `FUND_AI_BACKGROUND_WORKER_HEARTBEAT_PATH` | 可选心跳文件路径；生产 Compose 已固定到 API/Worker 共享的数据卷 |
-| `FUND_AI_PORTFOLIO_MUTATION_LOCK_TIMEOUT_SECONDS` | 同账户持仓跨 worker 写锁等待秒数；默认 30，超时返回可重试的 503 |
-| `FUND_AI_HOLDINGS_MEMORY_CACHE_ENABLED` | 持仓响应进程内缓存；MySQL 默认关闭，避免不同 worker 返回不同版本 |
+| `FUND_AI_DEEPSEEK_API_KEY` | DeepSeek API Key（必填才能生成报告） |
+| `FUND_AI_DEEPSEEK_MODEL` | 主模型，默认 `deepseek-v4-pro` |
+| `FUND_AI_DEEPSEEK_MODEL_FAST` | 摘要 / 快速追问，默认 `deepseek-v4-flash` |
+| `FUND_AI_JWT_SECRET` | JWT 签名密钥，至少 32 字符 |
+| `FUND_AI_VLM_OCR_API_KEY` | 阿里云百炼 Key；不配则截图识别不可用 |
+| `FUND_AI_DATABASE_URL` | 设则使用 MySQL；**本地开发请留空** |
+| `NEXT_PUBLIC_API_BASE_URL` | 前端请求的 API 地址 |
 
-`.env` 已被 `.gitignore` 忽略，不会提交到 Git。
-
-### 本地开发的数据库配置
-
-**本地开发请把 `FUND_AI_DATABASE_URL` 留空**，让 `data/app.db`（SQLite）成为「配置的主库」。
-
-如果这里填了一个本机连不上的 MySQL（生产用的腾讯云地址是 VPC 内网域名，开发机 DNS 直接解析不到），连接层会按 `FUND_AI_DB_FALLBACK_SQLITE=true` 静默回退 SQLite，但 `_decision_store_authority()` 会因为「配置说 MySQL、实际是 SQLite」判定为 `fallback_non_audited`，于是**删除基金、确认份额、写交易账本这类「真值写入」会被 fail-closed 拒绝**，界面报「主数据库暂不可用，未写入份额/交易真值；请稍后重试」。这个保险是为了防止生产环境静默降级后把真值写进非审计库（MySQL 恢复即丢失），但在本地会表现为「明明连着可写的 SQLite 却删不掉东西」，而且提示里的「稍后重试」在本机永远不会成功。
-
-留空后跨进程锁自动改用数据库旁的 OS 文件锁（`cross_process_lock`），功能与线上一致；另一个好处是启动不再等待 MySQL 连接超时。需要临时连线上库时再填回该变量，并确认网络可达。
-
-DeepSeek 请求会复用进程级连接池；仅在 TCP/TLS 尚未建立时自动重试
-`ConnectError/ConnectTimeout`，不会重放已经开始响应的模型请求。流式读取与同步调用统一
-遵循 `FUND_AI_DEEPSEEK_TIMEOUT_SECONDS`。若仍出现 `read_timeout`，应检查真实报告负载、
-服务商状态与网络链路，不建议把报告输出预算提高到模型的理论上限。
-
-新闻相关（可选）：
+<details>
+<summary>新闻、运行角色与其它可选开关</summary>
 
 | 变量 | 说明 |
 |------|------|
-| `FUND_AI_NEWS_ENABLED` | `false` 时不注册新闻 Tool，仍可在分析前预取新闻 |
-| `FUND_AI_NEWS_MAX_TOPICS` | 从持仓推导的检索主题上限 |
-| `FUND_AI_NEWS_PER_TOPIC` | 每个主题保留的新闻条数 |
-| `FUND_AI_NEWS_TOOL_MAX_ROUNDS` | 模型调用 `fetch_market_news` 的最大轮数 |
-| `FUND_AI_NEWS_SOURCES` | 新闻源：`eastmoney`、`announcement`、`macro` |
+| `FUND_AI_NEWS_ENABLED` | 是否注册新闻 Tool，默认 `true` |
+| `FUND_AI_NEWS_SOURCES` | `eastmoney`、`announcement`、`macro` |
 | `FUND_AI_NEWS_SUMMARIZE` | 是否用 Flash 按主题生成 `topic_briefs` |
-| `FUND_AI_NEWS_MACRO_TOPIC` | 宏观主题检索词（如上证指数） |
-| `FUND_AI_LANGGRAPH_ENABLED` | 默认 `true`。追问 / 日报 Job / 荐基 Job 走 LangGraph 编排；`false` 回线性实现，不改仓位与质量门 |
-| `FUND_AI_LANGGRAPH_RUN_RETENTION_DAYS` | 节点轨迹保留天数，默认 14 |
+| `FUND_AI_RUNTIME_ROLE` | `all`（本地默认）/ `api` / `worker`；生产已拆开请求与后台任务 |
+| `FUND_AI_LANGGRAPH_ENABLED` | 默认 `true`。追问 / 日报 / 荐基走编排轨迹；`false` 回线性实现，不改仓位与质量门 |
+| `WEB_CONCURRENCY` | Uvicorn worker 数；生产 4 核默认 2，本地仍为 1 |
 
-## 安装
+DeepSeek 只在 TCP/TLS 尚未建立时自动重试连接错误，不会重放已经开始响应的模型请求。
 
-后端：
+</details>
 
-```bash
-cd /d/Code/HL_Project/fundpilot-ai/apps/api
-
-# 如果 .venv 已存在，可以跳过这行
-/d/Users/hegl/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe -m venv .venv
-
-./.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
-```
-
-前端：
-
-```bash
-cd /d/Code/HL_Project/fundpilot-ai/apps/web
-npm install
-```
-
-截图识别不需要额外依赖，只要在 `.env` 配好 `FUND_AI_VLM_OCR_API_KEY`（阿里云百炼）即可。未配置时截图识别不可用，界面会提示改用手动输入；文本粘贴和其他分析功能不受影响。
-
-> 本地 PaddleOCR 兜底已移除：它冷加载 + CPU 推理比云端慢一个数量级，却会在云端出错时静默接管，把一次报错拖成一次 60 秒超时（「批量加减仓」的交易记录识别就是这样超时的）。镜像也因此少了约 550 MiB 依赖和 `libgl1`/`libgomp1` 等系统库。
-
-## 启动
-
-**推荐：一条命令同时启动前后端（Git Bash）：**
-
-```bash
-cd /d/Code/HL_Project/fundpilot-ai
-bash scripts/dev.sh
-```
-
-或 Windows PowerShell：
-
-```powershell
-.\scripts\dev.ps1
-```
-
-Windows 本地开发默认以单进程启动 API，避免 Uvicorn 热重载进程与行情子进程残留；
-启动脚本会在 8000/3001 端口已占用时拒绝再启动一份。仅在主动修改 API 代码时可先设置
-`FUND_AI_DEV_RELOAD=true` 启用热重载，退出 Git Bash 启动脚本时会清理本次启动的完整子进程树。
-
-也可以分别开两个终端：
-
-开第一个 Git Bash 终端启动后端：
-
-```bash
-cd /d/Code/HL_Project/fundpilot-ai/apps/api
-./.venv/Scripts/python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-开第二个 Git Bash 终端启动前端：
-
-```bash
-cd /d/Code/HL_Project/fundpilot-ai/apps/web
-npm run dev
-```
-
-前端 dev 脚本使用 Next.js 的 webpack 模式，避开 Windows 下偶发的 Turbopack panic。
-
-浏览器打开：
+## 仓库结构
 
 ```text
-http://127.0.0.1:3001
+fundpilot-ai/
+├── apps/api          FastAPI：领域路由、服务、后台 Worker
+├── apps/web          Next.js：持仓 / 行情 / 荐基 / 日报
+├── data              本地 SQLite（云端可迁 MySQL）
+├── uploads           本地上传截图
+├── scripts           开发启动、库迁移、行情诊断
+├── docs              项目上下文、部署与安全手册
+└── .github/workflows CI、前端性能、部署，以及方向状态 / Factor IC 等定时任务
 ```
 
-## 推荐使用流程
+架构、API 与现行业务契约以 **[docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md)** 为准。新对话或接手开发时先读该文件。
 
-```text
-0. 首次使用在 /register 注册账号，或 /login 登录（需在 .env 配置 FUND_AI_JWT_SECRET）
-1. bash scripts/dev.sh → 打开 http://127.0.0.1:3001（**刷新后恢复上次 Tab**，首次默认「持仓」）
-2. 启动后 **localStorage 优先**展示上次持仓，再请求 API 同步；需更新金额时点击「新增持有」上传支付宝/养基宝总览截图；买卖流水走「导入交易」
-3. 预览确认后写入账户汇总并刷新查码与板块涨跌；截图估算金额可直接用于日报，成本、现金与逐笔交易只按需补录。进行中交易会先出现在看板，确认日净值公布后再计入持仓
-4. 「盈亏分析」查看收益走势、盈亏日历、当日 TOP5
-5. 「市场」→ 主题板块涨幅榜 / 美股概览
-6. 点击持仓行可查看基金详情（业绩走势、持有天数、板块分时与上季持仓分布）；截图估算持仓可直接用于日报，无需再次确认平台真实份额
-7. 「推荐基金」→ 选择市场优选或组合补缺 → 可选关注方向、预算与荐基角色 → 扫描今日机会 → 查看报告 / 历史 / 候选池 / T+N 复盘 / 追问
-8. 切到「生成日报」→ 确认风控画像与日报 AI 角色 → 生成深度日报
-9. 右下角 JobStatusFloat 查看进度；完成后可在报告页追问（可选深度模式拉最新新闻），并在结果面板查看四项独立准确率指标
-10. 换机迁移可调用数据库导出/导入 API；导入前务必保留原库备份
-11. 需要留存时可导出日报 Markdown 或导出对话 Markdown
-```
+## 开发与验证
 
-## 云端部署（可选）
-
-面向 ≤5 人私有部署：Lighthouse 上以 Nginx 提供同源静态 Web 并反代 FastAPI/SSE，API、专职 Worker 与 MySQL 由容器运行；`main` CI 成功后部署同一个已验证 commit。完整步骤见 **[docs/deploy/lighthouse-cicd.md](docs/deploy/lighthouse-cicd.md)**。
+后端单测默认离线 stub，不访问东财 / AkShare / MySQL：
 
 ```bash
-# 本地验证 Docker 镜像
-export FUND_AI_JWT_SECRET=your-secret-32chars-minimum
-docker compose -f docker-compose.local.yml up --build
+cd apps/api
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+python -m pytest tests -q
 ```
 
-## 验证
-
-后端单元测试（本轮 **1302 passed**；默认离线 stub，不访问东财/AkShare/MySQL）：
+与 CI 一致的并行跑法（需 `pytest-xdist`；Windows 上偶发不稳定）：
 
 ```bash
-cd /d/Code/HL_Project/fundpilot-ai/apps/api
-./.venv/Scripts/python.exe -m pytest tests -q
+python -m pytest tests -q -n auto --dist loadscope
 ```
 
-与 CI 一致并行跑（需 `pytest-xdist`，Linux/macOS 推荐；Windows 上 xdist 偶发不稳定）：
-
-```bash
-cd /d/Code/HL_Project/fundpilot-ai/apps/api
-./.venv/Scripts/python.exe -m pytest tests -q -n auto --dist loadscope
-```
-
-本地若 `.env` 配置了 MySQL，跑测前建议临时清空数据库 URL，强制使用 SQLite 内存库（与 CI 相同）：
+本地若 `.env` 配了 MySQL，跑测前先清空，强制走 SQLite（与 CI 相同）：
 
 ```bash
 export FUND_AI_DATABASE_URL=
@@ -324,44 +229,49 @@ export FUND_AI_NEWS_ENABLED=false
 export FUND_AI_SECTOR_SIGNAL_BACKTEST_ENABLED=false
 ```
 
-单测默认 **30s** 超时（`apps/api/pytest.ini`）。外部行情、交易日历、板块热度等在 `tests/conftest.py` 中统一 stub，避免子进程拉 AkShare。
-
-**CI（GitHub Actions）：** `api` job 并行 pytest + 关闭 OCR 预加载/新闻/回测；`web` job lint/typecheck/build；`e2e-smoke` Playwright 冒烟。详见 `.github/workflows/ci.yml`。
-
 前端：
 
 ```bash
-cd /d/Code/HL_Project/fundpilot-ai/apps/web
+cd apps/web
 npm run lint
 npm run typecheck
+npm test
 npm run build
-# 可选：截图验收（需本地开发服务器已启动）
-node scripts/_verify-shots.mjs    # 落地页 / 登录 / 注册
-node scripts/_verify-auth.mjs     # 注册并进入 App（Dashboard / 市场）
 ```
 
-## 常见 Git Bash 路径写法
+GitHub Actions 的 `CI` 并行跑 API pytest、Web lint / typecheck / 单测，以及 Playwright 三视口冒烟。
 
-Git Bash 里不要写：
+<details>
+<summary>给贡献者的两点注意</summary>
+
+- 新增由定时任务通过 `docker compose exec api python scripts/<name>` 调用的脚本时，必须同时更新根目录 `Dockerfile`、`apps/api/Dockerfile` 以及两份 `.dockerignore` 白名单。镜像刻意不整目录拷 `scripts/`。漏掉任何一处，任务只会在 Actions 日志里失败，界面上看不出来。`apps/api/tests/test_capture_script_is_packaged.py` 会把这四处锁住。
+- 方向退出判定依赖逐日账本。生产需跑 `.github/workflows/sector-direction-capture.yml`（每交易日 19:10，Asia/Shanghai）。不跑则连续跌破天数会停在 1。补历史见 `apps/api/scripts/README.md`。
+
+</details>
+
+## 部署
+
+面向小团队私有部署：腾讯云 Lighthouse 上 Nginx 提供同源静态站点并反代 FastAPI / SSE；API、专职 Worker 与 MySQL 由容器运行。`main` 的 CI 通过后部署同一个已验证 commit。
+
+完整步骤见 **[docs/deploy/lighthouse-cicd.md](docs/deploy/lighthouse-cicd.md)**。
 
 ```bash
-cd D:\Code\HL_Project\fundpilot-ai
+export FUND_AI_JWT_SECRET=your-secret-32chars-minimum
+docker compose -f docker-compose.local.yml up --build
 ```
 
-要写成：
+## 文档
 
-```bash
-cd /d/Code/HL_Project/fundpilot-ai
-```
+| 文档 | 内容 |
+|------|------|
+| [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md) | 产品、架构、API、数据流与现行业务 / 量化契约 |
+| [docs/deploy/lighthouse-cicd.md](docs/deploy/lighthouse-cicd.md) | Lighthouse + GitHub Actions 发布 |
+| [docs/SECURITY.md](docs/SECURITY.md) | API Key、权限、密码重置与 Secret Scanning |
+| [docs/perf/web_frontend_20260725.md](docs/perf/web_frontend_20260725.md) | 前端首屏体积与交互性能口径 |
+| [.env.example](.env.example) | 环境变量模板 |
 
-Windows 可执行文件路径也要用 `/d/...` 形式，或者使用已有虚拟环境里的：
+## 隐私与边界
 
-```bash
-./.venv/Scripts/python.exe
-```
+本项目面向个人自用。截图、数据库和上传文件默认保存在本地项目目录。DeepSeek 会收到你确认后的结构化持仓、风控参数、净值摘要、主题新闻摘要、新闻标题 / 短摘要，以及已生成日报全文（追问时）。报告与对话只用于个人投研辅助，**不构成投资建议，也不会执行任何交易**。
 
-## 隐私和边界
-
-本项目面向个人自用。截图、数据库和上传文件默认保存在本地项目目录。DeepSeek 会收到你确认后的持仓、风控参数、净值摘要、主题新闻摘要（Flash 生成）、新闻标题/短摘要，以及已生成日报全文（追问时）。报告与对话只用于个人投研辅助，不构成投资建议，也不会执行任何交易。
-
-**截图识别与外传说明：** 截图识别只有一条路——配置 `FUND_AI_VLM_OCR_API_KEY`（阿里云百炼）后，「新增持有」和「批量加减仓」的截图都会先发到本应用服务端，再由服务端转发到云端 `qwen-vl-ocr` 做**纯图转文字**；识别文本按图片 sha256 缓存，重复上传同一张截图不再外发。未配置 key 时截图识别不可用，界面提示改用手动输入。**不希望截图外传就用手动输入**（本地 PaddleOCR 兜底已移除，不再提供「本地识别」选项）。无论哪条路，发给 DeepSeek 的始终是你确认后的结构化持仓，而不是原始截图。
+截图识别只有一条路：配置 `FUND_AI_VLM_OCR_API_KEY` 后，截图先到本应用服务端，再转发到云端 `qwen-vl-ocr` 做纯图转文字；识别文本按图片 sha256 缓存，同一张图不会重复外发。未配置 Key 时请改用手动输入。**不希望截图外传就不要走识别。** 发给 DeepSeek 的始终是确认后的结构化持仓，不是原始截图。
