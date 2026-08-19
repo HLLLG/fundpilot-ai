@@ -393,26 +393,6 @@ function expectedSettledProfit(holding: Holding, returnPercent: number): number 
   return round2((holding.holding_amount * returnPercent) / (100 + returnPercent));
 }
 
-/** 支付宝 OCR 三元组自洽：只用于修复误写收益，不代表已含今日涨跌。 */
-function ocrHoldingProfitIsCumulative(holding: Holding): boolean {
-  if (holding.holding_profit == null) {
-    return false;
-  }
-  const returnPercent = resolveHoldingReturnPercent(holding);
-  const amount =
-    holding.settled_holding_amount ??
-    holding.display_holding_amount ??
-    holding.holding_amount;
-  if (returnPercent == null || amount <= 0) {
-    return false;
-  }
-  const expected = round2((amount * returnPercent) / (100 + returnPercent));
-  if (expected === 0) {
-    return false;
-  }
-  return Math.abs(holding.holding_profit - expected) <= Math.max(1, Math.abs(expected) * 0.02);
-}
-
 function repairCorruptedSettledProfit(holding: Holding): Holding {
   if (holding.holding_profit == null) {
     return holding;
