@@ -349,8 +349,8 @@ def resolve_escalation_floor(
 
     `nav_trend` 是该持仓自己的净值走势摘要（2026-08 新增第三源）。加它是因为前两个来源
     的主语都是**板块**：一只基金若持续跑输自己所属的板块，只要板块方向还在线上，整条
-    减仓链路对它没有任何信号——加仓侧有基金证据、载体质量、用户成本三道基金层门禁，
-    减仓侧此前一道都没有。见 `_resolve_fund_lag_floor`。
+    减仓链路对它没有任何信号。见 `_resolve_fund_lag_floor`：浅落后停加，深落后或
+    长短窗同时确认则减仓。
 
     各来源独立判定，最后取**更保守**的那一档（bucket 数值更小者胜），理由合并。
     这样既不放松既有的风险升级，也让方向失效能真正落成动作。
@@ -371,28 +371,37 @@ def resolve_escalation_floor(
 
 
 #: 基金近 20 日总收益落后所属板块多少个百分点算「载体明显没跟上方向」。
-#: **新设参数，未经回测**——因此它只封加仓（暂停追涨），不产生任何减仓比例；把它顶到
-#: 减仓档等于用未标定的阈值处置真实仓位（与 `sector_direction_exit` 对承诺失效条件的
-#: 处理同一纪律）。取 8 个点是在"主动基金正常跟踪差"之上留了余量：基金持仓不完全等于
-#: 板块成分、股票仓位通常 ~90%，20 日窗口 2~4 个点的偏离属常态；QDII 净值滞后 1~2 个
-#: 交易日造成的窗口错位也被这个余量覆盖。
+#: 取 8 个点是在"主动基金正常跟踪差"之上留了余量：基金持仓不完全等于板块成分、
+#: 股票仓位通常 ~90%，20 日窗口 2~4 个点的偏离属常态；QDII 净值滞后 1~2 个交易日
+#: 造成的窗口错位也被这个余量覆盖。
 FUND_SECTOR_LAG_THRESHOLD_20D = 8.0
+#: 20 日落后达到这一档，视为掉队幅度本身已经够深，升到减仓评估 −25%。
+#: 与退出线「跌破即减」同级：单窗口够深就可以动仓，不必再等第二条腿。
+FUND_SECTOR_LAG_DEEP_THRESHOLD_20D = 12.0
+#: 近 5 日也落后这么多，视为掉队在持续，而不是 20 日窗口里的一次错位。
+#: 与 20 日门槛同时命中才升减仓——两条腿都缺时只停加、不减。
+FUND_SECTOR_LAG_THRESHOLD_5D = 4.0
 
 
 def _resolve_fund_lag_floor(
     nav_trend: dict | None,
     sector_opportunity: dict | None,
 ) -> dict[str, object]:
-    """基金自身相对所属板块显著跑输时，禁止继续加仓（不要求卖出）。
+    """基金自身相对所属板块显著跑输时，停加；掉队够深或长短窗同时确认则减仓。
 
     对比口径：基金 `nav_trend.return_20d_percent`（官方日增长率优先重建的 20 交易日总
     收益）vs 板块 `mainline_regime.features.return_20d_percent`（同窗口板块指数/BK 收益）。
     两个数字**任一缺失就不判**——"不知道"不等于"在跑输"，与浮亏门禁对 `None` 的处理
     同一纪律。板块行必须真的带主线快照（旧口径行没有 20 日收益轴，不硬凑）。
 
-    只到暂停追涨，刻意不给减仓档位：跑输识别的是"载体没跟上方向"，正确动作往往是换
-    载体而不是清出方向，而"该换成哪只"是发现基金的职责——这里只负责把"继续往这只上
-    加钱"按住，并在理由里指向载体替换评估。
+    分两档，避免把一次跟踪差直接当成卖出：
+
+    * 20 日落后 ≥8pp → 暂停追涨（换载体，不要求卖出方向）；
+    * 20 日落后 ≥12pp，或 20 日 ≥8pp 且 5 日也落后 ≥4pp → 减仓评估 −25%。
+
+    5 日腿取基金 `recent_5d_change_percent` vs 板块 `features.return_5d_percent`
+    （缺席时退回 `change_5d_percent`）。任一端缺失则不做「持续」升级，只保留 20 日深
+    落后这一档。
     """
     if not isinstance(nav_trend, dict) or not isinstance(sector_opportunity, dict):
         return dict(_NO_ESCALATION)
@@ -406,13 +415,52 @@ def _resolve_fund_lag_floor(
     )
     if fund_20d is None or sector_20d is None:
         return dict(_NO_ESCALATION)
-    lag = fund_20d - sector_20d
-    if lag > -FUND_SECTOR_LAG_THRESHOLD_20D:
+    lag_20d = fund_20d - sector_20d
+    if lag_20d > -FUND_SECTOR_LAG_THRESHOLD_20D:
         return dict(_NO_ESCALATION)
-    reasons = [
+
+    fund_5d = as_float(nav_trend.get("recent_5d_change_percent"))
+    sector_5d = (
+        as_float(features.get("return_5d_percent"))
+        if isinstance(features, dict)
+        else None
+    )
+    if sector_5d is None:
+        sector_5d = as_float(sector_opportunity.get("change_5d_percent"))
+    lag_5d = (
+        fund_5d - sector_5d
+        if fund_5d is not None and sector_5d is not None
+        else None
+    )
+    persistent = (
+        lag_5d is not None and lag_5d <= -FUND_SECTOR_LAG_THRESHOLD_5D
+    )
+    deep = lag_20d <= -FUND_SECTOR_LAG_DEEP_THRESHOLD_20D
+    reduce = deep or persistent
+    gap_text = (
         f"该基金近20日收益 {fund_20d:+.2f}% 落后所属板块 {sector_20d:+.2f}% 达 "
-        f"{abs(lag):.1f} 个百分点，载体未跟上方向；本轮暂停加仓，"
-        "并建议评估同方向是否有更合适的载体（该阈值未经回测，故不据此要求卖出）"
+        f"{abs(lag_20d):.1f} 个百分点，载体未跟上方向"
+    )
+    if reduce:
+        extra = (
+            "近20日落后已达深档"
+            if deep
+            else (
+                f"近5日亦落后 {abs(lag_5d):.1f} 个百分点，掉队持续"
+            )
+        )
+        reasons = [
+            f"{gap_text}；{extra}，本轮减仓评估，并建议评估同方向是否有更合适的载体"
+        ]
+        return {
+            "min_bucket": ACTION_BUCKET_REDUCE,
+            "min_action_label": ACTION_BUCKET_LABELS[ACTION_BUCKET_REDUCE],
+            "reasons": reasons,
+            "suggested_position_change_percent": -25.0,
+            "basis": "；".join(reasons),
+        }
+    reasons = [
+        f"{gap_text}；本轮暂停加仓，并建议评估同方向是否有更合适的载体"
     ]
     return {
         "min_bucket": ACTION_BUCKET_PAUSE,

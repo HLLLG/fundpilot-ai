@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from app.models import InvestorProfile
 from app.services.discovery_candidate_llm import (
+    _compact_peer_research,
     slim_candidate_for_llm,
     slim_candidate_pool_for_llm,
 )
+from app.services.discovery_payload import build_user_payload
 
 
 def test_slim_candidate_pool_preserves_every_candidate_and_order() -> None:
@@ -64,11 +67,7 @@ def test_peer_projection_preserves_every_metric_and_explicit_state() -> None:
         },
     }
 
-    projected = slim_candidate_for_llm(
-        candidate,
-        sector_change_index={},
-        trade_date=None,
-    )["peer_research"]
+    projected = _compact_peer_research(candidate)
     all_metrics = {
         **projected["metrics"],
         **projected["not_applicable_metrics"],
@@ -152,7 +151,7 @@ def test_tradeability_is_excluded_from_discovery_generation_payload() -> None:
     assert "tradeability" not in projected
 
 
-def test_vehicle_quality_and_current_tracking_error_survive_projection() -> None:
+def test_vehicle_quality_scalars_survive_but_research_blobs_are_omitted() -> None:
     projected = slim_candidate_for_llm(
         {
             "fund_code": "000001",
@@ -183,7 +182,42 @@ def test_vehicle_quality_and_current_tracking_error_survive_projection() -> None
     )
 
     assert projected["vehicle_quality_score"] == 82.5
-    assert projected["vehicle_quality_assessment"]["score"] == 82.5
-    tracking = projected["benchmark_metrics"]["tracking_metrics"]
-    assert tracking["tracking_difference_percent"] == -0.4
-    assert tracking["tracking_error_annualized_percent"] == 1.2
+    assert projected["vehicle_quality_status"] == "qualified"
+    assert "vehicle_quality_assessment" not in projected
+    assert "benchmark_metrics" not in projected
+    assert "peer_research" not in projected
+
+
+def test_discovery_llm_payload_drops_descriptive_research_and_duplicate_news() -> None:
+    payload = build_user_payload(
+        discovery_facts={
+            "session": {
+                "calendar_date": "2026-08-19",
+                "effective_trade_date": "2026-08-18",
+                "unused_clock_field": "drop-me",
+            },
+            "candidate_pool": [{"fund_code": "000001", "fund_name": "测试基金"}],
+            "sector_heat": [],
+            "portfolio_gap": {"target_sectors": []},
+            "news": {"titles": ["不应进入模型的重复新闻块"]},
+            "signal_backtest": {"rules": [{"id": 1}]},
+            "stock_connect_flow": {"available": True},
+            "candidate_peer_summary": {"status_counts": {"available": 1}},
+            "benchmark_contract": {"available_count": 1},
+            "benchmark_research_contract": {"qualified_count": 1},
+        },
+        profile=InvestorProfile(),
+        focus_sectors=[],
+    )
+    facts = payload["discovery_facts"]
+
+    assert facts["session"] == {
+        "calendar_date": "2026-08-19",
+        "effective_trade_date": "2026-08-18",
+    }
+    assert "news" not in facts
+    assert "signal_backtest" not in facts
+    assert "stock_connect_flow" not in facts
+    assert "candidate_peer_summary" not in facts
+    assert "benchmark_contract" not in facts
+    assert "benchmark_research_contract" not in facts

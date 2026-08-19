@@ -22,7 +22,7 @@ import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import date, datetime, timezone
-from typing import Any
+from typing import Any, TypedDict
 
 from app.services.fund_benchmark_sector import parse_benchmark_index
 from app.services.fund_type_classification import has_positive_qdii_marker
@@ -508,6 +508,48 @@ def resolve_benchmark_comparison(
     }
 
 
+class ClassifiedPeerUniverse(TypedDict):
+    """One-pass PIT filter + group_key index for a coarse catalogue bucket."""
+
+    raw_rows: list[dict[str, Any]]
+    point_in_time_rows: list[dict[str, Any]]
+    future_or_unknown_membership: int
+    rows_by_group_key: dict[str, list[dict[str, Any]]]
+
+
+def classify_peer_catalogue_rows(
+    universe: Iterable[Mapping[str, Any]],
+    *,
+    decision_at: str | datetime,
+) -> ClassifiedPeerUniverse:
+    """Classify each catalogue row once so many targets can reuse the groups.
+
+    ``build_peer_rank`` otherwise walks the same bucket and rebuilds every
+    peer group for every finalist. A 7k-row equity bucket times ~30–90
+    candidates is the discovery-pool 50s+ tax.
+    """
+
+    decision = _decision_instant(decision_at)
+    raw_rows = [dict(row) for row in universe if isinstance(row, Mapping)]
+    point_in_time_rows: list[dict[str, Any]] = []
+    rows_by_group_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    future_or_unknown_membership = 0
+    for row in raw_rows:
+        _, membership_reason = _membership_instant(row, decision)
+        if membership_reason:
+            future_or_unknown_membership += 1
+            continue
+        point_in_time_rows.append(row)
+        group = build_fund_peer_group(row, decision_at=decision)
+        rows_by_group_key[str(group["group_key"])].append(row)
+    return {
+        "raw_rows": raw_rows,
+        "point_in_time_rows": point_in_time_rows,
+        "future_or_unknown_membership": future_or_unknown_membership,
+        "rows_by_group_key": rows_by_group_key,
+    }
+
+
 def build_peer_rank(
     target: Mapping[str, Any],
     universe: Iterable[Mapping[str, Any]],
@@ -516,6 +558,7 @@ def build_peer_rank(
     benchmark_spec: Mapping[str, Any] | None = None,
     minimum_peer_count: int = MIN_INDEPENDENT_PEER_FAMILIES,
     minimum_metric_coverage: float = MIN_METRIC_COVERAGE,
+    classified_universe: ClassifiedPeerUniverse | None = None,
 ) -> dict[str, Any]:
     """Rank one target against independent, point-in-time peer families.
 
@@ -536,19 +579,32 @@ def build_peer_rank(
     )
     target_family = target_group["family_key"]
     target_membership, target_membership_reason = _membership_instant(target, decision)
-    rows = [dict(row) for row in universe]
-    point_in_time_rows: list[dict[str, Any]] = []
-    group_rows: list[dict[str, Any]] = []
-    future_or_unknown_membership = 0
-    for row in rows:
-        _, membership_reason = _membership_instant(row, decision)
-        if membership_reason:
-            future_or_unknown_membership += 1
-            continue
-        point_in_time_rows.append(row)
-        group = build_fund_peer_group(row, decision_at=decision)
-        if group["group_key"] == target_group["group_key"]:
-            group_rows.append(row)
+    if classified_universe is None:
+        rows = [dict(row) for row in universe]
+        point_in_time_rows = []
+        group_rows = []
+        future_or_unknown_membership = 0
+        for row in rows:
+            _, membership_reason = _membership_instant(row, decision)
+            if membership_reason:
+                future_or_unknown_membership += 1
+                continue
+            point_in_time_rows.append(row)
+            group = build_fund_peer_group(row, decision_at=decision)
+            if group["group_key"] == target_group["group_key"]:
+                group_rows.append(row)
+    else:
+        rows = classified_universe["raw_rows"]
+        point_in_time_rows = classified_universe["point_in_time_rows"]
+        future_or_unknown_membership = int(
+            classified_universe["future_or_unknown_membership"]
+        )
+        group_rows = list(
+            classified_universe["rows_by_group_key"].get(
+                str(target_group["group_key"]),
+                [],
+            )
+        )
 
     by_family: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in group_rows:
@@ -1725,6 +1781,7 @@ __all__ = [
     "build_fund_peer_group",
     "build_peer_rank",
     "catalogue_aligned_peer_target",
+    "classify_peer_catalogue_rows",
     "compact_peer_research_for_llm",
     "fund_family_key",
     "peer_catalogue_bucket",

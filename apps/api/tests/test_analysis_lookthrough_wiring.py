@@ -246,11 +246,12 @@ def test_lookthrough_activates_its_evidence_item_before_being_compacted() -> Non
 
 
 def test_persisted_lookthrough_is_the_bounded_summary_shared_with_prompt() -> None:
-    """落库、回传前端、喂 LLM 必须是同一份有界形状，不能一处完整一处紧凑。
+    """落库给前端的是有界摘要；prompt 再压一层，但合格时 top_* 暴露下界必须仍在。
 
     曾经落库完整载荷、只在 trim 阶段投影，结果两份形状字段名不同
     （`security_exposure_lower_bounds` vs `top_security_exposure_lower_bounds`），
-    前端按 prompt 形状取值就会读到空。
+    前端按落库形状取值就会读到空。落库形状因此保持有界摘要；喂模型时再丢掉
+    disclaimer / candidates / 资格审计，只留可引用的暴露下界。
     """
     facts = _bundle(lambda *_a, **_k: _lookthrough_payload()).facts
     persisted = facts["fund_lookthrough"]
@@ -270,8 +271,16 @@ def test_persisted_lookthrough_is_the_bounded_summary_shared_with_prompt() -> No
     assert "existing_funds" not in persisted
 
     trimmed = trim_analysis_facts_for_llm(facts)
-    # trim 不再二次投影：模型看到的与落库的是同一个对象形状。
-    assert trimmed["fund_lookthrough"] == persisted
+    lookthrough = trimmed["fund_lookthrough"]
+    assert lookthrough["status"] == "qualified"
+    assert lookthrough["research_eligible"] is True
+    assert lookthrough["execution_qualified"] is False
+    assert lookthrough["portfolio"]["unknown_account_mass_percent"] == 39.0
+    assert lookthrough["portfolio"]["top_security_exposure_lower_bounds"][0]["security_key"] == "600519"
+    assert lookthrough["portfolio"]["top_security_exposure_lower_bounds"][0]["exposure_lower_bound_percent"] == 7.4
+    assert "candidates" not in lookthrough
+    assert "disclaimer" not in lookthrough
+    assert "research_hash" not in lookthrough
     # 声明审计是对模型自己叙述的事后检查，不能回喂给模型。
     assert "fund_lookthrough_claim_audit" not in trimmed
 
@@ -351,9 +360,10 @@ def test_lookthrough_timeout_falls_back_without_blocking_the_report() -> None:
 
 
 def test_benchmark_metrics_are_joined_onto_each_holding_row() -> None:
-    """行内基准投影必须真的挂上，并且能穿过 trim 到达 prompt。
+    """行内基准投影必须挂到落库 holdings；描述性明细不再喂给模型。
 
-    prompt 已经把「只读 holdings[].benchmark_metrics」写成契约，这里是它的回归保护。
+    载体质量与前端仍读行内 `benchmark_metrics`；动作由守卫决定，prompt 里再放一份
+    只会占 token 或诱发「跑赢基准」叙述。
     """
     facts = _bundle(
         lambda *_a, **_k: _lookthrough_payload(),
@@ -387,10 +397,11 @@ def test_benchmark_metrics_are_joined_onto_each_holding_row() -> None:
     assert rows["161725"]["benchmark_metrics"] == {}
 
     trimmed = trim_analysis_facts_for_llm(facts)
-    assert trimmed["holdings"][0]["benchmark_metrics"]["status"] == "qualified"
-    # 顶层完整载荷不再重复下发，否则同一事实两个位置、契约自相矛盾。
+    assert "benchmark_metrics" not in trimmed["holdings"][0]
     assert "benchmark_research" not in trimmed
-    assert trimmed["benchmark_research_contract"]["qualified_count"] == 1
+    assert "benchmark_research_contract" not in trimmed
+    assert "benchmark_specs" not in trimmed
+    assert facts["benchmark_research_contract"]["qualified_count"] == 1
 
 
 def test_unsupported_lookthrough_narrative_is_sanitized_with_an_audit() -> None:
@@ -504,18 +515,20 @@ def test_vehicle_quality_is_attached_after_the_benchmark_join() -> None:
     assert active["status"] == "not_applicable"
     assert active["score"] is None
 
-    # 载体质量要进 prompt：它是模型判断"这只工具合不合格"的唯一依据。
+    # 载体质量要进 prompt：模型只需知道这只工具合不合格，不必看完整打分树。
     trimmed = trim_analysis_facts_for_llm(facts)
     trimmed_rows = {str(row["fund_code"]): row for row in trimmed["holdings"]}
     assert trimmed_rows["510300"]["vehicle_quality"]["status"] == "eligible"
+    assert trimmed_rows["510300"]["vehicle_quality"]["reasons"]
+    assert "components" not in trimmed_rows["510300"]["vehicle_quality"]
     assert trimmed_rows["519674"]["vehicle_quality"]["applicable"] is False
 
 
 def test_peer_research_is_attached_per_holding_and_reaches_the_prompt() -> None:
-    """同类分位挂到行内并穿过 trim；算不到的持仓必须带显式不可用而不是缺键。
+    """同类分位挂到落库行内；算不到的持仓必须带显式不可用而不是缺键。
 
-    缺键与"同类里不占优"是两件事：前者是没有证据，后者是负面证据。行上永远有这个键，
-    下游才不会把缺席读成利空。
+    缺键与"同类里不占优"是两件事：前者是没有证据，后者是负面证据。落库行上永远有
+    这个键，前端才不会把缺席读成利空。描述性分位不得倾斜仓位，因此不再喂给模型。
     """
     facts = _bundle(
         lambda *_a, **_k: _lookthrough_payload(),
@@ -549,7 +562,8 @@ def test_peer_research_is_attached_per_holding_and_reaches_the_prompt() -> None:
 
     trimmed = trim_analysis_facts_for_llm(facts)
     trimmed_rows = {str(row["fund_code"]): row for row in trimmed["holdings"]}
-    assert trimmed_rows["519674"]["peer_research"]["status"] == "descriptive_only"
+    assert "peer_research" not in trimmed_rows["519674"]
+    assert "peer_research" not in trimmed_rows["161725"]
 
 
 def test_peer_research_resolver_failure_leaves_every_row_marked_unavailable() -> None:

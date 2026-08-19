@@ -33,6 +33,7 @@ from app.services.fund_peer_ranking import (
     build_fund_peer_group,
     build_peer_rank,
     catalogue_aligned_peer_target,
+    classify_peer_catalogue_rows,
     peer_catalogue_bucket,
     resolve_benchmark_comparison,
 )
@@ -41,7 +42,10 @@ from app.services.fund_vehicle_quality import assess_candidate_vehicle_quality
 from app.services.news_freshness import normalize_news_now
 from app.services.sector_canonical import get_canonical_sector
 from app.services.shared_executors import get_discovery_context_executor
+from app.services.sector_opportunity_scoring import ENTRY_INVALID
 from app.services.streaming_heartbeat import raise_if_stream_cancelled
+
+_INVALID_SECTOR_CANDIDATES = 2
 
 _POOL_CAP = 28
 _PER_SECTOR = 5
@@ -50,10 +54,22 @@ _PER_SECTOR = 5
 # decision pool was complete. Keep the evidence bounded, but retain one full
 # normal scan so recall validation describes the real funnel.
 _MAX_RECALL_AUDIT_CANDIDATES = 1024
-_MIN_SCALE_YI = 1.0
 _HARD_MIN_SCALE_YI = 0.5
-_MIN_HISTORY_DAYS = 365
-_QUALITY_SCORE_VERSION = "fund_quality.v4"
+_MIN_HISTORY_DAYS = 90
+_NAV_LOOKBACK_TRADING_DAYS = 90
+# 3 个月收益窗口约 60 个交易日；少一天则 `window_return_percent(..., 60)` 会从更早的点起算。
+_NAV_QUALITY_MIN_POINTS = 61
+_QUALITY_SCORE_VERSION = "fund_quality.v5"
+_ONE_YEAR_HORIZON_FIELDS = (
+    "return_1y_percent",
+    "max_drawdown_1y_percent",
+    "return_1y_percent_source",
+    "return_1y_percent_available_at",
+    "return_1y_percent_as_of",
+    "max_drawdown_1y_percent_source",
+    "max_drawdown_1y_percent_available_at",
+    "max_drawdown_1y_percent_as_of",
+)
 _SECTOR_MATCH_STRENGTH = {
     "fallback": 0,
     "name": 1,
@@ -90,9 +106,6 @@ def _acceptable_identity_sectors(sector_label: str) -> tuple[str, ...]:
     label = str(sector_label or "").strip()
     return _DIRECTION_ACCEPTABLE_IDENTITY_SECTORS.get(label, (label,))
 _CORE_QUALITY_FIELDS = (
-    "return_3m_percent",
-    "return_6m_percent",
-    "max_drawdown_1y_percent",
     "fund_scale_yi",
     "established_date",
     "fund_manager",
@@ -193,6 +206,8 @@ def build_candidate_pool(
         if recall_audit_sink is not None
         else None
     )
+    name_index = _index_rank_rows_by_name_sectors(rank_rows, target_sectors)
+    verified_primary_sectors_by_code = _verified_primary_sectors_by_code(primary_rows)
 
     for index, sector_label in enumerate(target_sectors):
         raise_if_stream_cancelled(stop_event)
@@ -206,7 +221,7 @@ def build_candidate_pool(
         )
         sector_candidates = _candidates_for_sector(
             sector_label,
-            rank_rows=rank_rows,
+            rank_rows=name_index.get(sector_label, []),
             rank_by_code=rank_by_code,
             primary_rows=primary_rows,
             new_issue_rows=new_issue_rows,
@@ -221,6 +236,8 @@ def build_candidate_pool(
             as_of_date=decision_date,
             recall_audit_state=recall_state,
             recall_audit_limit=recall_audit_limit,
+            verified_primary_sectors_by_code=verified_primary_sectors_by_code,
+            name_prefiltered=True,
         )
         for candidate in sector_candidates:
             candidate["candidate_universe_mode"] = universe_mode
@@ -284,19 +301,31 @@ def build_candidate_pool(
             source_universe_size=len(rank_rows),
             source_universe_mode=universe_mode,
         )
-    peer_research_rows = list(selected)
-    for candidate in selected:
-        alternatives = candidate.get("_share_family_alternatives")
-        if isinstance(alternatives, list):
-            peer_research_rows.extend(
-                item for item in alternatives if isinstance(item, dict)
-            )
+    # 同类分位只给终选挂：初筛家族和份额备选会被 finalize 丢掉，这里不算。
+    return selected
+
+
+def attach_descriptive_peer_research(
+    candidates: list[dict],
+    *,
+    universe: list[dict] | None = None,
+    decision_at: datetime | None,
+) -> list[dict]:
+    """给终选候选挂同类分位。必须在 finalize 之后、基准核验之前。
+
+    同类分位不参与 finalize 排序，只进 LLM / 审计。每个粗分桶只分类一次，
+    避免对桶内几千只重复 ``build_fund_peer_group``。
+    """
+
+    rows = [dict(row) for row in (universe or []) if isinstance(row, dict)]
+    if not rows:
+        rows = fetch_discovery_fund_universe_cached(limit=20_000) or []
     _attach_descriptive_peer_research(
-        peer_research_rows,
-        universe=rank_rows,
+        candidates,
+        universe=rows,
         decision_at=decision_at,
     )
-    return selected
+    return candidates
 
 
 def _attach_descriptive_peer_research(
@@ -308,39 +337,49 @@ def _attach_descriptive_peer_research(
     """Attach PIT peer groups/percentiles without turning them into execution tilt.
 
     The full universe is bucketed by catalogue type first so a production scan
-    does not repeatedly classify all ~20k funds for every finalist. The peer
-    module still performs the stricter active/passive, QDII and subtype split.
+    does not repeatedly classify all ~20k funds for every finalist. Each coarse
+    bucket is then classified once and reused across finalists in that bucket.
     """
 
     if not candidates:
         return
     decision = normalize_news_now(decision_at)
     buckets: dict[str, list[dict]] = {}
+    index_by_bucket: dict[str, dict[str, dict]] = {}
     for raw in universe:
         if not isinstance(raw, dict):
             continue
-        buckets.setdefault(_peer_catalogue_bucket(raw), []).append(raw)
+        bucket = _peer_catalogue_bucket(raw)
+        buckets.setdefault(bucket, []).append(raw)
+        code = str(raw.get("fund_code") or "").zfill(6)
+        if code and code != "000000":
+            index_by_bucket.setdefault(bucket, {}).setdefault(code, raw)
+
+    classified_by_bucket: dict[str, object] = {}
 
     for candidate in candidates:
         code = str(candidate.get("fund_code") or "").zfill(6)
-        source_target = next(
-            (
-                row
-                for row in buckets.get(_peer_catalogue_bucket(candidate), [])
-                if str(row.get("fund_code") or "").zfill(6) == code
-            ),
-            None,
-        )
+        candidate_bucket = _peer_catalogue_bucket(candidate)
+        source_target = (index_by_bucket.get(candidate_bucket) or {}).get(code)
         target = _catalogue_aligned_peer_target(
             candidate,
             source_target=source_target,
         )
-        target_universe = buckets.get(_peer_catalogue_bucket(target), [])
+        bucket = _peer_catalogue_bucket(target)
+        target_universe = buckets.get(bucket, [])
+        classified = classified_by_bucket.get(bucket)
+        if classified is None:
+            classified = classify_peer_catalogue_rows(
+                target_universe,
+                decision_at=decision,
+            )
+            classified_by_bucket[bucket] = classified
         try:
             peer_rank = build_peer_rank(
                 target,
                 target_universe,
                 decision_at=decision,
+                classified_universe=classified,
             )
         except (TypeError, ValueError):
             continue
@@ -506,34 +545,28 @@ def enrich_candidates(
     research_pool: list[dict] = []
     research_codes: set[str] = set()
     for item in pool:
-        alternatives = item.get("_share_family_alternatives")
-        family_rows = [item]
+        row = dict(item)
+        alternatives = row.pop("_share_family_alternatives", None)
         if isinstance(alternatives, list):
-            family_rows.extend(
-                alternative
+            member_codes = [str(row.get("fund_code") or "").zfill(6)]
+            member_codes.extend(
+                str(alternative.get("fund_code") or "").zfill(6)
                 for alternative in alternatives
                 if isinstance(alternative, dict)
             )
-        for family_row in family_rows:
-            row = dict(family_row)
-            row.pop("_share_family_alternatives", None)
-            for key in (
-                "sector_label",
-                "candidate_universe_mode",
-                "candidate_universe_size",
-                "candidate_universe_source",
-                "candidate_universe_available_at",
-                "opportunity_track",
-                "opportunity_score",
-                "entry_hint",
-            ):
-                if row.get(key) is None and item.get(key) is not None:
-                    row[key] = item[key]
-            code = str(row.get("fund_code") or "").zfill(6)
-            if code in research_codes:
-                continue
-            research_pool.append(row)
-            research_codes.add(code)
+            row["share_family"] = {
+                "family_key": _candidate_share_family_key(row),
+                "key_source": "normalized_name+fund_type",
+                "confidence": "high" if len(member_codes) > 1 else "medium",
+                "member_codes": list(dict.fromkeys(code for code in member_codes if code != "000000")),
+                "selected_code": str(row.get("fund_code") or "").zfill(6),
+                "selected_basis": "prescreen_representative_nav_not_expanded",
+            }
+        code = str(row.get("fund_code") or "").zfill(6)
+        if not code or code == "000000" or code in research_codes:
+            continue
+        research_pool.append(row)
+        research_codes.add(code)
     codes = [str(item.get("fund_code") or "").zfill(6) for item in research_pool]
 
     support_executor = get_discovery_context_executor()
@@ -543,8 +576,14 @@ def enrich_candidates(
         code = str(item.get("fund_code", "")).zfill(6)
         name = str(item.get("fund_name", ""))
         holding = Holding(fund_code=code, fund_name=name, holding_amount=0)
-        snapshot, trend = service._snapshot_and_trend_for_holding(holding, trading_days=252)
+        snapshot, trend = service._snapshot_and_trend_for_holding(
+            holding,
+            trading_days=_NAV_LOOKBACK_TRADING_DAYS,
+            include_diagnostics=False,
+            canonical_backfill=False,
+        )
         row = dict(item)
+        _drop_one_year_horizon_fields(row)
         row["fund_type"] = _first_present(snapshot.fund_type, row.get("fund_type"))
         nav_metrics = _quality_metrics_from_nav_history(
             trend,
@@ -555,14 +594,6 @@ def enrich_candidates(
             observed_at=decision_moment.isoformat(),
         )
         _apply_nav_quality_metric_fallbacks(row, nav_metrics)
-        row["return_1y_percent"] = _first_present(
-            row.get("return_1y_percent"),
-            snapshot.return_1y_percent,
-        )
-        row["max_drawdown_1y_percent"] = _first_valid_drawdown(
-            row.get("max_drawdown_1y_percent"),
-            snapshot.max_drawdown_1y_percent,
-        )
         row["fund_scale_yi"] = _first_present(
             row.get("fund_scale_yi"), snapshot.fund_scale_yi
         )
@@ -577,8 +608,8 @@ def enrich_candidates(
             )
         return row
 
-    # 主候选最多 28 只，并额外保留少量同基金份额备选；全部补齐净值、基准身份和载体质量后，
-    # 再选择最终家族代表，避免粗排先留下资料不足的份额。并发执行保持输入顺序。
+    # 只给家族代表拉净值。A/C 份额净值几乎同一条曲线，再拉备选只浪费 IO，
+    # 终选份额在召回阶段已经按名称优先级定过。并发执行保持输入顺序。
     try:
         enriched = _map_holdings_concurrently(
             research_pool,
@@ -672,6 +703,7 @@ def finalize_candidate_pool(
     discovery_strategy: str = "risk_first",
     audit_sink: dict | None = None,
     stage_audit_sink: dict | None = None,
+    sector_opportunities: list[dict] | None = None,
 ) -> list[dict]:
     """在核心字段补全后再做最终准入与板块配额分配。
 
@@ -709,13 +741,29 @@ def finalize_candidate_pool(
         reverse=True,
     )
 
+    opportunity_by_sector = {
+        str(item.get("sector_label") or "").strip(): item
+        for item in (sector_opportunities or [])
+        if isinstance(item, dict) and str(item.get("sector_label") or "").strip()
+    }
     selected: list[dict] = []
     selected_codes: set[str] = set()
-    for sector in dict.fromkeys(str(item).strip() for item in target_sectors if str(item).strip()):
+    ordered_sectors = list(
+        dict.fromkeys(str(item).strip() for item in target_sectors if str(item).strip())
+    )
+    for index, sector in enumerate(ordered_sectors):
+        sector_limit = _sector_candidate_limit(
+            sector,
+            index=index,
+            base_limit=per_sector,
+            pool_cap=pool_cap,
+            total_sectors=len(ordered_sectors),
+            opportunity_by_sector=opportunity_by_sector,
+        )
         sector_rows = [
             item for item in acceptable if str(item.get("sector_label") or "") == sector
         ]
-        for item in sector_rows[:per_sector]:
+        for item in sector_rows[:sector_limit]:
             code = str(item.get("fund_code") or "").zfill(6)
             if code in selected_codes:
                 continue
@@ -1050,13 +1098,36 @@ def _select_representative_share_classes(
         member_codes = [
             str(item.get("fund_code") or "").zfill(6) for item in members
         ]
+        existing_family = (
+            chosen.get("share_family")
+            if isinstance(chosen.get("share_family"), dict)
+            else {}
+        )
+        recorded = existing_family.get("member_codes")
+        if isinstance(recorded, list):
+            member_codes = list(
+                dict.fromkeys(
+                    [
+                        *member_codes,
+                        *[
+                            str(code).zfill(6)
+                            for code in recorded
+                            if str(code or "").strip()
+                        ],
+                    ]
+                )
+            )
         chosen["share_family"] = {
             "family_key": key,
             "key_source": "normalized_name+fund_type",
-            "confidence": "high" if len(members) > 1 else "medium",
-            "member_codes": member_codes,
+            "confidence": "high" if len(member_codes) > 1 else "medium",
+            "member_codes": [code for code in member_codes if code != "000000"],
             "selected_code": str(chosen.get("fund_code") or "").zfill(6),
-            "selected_basis": "quality_and_opportunity_then_share_class_priority",
+            "selected_basis": (
+                str(existing_family.get("selected_basis") or "").strip()
+                if len(members) == 1 and existing_family.get("selected_basis")
+                else "quality_and_opportunity_then_share_class_priority"
+            ),
         }
         selected.append(chosen)
     return selected
@@ -1113,6 +1184,54 @@ def _is_execution_verified_primary_mapping(
     return bool(resolved is not None and resolved[0] == expected_sector)
 
 
+def _verified_primary_sectors_by_code(
+    primary_rows: list[dict],
+) -> dict[str, set[str]]:
+    verified: dict[str, set[str]] = {}
+    for primary_row in primary_rows:
+        if not isinstance(primary_row, dict):
+            continue
+        primary_sector = str(primary_row.get("sector_name") or "").strip()
+        primary_code = str(primary_row.get("fund_code") or "").zfill(6)
+        if not primary_sector or not primary_code or primary_code == "000000":
+            continue
+        if _is_execution_verified_primary_mapping(
+            primary_row,
+            expected_sector=primary_sector,
+        ):
+            verified.setdefault(primary_code, set()).add(primary_sector)
+    return verified
+
+
+def _index_rank_rows_by_name_sectors(
+    rank_rows: list[dict],
+    target_sectors: list[str],
+) -> dict[str, list[dict]]:
+    """每只基金只做一次名称匹配，再按方向回放。"""
+
+    labels = [
+        str(label).strip()
+        for label in dict.fromkeys(target_sectors)
+        if str(label).strip()
+    ]
+    keywords_by_sector = {
+        label: _sector_keywords(label, get_canonical_sector(label)) for label in labels
+    }
+    index: dict[str, list[dict]] = {label: [] for label in labels}
+    if not keywords_by_sector:
+        return index
+    for row in rank_rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("fund_name") or "")
+        if not name:
+            continue
+        for label, keywords in keywords_by_sector.items():
+            if _name_matches_sector(name, keywords):
+                index[label].append(row)
+    return index
+
+
 def _candidates_for_sector(
     sector_label: str,
     *,
@@ -1131,25 +1250,16 @@ def _candidates_for_sector(
     as_of_date: date | None = None,
     recall_audit_state: dict | None = None,
     recall_audit_limit: int = _MAX_RECALL_AUDIT_CANDIDATES,
+    verified_primary_sectors_by_code: dict[str, set[str]] | None = None,
+    name_prefiltered: bool = False,
 ) -> list[dict]:
     canon = get_canonical_sector(sector_label)
     keywords = _sector_keywords(sector_label, canon)
     acceptable_identity_sectors = set(_acceptable_identity_sectors(sector_label))
     entries_by_code: dict[str, dict] = {}
     family_seen = family_seen if family_seen is not None else set()
-    verified_primary_sectors_by_code: dict[str, set[str]] = {}
-    for primary_row in primary_rows:
-        primary_sector = str(primary_row.get("sector_name") or "").strip()
-        primary_code = str(primary_row.get("fund_code") or "").zfill(6)
-        if not primary_sector or not primary_code:
-            continue
-        if _is_execution_verified_primary_mapping(
-            primary_row,
-            expected_sector=primary_sector,
-        ):
-            verified_primary_sectors_by_code.setdefault(primary_code, set()).add(
-                primary_sector
-            )
+    if verified_primary_sectors_by_code is None:
+        verified_primary_sectors_by_code = _verified_primary_sectors_by_code(primary_rows)
 
     for row in primary_rows:
         identity_sector = str(row.get("sector_name") or "").strip()
@@ -1164,9 +1274,8 @@ def _candidates_for_sector(
         source = str(row.get("source") or "").strip()
         # 身份核验对照的是映射行自己的板块：同义召回（如贵金属方向接受
         # 「黄金」身份）时，基准证据重放仍必须复现出「黄金」，而不是方向名。
-        verified_primary = _is_execution_verified_primary_mapping(
-            row,
-            expected_sector=identity_sector,
+        verified_primary = identity_sector in verified_primary_sectors_by_code.get(
+            code, set()
         )
         inferred_match_kind = (
             "primary"
@@ -1211,7 +1320,7 @@ def _candidates_for_sector(
         family = _family_key(name)
         if family and family in family_seen and recall_audit_state is None:
             continue
-        if not _name_matches_sector(name, keywords):
+        if not name_prefiltered and not _name_matches_sector(name, keywords):
             continue
         if not _passes_quality(row, as_of_date=as_of_date):
             continue
@@ -1320,6 +1429,8 @@ def _sector_candidate_limit(
     opportunity = opportunity_by_sector.get(sector_label)
     if not opportunity:
         return base_limit
+    if str(opportunity.get("entry_state") or "") == ENTRY_INVALID:
+        return min(base_limit, _INVALID_SECTOR_CANDIDATES)
     score = (
         _num(opportunity.get("selection_priority_score"))
         or _num(opportunity.get("research_score"))
@@ -1356,10 +1467,8 @@ def _merge_rank_metrics(entry: dict, rank_row: dict | None) -> dict:
         return dict(entry)
     merged = dict(entry)
     for key in (
-        "return_1y_percent",
         "return_6m_percent",
         "return_3m_percent",
-        "max_drawdown_1y_percent",
         "fund_scale_yi",
         "fund_type",
         "nav_date",
@@ -1500,10 +1609,8 @@ def _entry_from_rank(
             if sector_match_kind in _SECTOR_MATCH_STRENGTH
             else "fallback"
         ),
-        "return_1y_percent": row.get("return_1y_percent"),
         "return_6m_percent": row.get("return_6m_percent"),
         "return_3m_percent": row.get("return_3m_percent"),
-        "max_drawdown_1y_percent": row.get("max_drawdown_1y_percent"),
         "fund_scale_yi": row.get("fund_scale_yi"),
         "fund_type": row.get("fund_type"),
         "nav_date": row.get("nav_date"),
@@ -1524,7 +1631,7 @@ def _with_quality_score(
     fund_type_preference: str,
     discovery_strategy: str = "risk_first",
 ) -> dict:
-    row = dict(entry)
+    row = _drop_one_year_horizon_fields(dict(entry))
     row["sector_match_kind"] = _resolve_sector_match_kind(row)
     row.pop("_sector_match_kind", None)
     row = annotate_candidate_sector_identity(row)
@@ -1613,7 +1720,6 @@ def _bounded_performance_score(
 
     r3m = _num(row.get("return_3m_percent"))
     r6m = _num(row.get("return_6m_percent"))
-    r1y = _num(row.get("return_1y_percent"))
     if r3m is None and r6m is None:
         penalties.append("缺少近3/6月收益")
         return 0.0
@@ -1623,15 +1729,7 @@ def _bounded_performance_score(
         score += _clamp((r3m + 10.0) / 40.0, 0.0, 1.0) * 11.0
     if r6m is not None:
         score += _clamp((r6m + 15.0) / 65.0, 0.0, 1.0) * 11.0
-    if discovery_strategy == "opportunity_first" and r1y is not None:
-        # 质量层只验证载体，不用一年涨幅把高弹性基金重新压回去。当前机会强弱
-        # 已由 uncapped 20/60 日机会分、真实波动率和入场信号单独排序。
-        reasons.append("近1年涨幅仅作波动背景，不参与载体质量奖惩")
-    elif r1y is not None and -10.0 <= r1y <= 70.0:
-        score += 3.0
-    elif r1y is not None and r1y > 100.0:
-        penalties.append("近1年涨幅过高，存在追高偏差")
-        score -= min(5.0, (r1y - 100.0) / 20.0)
+    _ = discovery_strategy
     if score >= 17.0:
         reasons.append("近3/6月表现占优")
     return _clamp(score, 0.0, 25.0)
@@ -1643,7 +1741,7 @@ def _with_data_quality_gate(
     as_of_date: date | None = None,
     discovery_strategy: str = "risk_first",
 ) -> dict:
-    row = dict(entry)
+    row = _drop_one_year_horizon_fields(dict(entry))
     missing = [field for field in _CORE_QUALITY_FIELDS if not _has_value(row.get(field))]
     profile_status = str(row.get("profile_status") or "")
     stale_fields = {
@@ -1674,9 +1772,6 @@ def _with_data_quality_gate(
     if not scale_is_stale and scale is not None and scale < _HARD_MIN_SCALE_YI:
         status = "excluded"
         reasons.append(f"{scale_label}低于0.5亿元，清盘与流动性风险偏高")
-    elif not scale_is_stale and scale is not None and scale < _MIN_SCALE_YI:
-        status = "watch_only"
-        reasons.append(f"{scale_label}低于1亿元，暂不生成可执行买入动作")
 
     established = _parse_iso_date(row.get("established_date"))
     if (
@@ -1685,16 +1780,9 @@ def _with_data_quality_gate(
         and ((as_of_date or date.today()) - established).days < _MIN_HISTORY_DAYS
     ):
         status = "excluded"
-        reasons.append("成立不足1年，缺少可验证的完整业绩周期")
+        reasons.append("成立不足90天，净值样本不足以判断近期趋势")
 
-    drawdown = _num(row.get("max_drawdown_1y_percent"))
-    if status != "excluded" and drawdown is not None and abs(drawdown) > 50.0:
-        if discovery_strategy == "opportunity_first":
-            reasons.append("近1年历史波动很高；保留用于高弹性机会排序，不作为质量否决")
-        else:
-            status = "watch_only"
-            reasons.append("近1年最大回撤超过50%，仅保留研究观察")
-
+    _ = discovery_strategy
     nav_date = _parse_iso_date(row.get("nav_date"))
     decision_date = as_of_date or date.today()
     if status != "excluded" and _has_value(row.get("nav_date")) and nav_date is None:
@@ -1727,9 +1815,6 @@ def _with_data_quality_gate(
         if profile_status == "unavailable":
             reasons.append("基金档案双源补全暂不可用，已禁止生成可执行买入动作")
         labels = {
-            "return_3m_percent": "近3月收益",
-            "return_6m_percent": "近6月收益",
-            "max_drawdown_1y_percent": "近1年回撤",
             "fund_scale_yi": "最新规模",
             "established_date": "成立日期",
             "fund_manager": "基金经理",
@@ -1774,19 +1859,10 @@ def _first_present(*values: object) -> object | None:
     return None
 
 
-def _valid_drawdown(value: object) -> float | None:
-    parsed = _num(value)
-    if parsed is None or parsed > 0.0 or parsed < -100.0:
-        return None
-    return parsed
-
-
-def _first_valid_drawdown(*values: object) -> float | None:
-    for value in values:
-        parsed = _valid_drawdown(value)
-        if parsed is not None:
-            return parsed
-    return None
+def _drop_one_year_horizon_fields(row: dict) -> dict:
+    for key in _ONE_YEAR_HORIZON_FIELDS:
+        row.pop(key, None)
+    return row
 
 
 def _quality_metrics_from_nav_history(
@@ -1798,18 +1874,10 @@ def _quality_metrics_from_nav_history(
     effective_trade_date: str,
     observed_at: str,
 ) -> dict[str, object]:
-    """Derive one internally consistent quality snapshot from fetched NAV.
-
-    The Eastmoney rank snapshot does not cover every catalogue member (for
-    example, some I share classes). Candidate enrichment already fetches 252
-    NAV observations for every shortlisted fund, so use that same evidence as
-    a fail-closed fallback for all return windows and drawdown. Daily return is
-    preferred over raw NAV ratios by ``factor_input_from_points`` to survive
-    splits/distributions without mixing incompatible provider metrics.
-    """
+    """从已拉取的短窗口净值补近 3 月收益；不再回填一年收益或一年回撤。"""
 
     points = list(getattr(history, "points", None) or [])
-    if len(points) < 252:
+    if len(points) < _NAV_QUALITY_MIN_POINTS:
         return {}
 
     from app.services.fund_factor_nav import factor_input_from_points
@@ -1820,7 +1888,7 @@ def _quality_metrics_from_nav_history(
         fund_name,
         points,
         require_complete=True,
-        minimum_points=252,
+        minimum_points=_NAV_QUALITY_MIN_POINTS,
         effective_trade_date=effective_trade_date,
         fund_type=str(fund_type or ""),
         observed_at=observed_at,
@@ -1831,9 +1899,6 @@ def _quality_metrics_from_nav_history(
 
     return {
         "return_3m_percent": factor.return_3m_percent,
-        "return_6m_percent": factor.return_6m_percent,
-        "return_1y_percent": factor.return_1y_percent,
-        "max_drawdown_1y_percent": factor.max_drawdown_1y_percent,
         "feature_as_of": factor.feature_as_of,
         "feature_observed_at": factor.feature_observed_at,
         "feature_source": factor.feature_source,
@@ -1846,28 +1911,13 @@ def _apply_nav_quality_metric_fallbacks(
     metrics: Mapping[str, object],
 ) -> None:
     applied = False
-    for field in (
-        "return_3m_percent",
-        "return_6m_percent",
-        "return_1y_percent",
-        "max_drawdown_1y_percent",
-    ):
-        current = (
-            _valid_drawdown(row.get(field))
-            if field == "max_drawdown_1y_percent"
-            else _num(row.get(field))
-        )
-        fallback = (
-            _valid_drawdown(metrics.get(field))
-            if field == "max_drawdown_1y_percent"
-            else _num(metrics.get(field))
-        )
-        if current is not None or fallback is None:
-            continue
-        row[field] = round(fallback, 4)
-        row[f"{field}_source"] = metrics.get("feature_source")
-        row[f"{field}_available_at"] = metrics.get("feature_observed_at")
-        row[f"{field}_as_of"] = metrics.get("feature_as_of")
+    current = _num(row.get("return_3m_percent"))
+    fallback = _num(metrics.get("return_3m_percent"))
+    if current is None and fallback is not None:
+        row["return_3m_percent"] = round(fallback, 4)
+        row["return_3m_percent_source"] = metrics.get("feature_source")
+        row["return_3m_percent_available_at"] = metrics.get("feature_observed_at")
+        row["return_3m_percent_as_of"] = metrics.get("feature_as_of")
         applied = True
     if applied:
         row["nav_quality_return_coverage"] = metrics.get("return_coverage")
@@ -2016,29 +2066,9 @@ def _risk_score(
     *,
     discovery_strategy: str = "risk_first",
 ) -> float:
-    drawdown = _num(row.get("max_drawdown_1y_percent"))
-    if drawdown is None:
-        penalties.append("缺少近1年回撤")
-        return 0.0
-    depth = abs(drawdown)
-    if discovery_strategy == "opportunity_first":
-        if depth >= 40:
-            reasons.append("历史波动较高，纳入高弹性机会评估")
-        else:
-            reasons.append("历史回撤仅作风险背景，不奖励低波动")
-        # Keep a neutral evidence-completeness value.  Opportunity-first quality
-        # should validate the vehicle, not make stability an ordering advantage.
-        return 7.5
-    if depth <= 20:
-        reasons.append("近1年回撤可控")
-        return 15.0
-    if depth <= 30:
-        return 10.0
-    if depth >= 40:
-        penalties.append("近1年回撤偏大")
-        return 0.0
-    penalties.append("近1年回撤略高")
-    return 5.0
+    # 一年回撤已退出荐基决策；短线波动看 nav_trend 的 20/60 日，不进质量分。
+    _ = (row, penalties, reasons, discovery_strategy)
+    return 7.5
 
 
 def _scale_score(row: dict, penalties: list[str], reasons: list[str]) -> float:
@@ -2053,9 +2083,6 @@ def _scale_score(row: dict, penalties: list[str], reasons: list[str]) -> float:
     if scale < _HARD_MIN_SCALE_YI:
         penalties.append("基金规模过小")
         return 0.0
-    if scale < _MIN_SCALE_YI:
-        penalties.append("基金规模低于1亿元")
-        return 2.0
     if scale < 3:
         penalties.append("基金规模偏小")
         return 5.0
@@ -2188,7 +2215,7 @@ def _passes_quality(row: dict, *, as_of_date: date | None = None) -> bool:
     scale = row.get("fund_scale_yi")
     if scale is not None:
         try:
-            if float(scale) < _MIN_SCALE_YI:
+            if float(scale) < _HARD_MIN_SCALE_YI:
                 return False
         except (TypeError, ValueError):
             pass

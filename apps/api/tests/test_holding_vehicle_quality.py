@@ -247,8 +247,8 @@ def test_vehicle_quality_that_carries_no_verdict_keeps_the_sector_tier(
     assert note is None, case
 
 
-def test_watch_only_vehicle_steps_the_sector_tier_down_one_level() -> None:
-    percent, basis, note = _position(
+def test_watch_only_vehicle_blocks_the_add() -> None:
+    percent, _basis, note = _position(
         {
             "applicable": True,
             "status": "watch_only",
@@ -257,21 +257,18 @@ def test_watch_only_vehicle_steps_the_sector_tier_down_one_level() -> None:
         }
     )
 
-    assert percent == 15.0
-    assert "被动载体质量未达标" in basis
-    # 只展示前两条短板，避免 basis 文案无界增长。
-    assert "跟踪误差偏高、基金规模过小" in basis
-    assert "管理费率偏高" not in basis
-    assert note is None
+    assert percent is None
+    assert note is not None
+    assert "被动载体质量未达标" in note
+    assert "跟踪误差偏高、基金规模过小" in note
+    assert "管理费率偏高" not in note
 
 
-def test_weak_evidence_and_weak_vehicle_each_step_down_once() -> None:
-    """两个独立维度：收益证据与工具合格性，各降一级。"""
-    percent, basis, _note = _position(
+def test_weak_vehicle_blocks_even_when_fund_evidence_is_only_medium() -> None:
+    """载体不合格是硬拦：不再与基金证据各降一档后仍给出加仓比例。"""
+    percent, _basis, note = _position(
         {"applicable": True, "status": "watch_only", "penalties": ["跟踪误差偏高"]},
         evidence={
-            # 「可用但偏弱」才降一档：`reliability.usable` 是判据，只给 composite.level
-            # 在新口径下不再触发降档（证据不可用 ≠ 基金更弱）。
             "composite": {"level": "中", "score": 2.0},
             "components": [
                 {
@@ -285,25 +282,26 @@ def test_weak_evidence_and_weak_vehicle_each_step_down_once() -> None:
         },
     )
 
-    assert percent == 10.0
-    assert "基金自身正向量化支持中" in basis
-    assert "被动载体质量未达标" in basis
+    assert percent is None
+    assert note is not None
+    assert "被动载体质量未达标" in note
 
 
-def test_watch_only_never_pushes_below_the_lowest_tier() -> None:
+def test_watch_only_blocks_even_at_the_lowest_sector_tier() -> None:
     request = _request()
-    percent, basis, _note = _resolve_deterministic_position_change(
+    percent, _basis, note = _resolve_deterministic_position_change(
         "分批加仓",
         holding=request.holdings[0],
         profile=request.profile,
         weight_denominator=100_000,
-        sector_opportunity=None,  # 无机会分 → 最低档 5%
+        sector_opportunity=None,
         evidence=_strong_fund_evidence(),
         vehicle_quality={"applicable": True, "status": "watch_only"},
     )
 
-    assert percent == 5.0
-    assert "载体质量" not in basis
+    assert percent is None
+    assert note is not None
+    assert "被动载体质量未达标" in note
 
 
 def test_full_guard_reads_vehicle_quality_from_facts_row() -> None:
@@ -352,9 +350,9 @@ def test_full_guard_reads_vehicle_quality_from_facts_row() -> None:
         facts=facts,
     )
 
-    assert guarded[0].action == "分批加仓"
-    assert guarded[0].suggested_position_change_percent == 15.0
-    assert "被动载体质量未达标" in guarded[0].suggested_position_change_basis
+    assert guarded[0].action == "观察"
+    assert guarded[0].suggested_position_change_percent is None
+    assert any("被动载体质量未达标" in point for point in guarded[0].points)
 
 
 # --------------------------------------------------------------------------- #

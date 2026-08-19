@@ -12,7 +12,7 @@
 2. 档位阈值从标定入场线派生——荐基重新标定门槛时日报自动跟随，不能再各写一套；
 3. 两把尺子量纲不同，不得互相套用（旧分 85 ≠ 合成分 85 的含金量）；
 4. 旧阶梯降级为兜底，且文案要标明；
-5. 「只降不升」纪律不变：基金证据 / 载体质量 / 分段试仓系数仍从新档位往下调。
+5. 「只降不升」纪律不变：基金证据 / 分段试仓系数仍从新档位往下调；不合格载体改为硬拦加仓。
 """
 from __future__ import annotations
 
@@ -286,8 +286,8 @@ def test_first_tranche_scale_still_shrinks_the_v3_tier() -> None:
     assert "方向分段试仓系数 40%" in basis
 
 
-def test_vehicle_quality_still_steps_the_v3_tier_down() -> None:
-    stepped, basis = _percent(
+def test_vehicle_quality_blocks_the_v3_add() -> None:
+    stepped, _basis = _percent(
         _v3_row(76.5),
         vehicle_quality={
             "applicable": True,
@@ -296,8 +296,7 @@ def test_vehicle_quality_still_steps_the_v3_tier_down() -> None:
         },
     )
 
-    assert stepped == 15.0
-    assert "被动载体质量未达标" in basis
+    assert stepped is None
 
 
 def test_v3_tier_is_never_raised_by_strong_fund_evidence() -> None:

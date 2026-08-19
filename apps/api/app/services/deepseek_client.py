@@ -43,10 +43,10 @@ from app.services.analysis_payload import (
 from app.services.news_service import (
     NewsService,
     _dedupe_news,
-    announcement_fetch_facts,
-    merge_market_news_with_announcements,
+    exclude_fund_announcements,
+    skipped_daily_announcement_facts,
 )
-from app.services.news_freshness import normalize_news_now, resolve_decision_local_datetime
+from app.services.news_freshness import normalize_news_now
 from app.services.news_summarizer import summarize_all_topics
 from app.services.news_citation import apply_news_citation_guards
 from app.services.recommendation_guard import apply_recommendation_guards
@@ -60,10 +60,7 @@ from app.services.prompt_provenance import (
     with_judge_result,
 )
 from app.services.decision_contract import POLICY_VERSION
-from app.services.decision_time_call import (
-    call_with_optional_time,
-    prefetch_fund_announcements_compat,
-)
+from app.services.decision_time_call import call_with_optional_time
 from app.services.retired_market_evidence import sanitize_retired_market_evidence
 from app.services.fund_lookthrough_claim_validator import (
     validate_fund_lookthrough_claims,
@@ -87,6 +84,7 @@ JOB_STAGES: dict[str, str] = {
     "fund_data": "正在拉取净值与诊断数据…",
     "news_prefetch": "正在检索市场新闻…",
     "news_summarize": "正在生成主题要闻摘要…",
+    "context": "正在整理分析上下文…",
     "generating": "正在生成 AI 日报…",
     "judging": "正在审校报告…",
     "saving": "正在保存报告…",
@@ -169,17 +167,8 @@ class DeepSeekClient:
             decision_at=decision_at,
             max_topics=runtime.news_max_topics,
         )
-        announcement_result = prefetch_fund_announcements_compat(
-            self.news_service,
-            [holding.fund_code for holding in request.holdings],
-            decision_at=decision_at,
-        )
-        market_news = merge_market_news_with_announcements(
-            market_news,
-            list(announcement_result.get("items") or []),
-            now=decision_at,
-        )
-        announcement_meta = announcement_fetch_facts(announcement_result)
+        market_news = exclude_fund_announcements(market_news)
+        announcement_meta = skipped_daily_announcement_facts()
         progress("news_summarize")
         topic_briefs = _build_topic_briefs(
             market_news,
@@ -200,7 +189,7 @@ class DeepSeekClient:
 
         analysis_bundle: AnalysisFactsBundle | None = None
         try:
-            progress("generating")
+            progress("context")
             analysis_bundle = prepare_analysis_bundle(
                 request,
                 risk,
@@ -215,6 +204,7 @@ class DeepSeekClient:
             analysis_bundle.facts["fund_announcements"] = deepcopy(
                 announcement_meta
             )
+            progress("generating")
             parsed, market_news = self._generate_direct_report(
                 request,
                 risk,
@@ -532,15 +522,19 @@ def _system_prompt(
 ) -> str:
     from app.services.analysis_prompt import resolve_role_prompt
 
-    decision_now = resolve_decision_local_datetime(session)
+    # Keep the system prefix byte-stable. A minute-level clock here busted
+    # DeepSeek prefix cache (~1.3k hits). Session time already lives in
+    # analysis_facts.session.local_datetime / decision_window.
+    _ = session
     base = resolve_role_prompt(system_role_prompt)
-    base += f"当前分析时点约为 {decision_now}。"
     if news_enabled:
         base += (
             "用户消息中 topic_briefs 为按主题预摘要（优先阅读），news_titles 为可引用新闻标题列表；"
-            "利好/利空标题须能在 news_titles 或 topic_briefs.points.source_titles 中找到对应。"
+            "有明确利好/利空时 news_bullish/news_bearish 须引用其中标题；无则省略或输出空数组，"
+            "禁止写「暂无明确利好/利空」。"
             "优先采用当日新闻，前几日仅作背景并标注日期，避免用旧闻主导结论。"
             "新闻证据仅限本请求已预取并列出的标题与摘要，不得声称另行检索或浏览。"
+            "基金季报/年报等公告不是当日战术新闻，不得当作加减仓主依据。"
         )
     else:
         base += "若无新闻数据，须说明信息缺口并给出条件化方案。"
@@ -970,7 +964,9 @@ def _is_usable_interrupted_response(
         if report_kind == "daily":
             return not _daily_provider_response_incomplete(parsed)
         if report_kind == "discovery":
-            return _is_valid_discovery_report_payload(parsed)
+            return _is_valid_discovery_report_payload(
+                normalize_discovery_report_payload(parsed)
+            )
         return False
     return _salvage_partial_json(content) is not None
 
@@ -1111,6 +1107,36 @@ def _is_valid_daily_report_payload(parsed: object) -> bool:
     legacy = parsed.get("recommendations")
     return legacy is None or (
         isinstance(legacy, list) and all(isinstance(item, str) for item in legacy)
+    )
+
+
+def normalize_discovery_report_payload(parsed: dict) -> dict:
+    """就地收敛荐基输出里可容忍的类型偏差，避免整份报告被判成“模型不可用”。
+
+    日报已经修过同一事故：deepseek-v4-pro 在 HTTP 200、finish_reason=stop、
+    内容完整时，仍可能把 `caveats` 写成字符串而不是数组。荐基这边还多一种
+    0 只推荐时的省略：白名单为空时模型常丢掉 `recommendations` 或写成叙事
+    字符串。服务端随后会补免责声明，`_parse_recommendations` 对非数组本来
+    就按空列表处理，这两处偏差不该否决整份解读。
+    """
+    if not isinstance(parsed, dict):
+        return parsed
+    caveats = _coerce_advisory_string_list(parsed.get("caveats"))
+    if caveats is not None:
+        parsed["caveats"] = caveats
+    recommendations = parsed.get("recommendations")
+    if recommendations is None:
+        parsed["recommendations"] = []
+    elif isinstance(recommendations, dict):
+        parsed["recommendations"] = [recommendations]
+    elif not isinstance(recommendations, list):
+        parsed["recommendations"] = []
+    return parsed
+
+
+def _discovery_provider_response_incomplete(parsed: dict) -> bool:
+    return not _is_valid_discovery_report_payload(parsed) or bool(
+        parsed.get("_truncated")
     )
 
 

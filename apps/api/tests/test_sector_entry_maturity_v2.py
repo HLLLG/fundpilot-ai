@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.services.discovery_sector_prefilter import (
+    select_balanced_target_labels,
     select_cached_high_elasticity_labels,
     select_opportunity_evidence_labels,
     select_snapshot_flow_inflection_labels,
@@ -326,6 +327,36 @@ def test_flow_inflection_keeps_live_today_flow_when_five_day_rank_is_stale() -> 
     }
 
     assert select_snapshot_flow_inflection_labels(heat, snapshot) == ["盘中回流"]
+
+
+def test_balanced_target_labels_round_robin_flow_heat_and_setup() -> None:
+    hot_rows = [
+        {
+            "sector_label": f"热门{index}",
+            "change_1d_percent": 6.0,
+            "change_5d_percent": 12.0,
+            "heat_score": 8.4 - index * 0.1,
+        }
+        for index in range(10)
+    ]
+    quiet = {
+        "sector_label": "安静蓄势",
+        "change_1d_percent": 0.3,
+        "change_5d_percent": 1.0,
+        "heat_score": 0.58,
+        "advancing_ratio_percent": 54.0,
+    }
+
+    selected = select_balanced_target_labels(
+        [*hot_rows, quiet],
+        ["半导体"],
+        flow_inflection_labels=["资金拐点"],
+        max_labels=6,
+    )
+
+    assert selected[0] == "半导体"
+    assert "资金拐点" in selected
+    assert "安静蓄势" in selected
 
 
 def test_full_market_prefilter_reserves_high_price_elasticity_evidence() -> None:

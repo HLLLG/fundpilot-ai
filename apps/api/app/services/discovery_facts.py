@@ -113,6 +113,11 @@ def build_discovery_facts(
             (mainline_snapshot or {}).get("entry_policy_version") or ""
         )
         or None,
+        held_sector_labels=[
+            str(holding.sector_name or "").strip()
+            for holding in holdings
+            if str(holding.sector_name or "").strip()
+        ],
     )
 
     facts: dict = {
@@ -222,11 +227,18 @@ def _candidate_peer_summary(candidate_pool: list[dict]) -> dict:
     }
 
 
+def refresh_candidate_pool_research(discovery_facts: dict, pool: list[dict]) -> dict:
+    """终选后补上的同类分位/基准写回 facts，供落盘与守卫使用。"""
+
+    discovery_facts["candidate_pool"] = pool
+    discovery_facts["candidate_peer_summary"] = _candidate_peer_summary(pool)
+    return discovery_facts
+
+
 def _candidate_quality_summary(candidate_pool: list[dict]) -> dict:
     required_fields = [
         "return_3m_percent",
         "return_6m_percent",
-        "max_drawdown_1y_percent",
         "fund_scale_yi",
         "established_date",
         "fund_manager",

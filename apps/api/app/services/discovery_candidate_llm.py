@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Any
 
 from app.services.fund_nav_service import get_cached_official_nav_return
 from app.services.fund_peer_ranking import compact_peer_research_for_llm
@@ -27,21 +26,12 @@ _NAV_TREND_LLM_KEYS = (
     "period_change_percent",
 )
 
-_QUALITY_SCORE_COMPONENT_LLM_KEYS = (
-    "sector_fit",
-    "performance",
-    "drawdown_control",
-    "scale",
-    "data_completeness",
-    "legacy_type_preference",
-)
 _QUALITY_GATE_SCALAR_LLM_KEYS = (
     "eligible",
     "status",
     "coverage_percent",
     "data_as_of",
     "profile_status",
-    "profile_checked_at",
 )
 
 
@@ -63,7 +53,7 @@ def _compact_quality_gate(value: object) -> dict:
         scalar = _scalar(value.get(key))
         if scalar is not None:
             result[key] = scalar
-    for key in ("reasons", "missing_fields", "profile_sources", "profile_stale_fields"):
+    for key in ("reasons", "missing_fields"):
         if key in value:
             result[key] = _text_list(value.get(key))
     return result
@@ -178,59 +168,32 @@ def slim_candidate_for_llm(
         "sector_identity_status",
         "sector_identity_eligible",
         "sector_mapping_verified",
-        "return_1y_percent",
         "return_3m_percent",
         "return_6m_percent",
-        "max_drawdown_1y_percent",
         "fund_scale_yi",
         "fund_scale_basis",
         "management_fee",
         "fund_type",
         "fund_manager",
         "established_date",
-        "profile_updated_at",
-        "profile_status",
         "share_class",
         "fund_quality_score",
-        "recall_upside_score",
         "vehicle_quality_score",
         "vehicle_quality_status",
-        "vehicle_quality_threshold",
-        "vehicle_quality_method",
-        "vehicle_quality_version",
         "opportunity_score_20_60d",
-        "opportunity_score_version",
         "sector_fit_score",
-        "quality_score_version",
         "selection_reason",
-        "candidate_universe_mode",
-        "candidate_universe_size",
     )
     row: dict = {}
     for key in scalar_fields:
         scalar = _scalar(item.get(key))
         if scalar is not None:
             row[key] = scalar
-    quality_components: dict[str, object] = {}
-    raw_quality_components = item.get("quality_score_components")
-    if isinstance(raw_quality_components, dict):
-        for key in _QUALITY_SCORE_COMPONENT_LLM_KEYS:
-            scalar = _scalar(raw_quality_components.get(key))
-            if scalar is not None:
-                quality_components[key] = scalar
     row.update(
         {
-            "profile_sources": _text_list(item.get("profile_sources")),
-            "quality_score_components": quality_components,
             "quality_gate": _compact_quality_gate(item.get("quality_gate")),
             "quality_reasons": _text_list(item.get("quality_reasons")),
             "quality_penalties": _text_list(item.get("quality_penalties")),
-            "vehicle_quality_assessment": _compact_vehicle_quality_assessment(
-                item.get("vehicle_quality_assessment")
-            ),
-            "peer_research": _compact_peer_research(item),
-            "benchmark_research": _compact_benchmark_research(item),
-            "benchmark_metrics": _compact_benchmark_metrics(item),
             "fund_entry_signal": _compact_fund_entry_signal(
                 item.get("fund_entry_signal")
             ),
@@ -300,24 +263,6 @@ def _compact_fund_entry_signal(value: object) -> dict:
     }
 
 
-def _compact_vehicle_quality_assessment(value: object) -> dict:
-    if not isinstance(value, dict):
-        return {}
-    components = value.get("components") if isinstance(value.get("components"), dict) else {}
-    return {
-        "schema_version": _scalar(value.get("schema_version")),
-        "method": _scalar(value.get("method")),
-        "status": _scalar(value.get("status")),
-        "score": _scalar(value.get("score")),
-        "threshold": _scalar(value.get("threshold")),
-        "sector_fit_separate_gate": value.get("sector_fit_separate_gate") is True,
-        "absolute_sector_return_excluded": value.get("absolute_sector_return_excluded") is True,
-        "components": {key: _scalar(component) for key, component in components.items()},
-        "reasons": _text_list(value.get("reasons")),
-        "penalties": _text_list(value.get("penalties")),
-    }
-
-
 def slim_candidate_pool_for_llm(
     items: list[dict],
     *,
@@ -344,46 +289,6 @@ def _compact_peer_research(item: dict) -> dict:
     # 投影本体已抽到 `fund_peer_ranking.compact_peer_research_for_llm`，日报给持仓算
     # 同类分位时复用同一份，避免两处各自挑字段而漂移。
     return compact_peer_research_for_llm(item)
-
-
-def _compact_benchmark_research(item: dict) -> dict:
-    comparison = (
-        item.get("benchmark_comparison")
-        if isinstance(item.get("benchmark_comparison"), dict)
-        else {}
-    )
-    spec = item.get("benchmark_spec") if isinstance(item.get("benchmark_spec"), dict) else {}
-    result = {
-        "schema_version": comparison.get("schema_version"),
-        "comparison_role": comparison.get("comparison_role"),
-        "formal_excess_eligible": comparison.get("formal_excess_eligible") is True,
-        "benchmark_code": comparison.get("benchmark_code") or spec.get("benchmark_code"),
-        "benchmark_name": comparison.get("benchmark_name") or spec.get("benchmark_name"),
-        "mapping_id": comparison.get("mapping_id"),
-        "reason": comparison.get("reason") or spec.get("reason"),
-    }
-    return {key: value for key, value in result.items() if value is not None}
-
-
-def _compact_benchmark_metrics(item: dict) -> dict:
-    # 投影本身随基准 schema 演进，实现放在契约所属模块，日报持仓行与荐基候选行共用。
-    from app.services.fund_benchmark_research import (
-        compact_fund_benchmark_metrics_for_llm,
-    )
-
-    return compact_fund_benchmark_metrics_for_llm(item.get("benchmark_metrics"))
-
-
-def _present_scalars(
-    value: Mapping[str, Any],
-    keys: tuple[str, ...],
-) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key in keys:
-        scalar = _scalar(value.get(key))
-        if scalar is not None:
-            result[key] = scalar
-    return result
 
 
 def trim_sector_heat_for_llm(

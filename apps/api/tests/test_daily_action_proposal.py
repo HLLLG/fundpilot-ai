@@ -123,6 +123,8 @@ def test_all_positive_conditions_propose_an_add() -> None:
         ({"escalation_min_bucket": ACTION_BUCKET_PAUSE}, "risk_escalation_floor"),
         ({"max_allowed_bucket": ACTION_BUCKET_WATCH}, "risk_ceiling"),
         ({"reversal_blocked": True}, "reversal_or_pullback"),
+        ({"additional_add_blocks": ("vehicle_quality_not_eligible",)}, "vehicle_quality_not_eligible"),
+        ({"additional_add_blocks": ("add_interval_not_elapsed",)}, "add_interval_not_elapsed"),
     ],
 )
 def test_any_missing_condition_withholds_the_add(override: dict, expected_reason: str) -> None:

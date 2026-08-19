@@ -228,31 +228,28 @@ def test_unknown_holding_return_does_not_cap() -> None:
 # --- 契约 4/5/6：与既有降档机制的组合关系 ------------------------------------
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"evidence": _usable_medium_fund_evidence()},
-        {
-            "vehicle_quality": {
-                "applicable": True,
-                "status": "watch_only",
-                "penalties": ["规模偏小"],
-            }
-        },
-    ],
-)
-def test_cap_composes_with_one_step_downgrades_without_going_below_the_floor(
-    kwargs: dict,
-) -> None:
-    """叠加"降一级"机制时结果仍恰好是最低档，不会被压穿。
+def test_cap_composes_with_one_step_downgrades_without_going_below_the_floor() -> None:
+    """叠加基金证据降一级时结果仍恰好是最低档，不会被压穿。
 
-    这里不断言两者的先后顺序：把 20% 先封到 5% 再降一级（最低档不再下降），与先降到 15%
-    再封到 5%，最终数字相同，所以顺序在输出上不可观测——不能声称一条测不出来的契约。
+    把 20% 先封到 5% 再降一级（最低档不再下降），与先降到 15% 再封到 5%，最终数字相同。
     真正要锁的是**不穿底**：`_tier_percent_one_step_down` 在最低档必须原样返回。
     """
-    percent, _basis = _percent(-4.0, **kwargs)
+    percent, _basis = _percent(-4.0, evidence=_usable_medium_fund_evidence())
 
     assert percent == _FLOOR_PERCENT
+
+
+def test_watch_only_vehicle_still_blocks_after_the_unrealized_loss_cap() -> None:
+    percent, _basis = _percent(
+        -4.0,
+        vehicle_quality={
+            "applicable": True,
+            "status": "watch_only",
+            "penalties": ["规模偏小"],
+        },
+    )
+
+    assert percent is None
 
 
 def test_tranche_scale_still_applies_after_the_cap() -> None:

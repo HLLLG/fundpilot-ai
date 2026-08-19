@@ -39,6 +39,13 @@ logger = logging.getLogger(__name__)
 
 LLM_JUDGE_TIMEOUT_SECONDS = 10.0
 
+
+def _llm_judge_budget_can_receive_first_token() -> bool:
+    first_byte = max(0.0, float(get_settings().deepseek_first_byte_timeout_seconds))
+    if first_byte <= 0:
+        return True
+    return LLM_JUDGE_TIMEOUT_SECONDS > first_byte
+
 _RISK_REVIEW_SYSTEM_PROMPT = "你是严谨的基金荐基风控经理，正在复核分析师草拟的候选推荐。"
 
 _RISK_REVIEW_TASK_PROMPT_ENFORCED = (
@@ -127,6 +134,9 @@ def judge_parsed_discovery_report(
     # LLM 复核改写 action、候选集合或建议金额。调用前短路，避免无效费用与延迟。
     if get_settings().decision_escalation_mode != "enforced":
         meta["llm_judge_skipped_reason"] = "decision_escalation_shadow"
+        return parsed, meta
+    if not _llm_judge_budget_can_receive_first_token():
+        meta["llm_judge_skipped_reason"] = "timeout_below_provider_first_byte"
         return parsed, meta
 
     escalation_hints = _escalation_hints_by_fund_code(candidate_pool, discovery_facts)

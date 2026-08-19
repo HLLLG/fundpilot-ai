@@ -120,10 +120,11 @@ class Settings(BaseSettings):
     # either to ``0`` only as an explicit rollback.
     deepseek_request_budget_seconds: float = 180
     deepseek_first_byte_timeout_seconds: float = 60
-    # The provider supports a much larger ceiling, but reserving it for every
+    # The provider supports a much larger ceiling, but reserving 32k for every
     # bounded JSON report increases scheduling latency without improving output.
+    # Live daily/discovery completions land around 6k–10k tokens.
     deepseek_max_tokens: int = DEEPSEEK_DEFAULT_OUTPUT_TOKENS
-    deepseek_max_tokens_report: int = DEEPSEEK_DEFAULT_OUTPUT_TOKENS
+    deepseek_max_tokens_report: int = 16_384
     # HTTPX retries only connection establishment failures, never a response
     # that may already have started and may already be billable.
     deepseek_connection_retries: int = 2

@@ -420,10 +420,11 @@ def test_flow_improving_probe_still_opens_add_in_the_hysteresis_band() -> None:
     assert _percent(row) == pytest.approx(4.0)
 
 
-def test_probability_early_probe_still_opens_add_in_the_hysteresis_band() -> None:
+def test_probability_early_probe_does_not_open_daily_add_in_the_hysteresis_band() -> None:
     row = _coal_row(probability_early_probe_eligible=True, first_tranche_scale=0.4)
 
-    assert _entry_state_add_block_reason(row) is None
+    reason = _entry_state_add_block_reason(row)
+    assert reason is not None
 
 
 # --- 契约 4：当日真正达标的方向不受影响 --------------------------------------

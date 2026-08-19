@@ -459,6 +459,11 @@ def _patch_discovery_prep(
     monkeypatch.setattr(module, "finalize_candidate_pool", lambda pool, *_args, **_kwargs: pool)
     monkeypatch.setattr(
         module,
+        "attach_descriptive_peer_research",
+        lambda pool, **_kwargs: pool,
+    )
+    monkeypatch.setattr(
+        module,
         "NewsService",
         lambda: MagicMock(prefetch_topics=lambda _topics: []),
     )

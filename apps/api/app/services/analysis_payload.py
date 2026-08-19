@@ -4,6 +4,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import datetime
 from collections.abc import Callable, Mapping
+import re
 import threading
 import time
 from typing import Any, Literal
@@ -55,7 +56,6 @@ from app.services.report_peer_ranking import (
 )
 from app.services.fund_tradeability import (
     build_tradeability_gate,
-    compact_tradeability_for_llm,
     resolve_fund_tradeability_profiles,
 )
 
@@ -86,18 +86,15 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "position_complete=false、ledger_truncated=true 或存在 pending/conflict 不阻断百分比方向建议；"
     "只要持仓金额与市场方向证据新鲜可用，仍须从 allowed_actions 中给出加仓、减仓或观察。"
     "输出必须是完整 JSON（不要 Markdown），包含 title、summary、fund_recommendations、caveats。"
-    "fund_recommendations 每只持仓基金恰好 1 条；字段含 fund_code、fund_name、action、"
-    "amount_yuan（可选）、amount_note（可选）、news_bullish、news_bearish、points（1-3 条，每条≤60字）、"
-    "confidence（高/中/低）、decision_path、sector_evidence、fund_evidence、validation_notes、"
-    "hold_horizon（可选）、risks（至少 1 条）。"
-    "decision_path 为 1 句话，须按「先看该持仓板块方向(sector_opportunity/sector_rotation)→"
-    "再看该基金自身证据(evidence/factor_scores/risk_metrics)→最后给出动作」组织；"
-    "sector_evidence 引用 sector_opportunity 的 track/confidence/pattern_label 或 sector_rotation.market_top；"
-    "fund_evidence 引用 evidence、factor_scores、risk_metrics 等具体字段；"
-    "validation_notes 写明证据不足/样本有限/信息缺口，无问题则 []；"
-    "以上字段缺失时后端会兜底补全，但能给出真实依据时必须给，不得编造未提供的数字。"
-    "news_bullish 与 news_bearish 必须是字符串 JSON 数组（如 [\"标题\"]），禁止写成单个字符串；"
-    "无则写 [\"暂无明确利好\"] 或 [\"暂无明确利空\"]。"
+    "fund_recommendations 每只持仓基金恰好 1 条；必填字段：fund_code、fund_name、action、"
+    "points（1-2 条，每条≤60字）、confidence（高/中/低）、risks（1 条即可）。"
+    "amount_yuan 必须为 null；amount_note、hold_horizon、news_bullish、news_bearish 可省略。"
+    "不要输出 decision_path、sector_evidence、fund_evidence、validation_notes；"
+    "这些由服务端从 analysis_facts 补全，写了也只增加篇幅、不改变动作。"
+    "points 只写该持仓特有的因果（板块涨跌/资金/浮亏/载体是否落后板块），"
+    "禁止复述最终动作或写「系统校验后的最终动作」，禁止猜测赎回费/锁定期（服务端会给系统提示）。"
+    "news_bullish 与 news_bearish 若输出必须是字符串 JSON 数组；无匹配新闻时输出 [] 或省略，"
+    "禁止写「暂无明确利好」或「暂无明确利空」。"
     "caveats 与 recommendations 同样必须是字符串 JSON 数组（如 [\"提示\"]），"
     "即使只有一条也要写成单元素数组，禁止写成单个字符串。"
     "利好/利空标题须能在 news_titles 或 topic_briefs.points.source_titles 中找到对应。"
@@ -105,15 +102,15 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "非 trading_day_pre_close 时不要写「收盘前必须今日下单」。"
     "action 的唯一合法集合是 analysis_facts.allowed_actions；必须逐字从该数组选择，不得依赖固定数量或另造动作。"
     "服务端另有一套确定性动作提议（方向成熟度 + 量化证据 + 风险升级 + 集中度/交易门禁），"
-    "它可能用系统提议替换你给出的 action，并在 points/validation_notes 中说明分歧。"
-    "因此你的职责重心是**把依据讲清楚**（decision_path / sector_evidence / fund_evidence / "
-    "validation_notes / risks），而不是替系统决定动作方向；仍须按上述规则给出你的 action 判断，"
+    "它可能用系统提议替换你给出的 action，并在校验备注中说明分歧。"
+    "因此你的职责重心是用 1-2 条 points 讲清「为什么是这个方向」，"
+    "而不是替系统决定动作，也不是复述板块机会卡里已有的数字；仍须按上述规则给出你的 action 判断，"
     "但不要在叙述里承诺「必须按我给的动作执行」，也不要因为担心被改写而刻意含糊或一律写观察。"
     "若 analysis_facts.portfolio.suggested_action 为 risk_review 或 risk_level 为 high，禁止加仓类 action。"
     "analysis_facts.holdings[].transaction_execution 是交易执行硬门禁："
     "分批加仓仅在 add_status=eligible 时才可输出，具体比例由服务端按板块机会分分档，并结合追加起购额、单日限额与集中度收紧；"
     "减仓类动作即使 redemption_status=eligible，也不得猜测逐笔持有期、锁定期或赎回费；"
-    "acquisition_lot_status=unverified 时仍可给减仓方向，但须提示实际赎回前核对持有期与费用。"
+    "acquisition_lot_status=unverified 时仍可给减仓方向，不要在 points 里写赎回费或锁定期。"
     "任何场景都不得给 amount_yuan 或份额数。"
     "recommendations 可省略或仅 1 条组合级说明，禁止长新闻摘要堆砌。"
     "判断当日涨跌优先 daily_return_percent，否则用 sector_return_percent 估算；"
@@ -143,18 +140,14 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "analysis_facts.sector_rotation.market_top 是当前更强的轮动方向参考，仅用于「是否存在更强"
     "方向」的提示，不得单独作为清仓已持仓位、追高换仓的理由，须结合该持仓自身证据综合判断。"
     "analysis_facts.news.freshness_label 须在 summary 或 caveats 体现对决策置信度的影响。"
-    "analysis_facts.data_evidence 是字段级时点证据：freshness=stale/unavailable 或 confidence=none 的事实"
-    "不得支撑动作；is_estimate=true 的数字必须明确写为估算并降低结论置信度。"
+    "analysis_facts.data_evidence.decision_ready=false 或 blocking_reasons 非空时，"
+    "不得给出加仓/减仓类动作；is_estimate=true 的收益数字必须写为估算。"
     "news_titles 中 source=cls 为财联社快讯。若 nav_trend 为空须在 points 说明。"
-    "analysis_facts.market_breadth 是大盘情绪温度计（自上而下）：signal_mode=closing 的"
-    "sentiment_level 才是近2年创新高低百分位口径；signal_mode=intraday 则是当日上涨/下跌/"
-    "平盘与赚钱效应准实时口径，closing_* 仅为上一完整交易日背景，不得混称历史百分位。"
-    "decision_eligible=false 或 freshness_status=stale 时只能作背景，禁止支撑强动作。"
-    "涨跌停家数等仅为当日快照，不得当作历史回测结论使用。"
-    "analysis_facts.holdings[].flow_divergence_backtest 是该持仓板块「量价背离」信号"
-    "（涨但资金流出/跌但资金流入）的历史回测：by_rule 各桶含 trigger_count、hit_rate_percent、"
-    "edge_percent、significant；significant=true 时可作为该持仓板块方向判断的量化背书之一，"
-    "与 sector_opportunity/evidence 合并判断，不得单独作为加仓或减仓的唯一依据。"
+    "analysis_facts.market_breadth 是大盘情绪温度计：decision_eligible=false 或"
+    "freshness_status=stale 时只能作背景；不得混称盘中情绪与收盘历史百分位。"
+    "holdings[].flow_divergence_backtest 只在 significant=true 时可作方向辅助，"
+    "不得单独作为加仓或减仓的唯一依据。"
+    "不要声称跑赢基准或引用同类分位；未提供的穿透数字不得编造。"
 )
 
 OUTPUT_REQUIREMENTS_USER = [
@@ -162,43 +155,19 @@ OUTPUT_REQUIREMENTS_USER = [
     "analysis_facts 为系统计算的只读事实，不得改写其中任何数字",
     "输出 title、summary、fund_recommendations、caveats；每只基金恰好 1 条 recommendation",
     "action 仅限 analysis_facts.allowed_actions；risk_review 或 high 禁止加仓类",
-    "news_bullish/news_bearish 为字符串数组，须来自 news_titles 或 topic_briefs.points.source_titles",
-    "每只基金 points 1-3 条：含权重/持有收益/净值或板块数据，且至少 1 条写下一交易日条件化预案",
+    "news_bullish/news_bearish 可省略或为空数组；若写须来自 news_titles，禁止占位句",
+    "每只基金 points 1-2 条：写该持仓特有因果，且其中 1 条写下一交易日条件化预案；禁止复述最终动作",
     "引用 sector_intraday.pattern_label、nav_trend、sector_fund_gap_percent、sector_fund_flow 时须用 analysis_facts 中的数字",
-    "每只基金须含 confidence、decision_path、sector_evidence、fund_evidence、validation_notes、risks（至少1条）",
-    "decision_path 须体现「先判断板块方向(sector_opportunity)→再看基金自身证据→最后给出动作」的顺序",
+    "每只基金须含 confidence、risks（1条即可）；不要输出 decision_path/sector_evidence/fund_evidence/validation_notes",
 ]
 
 BENCHMARK_OUTPUT_REQUIREMENTS_SYSTEM = (
-    "analysis_facts.benchmark_specs is read-only point-in-time evidence loaded before generation. "
-    "Only tier=fund_contract_exact with formal_excess_eligible=true is a formal performance "
-    "benchmark. tracked_index_exact is reference-only; unavailable benchmark identity must "
-    "never be guessed or upgraded. Benchmark identity alone never proves outperformance. "
-    "analysis_facts.holdings[].benchmark_metrics is the only place to read fund-versus-benchmark "
-    "numbers; it is already joined to that holding, so never try to match a separate table by "
-    "fund_code. Cite it only when status=qualified. formal_excess values require "
-    "comparison_role=formal_excess, while tracking_reference values must be described only as "
-    "reference/tracking differences. Every benchmark number stays descriptive and must never "
-    "tilt the position change. analysis_facts.benchmark_research_contract is a portfolio-level "
-    "count summary only and carries no per-fund claim."
+    "不要声称跑赢基准或跟踪良好；未提供的基准数字不得编造，也不得据此调整仓位。"
 )
 LOOKTHROUGH_OUTPUT_REQUIREMENTS_SYSTEM = (
-    "analysis_facts.fund_lookthrough 是基金定期报告披露口径的持仓穿透研究，用来发现"
-    "「几只基金其实重仓同一批股票」这类按基金市值算不出来的重复暴露。它的边界是硬性的："
-    "所有数字都是**下界**（lower bound），只覆盖 as_of 报告期的披露范围，既不是当前持仓"
-    "也不是完整持仓；unknown_account_mass_percent 与各 unknown_mass 字段必须当作真实未知"
-    "保留，不得按 0 处理或推断成「其余部分没有重叠」。"
-    "可引用的具体数字只有 portfolio.top_security_exposure_lower_bounds、"
-    "top_industry_exposure_lower_bounds、top_listing_market_exposure_lower_bounds，"
-    "且必须表述为「组合暴露下界」或「合并集中度下界」并带上「≥」或「至少」的限定；"
-    "禁止把它们改写成任意两只基金之间的重合度百分比——日报的穿透范围是 portfolio_only，"
-    "没有逐对候选事实，任何成对重合百分比都无法核验，服务端会在事后校验中删除。"
-    "披露范围内未发现共同证券**不能**说成组合分散、风险更低，也不能作为加仓或买入理由；"
-    "execution_qualified 恒为 false，穿透只能收紧结论（提示集中度与重复暴露风险），"
-    "永远不能放宽结论或用于调整仓位比例。"
-    "status 非 qualified/partial 时不得引用任何穿透数字；capabilities 与 decision_use 里"
-    "research_eligible=false 的维度同样不得引用。"
-    "引用穿透时须同时说明它来自定期报告披露、有滞后。"
+    "fund_lookthrough 仅在 research_eligible=true 时可引用 portfolio.top_* 暴露下界，"
+    "须写成「组合暴露下界≥X%」并说明来自定期报告、有滞后；不得写成两只基金重合度，"
+    "也不得把未发现共同证券说成组合分散或作为加仓理由。"
 )
 OUTPUT_REQUIREMENTS_SYSTEM = (
     OUTPUT_REQUIREMENTS_SYSTEM
@@ -208,19 +177,7 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     + LOOKTHROUGH_OUTPUT_REQUIREMENTS_SYSTEM
 )
 OUTPUT_REQUIREMENTS_USER.append(
-    "benchmark_specs 仅用于其声明的角色：正式合同基准可评估超额，"
-    "跟踪指数仅作参照，unavailable 不得猜测；没有 qualified benchmark_research 时不得声称跑赢或跟踪良好"
-)
-OUTPUT_REQUIREMENTS_USER.append(
-    "该基金与基准的对比数字只读 holdings[].benchmark_metrics（已按持仓对齐，无需按代码关联），"
-    "仅 status=qualified 可引用；正式超额须 comparison_role=formal_excess，"
-    "tracking_reference 只能说成跟踪差异，且基准指标一律只作描述、不得用于调整仓位比例"
-)
-OUTPUT_REQUIREMENTS_USER.append(
-    "fund_lookthrough 是定期报告披露口径的穿透下界：只引用 portfolio.top_* 三个暴露列表，"
-    "表述为「组合暴露下界≥X%」或「合并集中度下界≥X%」，不得写成两只基金之间的重合度百分比；"
-    "unknown 部分必须保留为未知；未发现共同证券不等于组合分散，不得作为加仓理由；"
-    "status 非 qualified/partial 时不得引用任何穿透数字"
+    "不要声称跑赢基准或引用同类分位；穿透只在 research_eligible 时用组合暴露下界，不得编造重合度"
 )
 _HOLDING_LLM_DROP_KEYS = frozenset(
     {
@@ -233,6 +190,15 @@ _HOLDING_LLM_DROP_KEYS = frozenset(
         "fund_scale_fetched_at",
         "fund_scale_basis",
         "management_fee_annual_recurring",
+    }
+)
+# 描述性/执行门禁明细已由服务端消化；再喂模型只会占 token 或诱发误用。
+_HOLDING_LLM_ALWAYS_DROP_KEYS = frozenset(
+    {
+        "peer_research",
+        "tradeability",
+        "signal_backtest",
+        "benchmark_metrics",
     }
 )
 
@@ -297,7 +263,6 @@ _DAILY_DRAFT_SCALAR_LLM_KEYS = (
     "amount_note",
     "confidence",
     "hold_horizon",
-    "decision_path",
     "suggested_position_change_percent",
     "suggested_position_change_basis",
     "holding_index",
@@ -320,8 +285,6 @@ _DAILY_DRAFT_TEXT_LIST_LLM_KEYS = (
     "news_bearish",
     "points",
     "risks",
-    "sector_evidence",
-    "fund_evidence",
 )
 _DISCOVERY_DRAFT_TEXT_LIST_LLM_KEYS = (
     "news_bullish",
@@ -560,6 +523,10 @@ def _safe_management_fee_for_llm(value: object) -> dict[str, Any] | None:
     }
 
 
+def _is_fund_code_topic(topic: str | None) -> bool:
+    return bool(re.fullmatch(r"\d{6}", str(topic or "").strip()))
+
+
 def compact_news_titles(
     market_news: list[NewsItem],
     topic_briefs: list[TopicBrief] | None = None,
@@ -567,6 +534,7 @@ def compact_news_titles(
     today_only: bool = True,
     max_items: int = 20,
     min_items: int = 12,
+    include_announcements: bool = True,
 ) -> list[dict[str, Any]]:
     """仅保留标题级引用，供模型 cite；完整 NewsItem 仍留后端 news_citation 使用。
 
@@ -587,15 +555,18 @@ def compact_news_titles(
             items = items[:max_items]
     else:
         items = items[:max_items]
+    if not include_announcements:
+        items = [item for item in items if item.source != "fund-announcement"]
     compact: list[dict[str, Any]] = []
     seen: set[tuple[str, ...]] = set()
     announcement_topics_by_title: dict[str, set[str]] = {}
-    for item in market_news:
-        if item.source != "fund-announcement":
-            continue
-        title = item.title.strip()
-        if title:
-            announcement_topics_by_title.setdefault(title, set()).add(item.topic)
+    if include_announcements:
+        for item in market_news:
+            if item.source != "fund-announcement":
+                continue
+            title = item.title.strip()
+            if title:
+                announcement_topics_by_title.setdefault(title, set()).add(item.topic)
     for item in items:
         title = item.title.strip()
         identity = _compact_news_identity(
@@ -620,6 +591,8 @@ def compact_news_titles(
         compact.append(row)
 
     for brief in topic_briefs or []:
+        if not include_announcements and _is_fund_code_topic(brief.topic):
+            continue
         for point in brief.points:
             for raw_title in point.source_titles:
                 title = str(raw_title).strip()
@@ -664,9 +637,12 @@ def compact_topic_briefs(
     briefs: list[TopicBrief],
     *,
     minimal: bool = False,
+    exclude_fund_code_topics: bool = False,
 ) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for brief in briefs:
+        if exclude_fund_code_topics and _is_fund_code_topic(brief.topic):
+            continue
         points: list[dict[str, Any]] = []
         for point in brief.points:
             entry: dict[str, Any] = {
@@ -705,6 +681,289 @@ def slim_profile_for_llm(profile: InvestorProfile) -> dict[str, Any]:
     }
 
 
+def _pick(mapping: Mapping[str, Any] | None, keys: tuple[str, ...]) -> dict[str, Any]:
+    if not isinstance(mapping, Mapping):
+        return {}
+    return {key: mapping[key] for key in keys if key in mapping}
+
+
+def _compact_transaction_execution_for_llm(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    return _pick(
+        value,
+        (
+            "add_status",
+            "redemption_status",
+            "reduction_amount_status",
+            "acquisition_lot_status",
+            "add_block_reasons",
+            "redemption_block_reasons",
+        ),
+    ) or None
+
+
+def _compact_direction_exit_for_llm(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    compact = _pick(
+        value,
+        (
+            "exit_state",
+            "allows_add",
+            "min_action_label",
+            "suggested_position_change_percent",
+            "basis",
+            "sector_label",
+            "thresholds_validated",
+            "trend_strength",
+            "consecutive_days_below_exit_line",
+        ),
+    )
+    reasons = [str(item).strip() for item in (value.get("reasons") or []) if str(item).strip()]
+    if reasons:
+        compact["reasons"] = reasons[:3]
+    promises = [
+        item
+        for item in (value.get("breached_entry_promises") or [])
+        if isinstance(item, (str, Mapping))
+    ]
+    if promises:
+        compact["breached_entry_promises"] = promises[:3]
+    reference = value.get("entry_reference")
+    if isinstance(reference, Mapping):
+        compact["entry_reference"] = _pick(
+            reference,
+            ("entry_trend_strength", "current_trend_strength", "sector_label"),
+        )
+    return compact or None
+
+
+def _compact_escalation_for_llm(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    compact = _pick(
+        value,
+        ("min_action_label", "suggested_position_change_percent", "basis"),
+    )
+    reasons = [str(item).strip() for item in (value.get("reasons") or []) if str(item).strip()]
+    if reasons:
+        compact["reasons"] = reasons[:3]
+    return compact or None
+
+
+def _compact_holding_evidence_for_llm(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    composite = value.get("composite")
+    level = None
+    if isinstance(composite, Mapping):
+        level = composite.get("level")
+    compact: dict[str, Any] = {}
+    if level is not None:
+        compact["composite_level"] = level
+    if value.get("schema_version"):
+        compact["schema_version"] = value.get("schema_version")
+    return compact or None
+
+
+def _compact_vehicle_quality_for_llm(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    compact = _pick(value, ("applicable", "status"))
+    reasons = [str(item).strip() for item in (value.get("reasons") or []) if str(item).strip()]
+    penalties = [str(item).strip() for item in (value.get("penalties") or []) if str(item).strip()]
+    if reasons:
+        compact["reasons"] = reasons[:4]
+    if penalties:
+        compact["penalties"] = penalties[:2]
+    return compact or None
+
+
+def _compact_lot_maturity_for_llm(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    return _pick(
+        value,
+        ("available", "short_hold_share_percent", "next_penalty_free_date", "coverage"),
+    ) or None
+
+
+def _compact_recent_transactions_for_llm(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    compact = _pick(value, ("available", "buy_count", "sell_count"))
+    for key in ("last_buy", "last_sell"):
+        event = value.get(key)
+        if isinstance(event, Mapping):
+            compact[key] = _pick(event, ("trade_date", "confirm_date", "amount_yuan"))
+    return compact or None
+
+
+def _compact_sector_fund_flow_for_llm(value: Mapping[str, Any]) -> dict[str, Any] | None:
+    return _pick(
+        value,
+        (
+            "date_aligned",
+            "pattern_label",
+            "pattern_hint",
+            "flow_tiers",
+            "flow_structure_hint",
+            "flow_price_change_percent",
+            "cumulative_20d_net_yi",
+        ),
+    ) or None
+
+
+def _compact_flow_divergence_for_llm(value: Mapping[str, Any]) -> dict[str, Any] | None:
+    significant: list[dict[str, Any]] = []
+    by_rule = value.get("by_rule")
+    if isinstance(by_rule, Mapping):
+        for raw in by_rule.values():
+            if not isinstance(raw, Mapping) or raw.get("significant") is not True:
+                continue
+            significant.append(
+                _pick(
+                    raw,
+                    (
+                        "rule_id",
+                        "label",
+                        "trigger_count",
+                        "hit_rate_percent",
+                        "edge_percent",
+                        "significant",
+                    ),
+                )
+            )
+    compact: dict[str, Any] = {"resolved": value.get("resolved"), "significant": bool(significant)}
+    if significant:
+        compact["by_rule"] = significant
+    return compact
+
+
+def _compact_sector_rotation_for_llm(value: Mapping[str, Any]) -> dict[str, Any]:
+    market_top: list[dict[str, Any]] = []
+    for item in (value.get("market_top") or [])[:3]:
+        if not isinstance(item, Mapping):
+            continue
+        compact = _pick(
+            item,
+            (
+                "sector_label",
+                "track",
+                "score",
+                "confidence",
+                "entry_state",
+                "today_main_force_net_yi",
+            ),
+        )
+        if compact:
+            market_top.append(compact)
+    return {"available": value.get("available", False), "market_top": market_top}
+
+
+def _compact_factor_scores_for_llm(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    ic_status = value.get("ic_status")
+    state = ic_status.get("state") if isinstance(ic_status, Mapping) else None
+    return {"ic_status": {"state": state or "unavailable"}}
+
+
+def _compact_lookthrough_for_llm(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    decision_use = value.get("decision_use") if isinstance(value.get("decision_use"), Mapping) else {}
+    research_eligible = (
+        value.get("research_qualified") is True
+        or decision_use.get("research_eligible") is True
+    )
+    compact: dict[str, Any] = {
+        "status": value.get("status"),
+        "research_eligible": research_eligible,
+        "execution_qualified": value.get("execution_qualified") is True,
+        "reason_codes": [
+            str(item).strip()
+            for item in (value.get("reason_codes") or [])
+            if str(item).strip()
+        ][:4],
+    }
+    if not research_eligible:
+        return compact
+    portfolio = value.get("portfolio") if isinstance(value.get("portfolio"), Mapping) else {}
+    compact["portfolio"] = {
+        key: portfolio.get(key)
+        for key in (
+            "unknown_account_mass_percent",
+            "top_security_exposure_lower_bounds",
+            "top_industry_exposure_lower_bounds",
+            "top_listing_market_exposure_lower_bounds",
+        )
+        if key in portfolio
+    }
+    return compact
+
+
+def _compact_daily_action_proposal_for_llm(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    rows: list[dict[str, Any]] = []
+    for item in value.get("by_fund") or []:
+        if not isinstance(item, Mapping):
+            continue
+        rows.append(
+            _pick(item, ("fund_code", "action", "reason_codes", "supports_add"))
+        )
+    return {
+        "mode": value.get("mode"),
+        "by_fund": rows,
+    }
+
+
+def _compact_position_truth_status_for_llm(value: Mapping[str, Any]) -> dict[str, Any]:
+    compact = _pick(
+        value,
+        (
+            "position_complete",
+            "position_truth_status",
+            "ledger_truncated",
+            "pending_transaction_count",
+            "conflict_count",
+        ),
+    )
+    cash = value.get("cash")
+    if isinstance(cash, Mapping):
+        compact["cash_known"] = cash.get("known")
+    return compact
+
+
+def _compact_data_evidence_status_for_llm(value: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "decision_ready": value.get("decision_ready"),
+        "blocking_reasons": [
+            str(item).strip()
+            for item in (value.get("blocking_reasons") or [])
+            if str(item).strip()
+        ][:6],
+    }
+
+
+def _compact_sector_direction_maturity_for_llm(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    return _pick(
+        value,
+        ("available", "complete", "missing_labels", "hysteresis_applied"),
+    ) or None
+
+
+def _compact_discovery_cross_reference_for_llm(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    compact = _pick(value, ("available", "buy_recommendations_by_sector"))
+    return compact or None
+
+
 def trim_analysis_facts_for_llm(
     facts: dict[str, Any],
     *,
@@ -712,50 +971,44 @@ def trim_analysis_facts_for_llm(
     phase: AnalysisPayloadPhase = 3,
 ) -> dict[str, Any]:
     trimmed = dict(facts)
-    benchmark_specs = facts.get("benchmark_specs")
-    if isinstance(benchmark_specs, Mapping):
-        trimmed["benchmark_specs"] = {
-            str(code): _compact_benchmark_spec_for_llm(spec)
-            for code, spec in benchmark_specs.items()
-            if isinstance(spec, Mapping)
-        }
     announcement_facts = trimmed.get("fund_announcements")
     if isinstance(announcement_facts, dict):
         trimmed["fund_announcements"] = compact_announcement_fetch_status(
             announcement_facts
         )
-    # Internal report orchestration evidence; never expose it to an LLM/public payload.
     trimmed.pop("sector_flow_by_label", None)
-    # 声明审计是对模型自己叙述的事后检查，不能回喂给模型。
     trimmed.pop("fund_lookthrough_claim_audit", None)
-    # `fund_lookthrough` 在 `prepare_analysis_bundle` 里已经收敛成有界摘要（不含原始
-    # 持仓行与解析审计），这里不再二次投影——再投一次反而会因为字段名已改而丢空。
-    #
-    # 基准研究则相反：完整载荷带 `fund_series` / `components` 的序列审计，而每只基金的
-    # 描述性指标已经按 `benchmark_metrics` 挂到 holdings 行上，顶层这份对模型是纯重复。
-    # 留着它还会让"读行内那份"的契约自相矛盾：同一事实两个位置、其中一个没有
-    # `descriptive_only` / `execution_tilt_eligible` 的结构性约束。摘要契约仍然保留。
     trimmed.pop("benchmark_research", None)
+    trimmed.pop("benchmark_specs", None)
+    trimmed.pop("benchmark_research_contract", None)
+    trimmed.pop("benchmark_contract", None)
+    trimmed.pop("transaction_behavior_review", None)
     holdings = []
     has_management_fee = False
     for row in facts.get("holdings") or []:
         if not isinstance(row, dict):
             continue
         copy = dict(row)
-        if "tradeability" in row:
-            raw_tradeability = row.get("tradeability")
-            copy["tradeability"] = compact_tradeability_for_llm(
-                raw_tradeability if isinstance(raw_tradeability, Mapping) else None
-            )
         safe_scale = _safe_fund_scale_for_llm(row)
         safe_management_fee = _safe_management_fee_for_llm(row.get("management_fee"))
-        for key in _HOLDING_LLM_DROP_KEYS:
+        for key in _HOLDING_LLM_DROP_KEYS | _HOLDING_LLM_ALWAYS_DROP_KEYS:
             copy.pop(key, None)
         if safe_scale is not None:
             copy["fund_scale_yi"], copy["fund_scale_evidence"] = safe_scale
         if safe_management_fee is not None:
             copy["management_fee_annual_recurring"] = safe_management_fee
             has_management_fee = True
+        copy["transaction_execution"] = _compact_transaction_execution_for_llm(
+            copy.get("transaction_execution")
+        )
+        copy["direction_exit"] = _compact_direction_exit_for_llm(copy.get("direction_exit"))
+        copy["escalation"] = _compact_escalation_for_llm(copy.get("escalation"))
+        copy["evidence"] = _compact_holding_evidence_for_llm(copy.get("evidence"))
+        copy["vehicle_quality"] = _compact_vehicle_quality_for_llm(copy.get("vehicle_quality"))
+        copy["lot_maturity"] = _compact_lot_maturity_for_llm(copy.get("lot_maturity"))
+        copy["recent_transactions"] = _compact_recent_transactions_for_llm(
+            copy.get("recent_transactions")
+        )
         if phase >= 1:
             nav = copy.get("nav_trend")
             if isinstance(nav, dict):
@@ -769,52 +1022,27 @@ def trim_analysis_facts_for_llm(
                 copy["nav_trend"] = nav_copy
             intraday = copy.get("sector_intraday")
             if isinstance(intraday, dict) and phase >= 2:
-                intraday_copy = {
-                    k: intraday[k]
-                    for k in (
+                copy["sector_intraday"] = _pick(
+                    intraday,
+                    (
                         "pattern_label",
                         "pattern_hint",
                         "close_change_percent",
                         "pullback_from_high_percent",
-                    )
-                    if k in intraday
-                }
-                copy["sector_intraday"] = intraday_copy or None
+                    ),
+                ) or None
             sector_flow = copy.get("sector_fund_flow")
             if isinstance(sector_flow, dict) and phase >= 2:
-                if analysis_mode == "fast":
-                    copy["sector_fund_flow"] = {
-                        k: sector_flow[k]
-                        for k in (
-                            "available",
-                            "trade_date",
-                            "flow_date",
-                            "date_aligned",
-                            "today_main_force_net_yi",
-                            "main_force_direction",
-                            "cumulative_5d_net_yi",
-                            "five_day_source",
-                            "cumulative_20d_net_yi",
-                            "flow_tiers",
-                            "flow_structure_hint",
-                            "flow_price_change_percent",
-                            "pattern_price_source",
-                            "pattern_label",
-                            "pattern_hint",
-                        )
-                        if k in sector_flow
-                    } or None
-                else:
-                    flow_copy = dict(sector_flow)
-                    flow_copy.pop("message", None)
-                    copy["sector_fund_flow"] = flow_copy
+                copy["sector_fund_flow"] = _compact_sector_fund_flow_for_llm(sector_flow)
             sector_opportunity = copy.get("sector_opportunity")
             if isinstance(sector_opportunity, dict):
-                opportunity_copy = {k: v for k, v in sector_opportunity.items() if k != "sector_group"}
-                if analysis_mode == "fast" and phase >= 2:
-                    opportunity_copy = {
-                        k: opportunity_copy[k]
-                        for k in (
+                opportunity_copy = {
+                    k: v for k, v in sector_opportunity.items() if k != "sector_group"
+                }
+                if phase >= 2:
+                    opportunity_copy = _pick(
+                        opportunity_copy,
+                        (
                             "track",
                             "confidence",
                             "opportunity_available",
@@ -826,30 +1054,21 @@ def trim_analysis_facts_for_llm(
                             "five_day_available",
                             "five_day_source",
                             "history_point_count",
-                            # 方向成熟度：服务端会按 first_tranche_scale 确定性地缩小加仓
-                            # 比例、按 entry_state 拦截加仓。这几个键必须穿过 fast 投影，
-                            # 否则模型看不到依据却要解释一个被缩过的比例，叙述必然与
-                            # 服务端结论冲突（instruction 里正要求两者一致）。
                             "entry_state",
                             "entry_reason",
                             "first_tranche_scale",
                             "trend_formation_probability",
                             "waiting_reason_code",
                             "overheat_flags",
-                        )
-                        if k in opportunity_copy
-                    }
+                        ),
+                    )
                 copy["sector_opportunity"] = opportunity_copy or None
             divergence = copy.get("flow_divergence_backtest")
-            if isinstance(divergence, dict) and analysis_mode == "fast" and phase >= 2:
-                # fast 模式只保留 LLM 真正会用到的字段：是否解析成功 + 各规则统计桶
-                # （by_rule 内部结构本身已经很紧凑：trigger_count/hit_rate_percent/
-                # baseline_rate_percent/edge_percent/significant）。
-                copy["flow_divergence_backtest"] = {
-                    "resolved": divergence.get("resolved"),
-                    "by_rule": divergence.get("by_rule") or {},
-                } or None
-        holdings.append(copy)
+            if isinstance(divergence, dict) and phase >= 2:
+                copy["flow_divergence_backtest"] = _compact_flow_divergence_for_llm(
+                    divergence
+                )
+        holdings.append({key: value for key, value in copy.items() if value is not None})
     trimmed["holdings"] = holdings
     if has_management_fee:
         semantics = trimmed.get("fund_fact_semantics")
@@ -859,33 +1078,19 @@ def trim_analysis_facts_for_llm(
 
     news = trimmed.get("news")
     if isinstance(news, dict) and phase >= 1:
-        news_copy = {k: news[k] for k in news if k != "topics"}
-        trimmed["news"] = news_copy
+        trimmed["news"] = {k: news[k] for k in news if k != "topics"}
 
     rotation = trimmed.get("sector_rotation")
     if isinstance(rotation, dict) and phase >= 1:
-        market_top = [
-            {k: v for k, v in item.items() if k != "sector_group"}
-            for item in (rotation.get("market_top") or [])
-            if isinstance(item, dict)
-        ]
-        if analysis_mode == "fast" and phase >= 2:
-            market_top = market_top[:3]
-        trimmed["sector_rotation"] = {
-            "available": rotation.get("available", False),
-            "market_top": market_top,
-        }
+        trimmed["sector_rotation"] = _compact_sector_rotation_for_llm(rotation)
 
-    # 2026-08 决策风格收敛：signal_backtest / stock_connect_flow 不再按风格裁掉——
-    # 单一数据驱动风格下这些短线证据始终喂给模型（fast 模式仍按体积精简）。
     if phase >= 2:
         guard = trimmed.get("guard_policy")
         if isinstance(guard, dict):
-            trimmed["guard_policy"] = {
-                k: guard[k]
-                for k in ("enforce_reversal_block", "enforce_pullback_block", "reason")
-                if k in guard
-            }
+            trimmed["guard_policy"] = _pick(
+                guard,
+                ("enforce_reversal_block", "enforce_pullback_block", "reason"),
+            )
 
     if phase >= 2 and analysis_mode == "fast":
         trimmed.pop("portfolio_trend", None)
@@ -899,7 +1104,7 @@ def trim_analysis_facts_for_llm(
         else:
             trimmed.pop("portfolio_trend", None)
 
-    if phase >= 2 and analysis_mode == "fast" and isinstance(trimmed.get("signal_backtest"), dict):
+    if phase >= 2 and isinstance(trimmed.get("signal_backtest"), dict):
         backtest = trimmed["signal_backtest"]
         trimmed["signal_backtest"] = {
             "enabled": backtest.get("enabled"),
@@ -907,14 +1112,12 @@ def trim_analysis_facts_for_llm(
             "summary_lines": (backtest.get("summary_lines") or [])[:2],
         }
 
-    # market_breadth 是自上而下的大盘情绪信号（用户此前踩坑的案例正是"板块微涨但大盘
-    # 整体转冷"）；fast 模式下仅保留 LLM 真正用得到的精简字段控制体积。
-    if phase >= 2 and analysis_mode == "fast" and isinstance(trimmed.get("market_breadth"), dict):
+    if phase >= 2 and isinstance(trimmed.get("market_breadth"), dict):
         breadth = trimmed["market_breadth"]
         if breadth.get("available"):
-            trimmed["market_breadth"] = {
-                k: breadth[k]
-                for k in (
+            trimmed["market_breadth"] = _pick(
+                breadth,
+                (
                     "available",
                     "signal_mode",
                     "source_mode",
@@ -928,67 +1131,44 @@ def trim_analysis_facts_for_llm(
                     "advance_count",
                     "decline_count",
                     "interpretation",
-                )
-                if k in breadth
-            }
+                ),
+            )
 
     position_truth = trimmed.get("portfolio_position_truth")
     if isinstance(position_truth, Mapping):
-        trimmed["portfolio_position_truth"] = (
-            compact_portfolio_position_truth_for_llm(position_truth)
+        trimmed["portfolio_position_truth"] = _compact_position_truth_status_for_llm(
+            position_truth
         )
     snapshot = trimmed.get("portfolio_snapshot")
     if isinstance(snapshot, Mapping):
         trimmed["portfolio_snapshot"] = compact_portfolio_snapshot_for_llm(snapshot)
     evidence = trimmed.get("data_evidence")
     if isinstance(evidence, Mapping):
-        trimmed["data_evidence"] = compact_data_evidence_for_llm(evidence)
+        trimmed["data_evidence"] = _compact_data_evidence_status_for_llm(evidence)
+    lookthrough = trimmed.get("fund_lookthrough")
+    if lookthrough is not None:
+        trimmed["fund_lookthrough"] = _compact_lookthrough_for_llm(lookthrough)
+    factor_scores = trimmed.get("factor_scores")
+    if factor_scores is not None:
+        trimmed["factor_scores"] = _compact_factor_scores_for_llm(factor_scores)
+    proposal = trimmed.get("daily_action_proposal")
+    if proposal is not None:
+        trimmed["daily_action_proposal"] = _compact_daily_action_proposal_for_llm(proposal)
+    maturity = trimmed.get("sector_direction_maturity")
+    if maturity is not None:
+        trimmed["sector_direction_maturity"] = _compact_sector_direction_maturity_for_llm(
+            maturity
+        )
+    cross_ref = trimmed.get("discovery_cross_reference")
+    if cross_ref is not None:
+        trimmed["discovery_cross_reference"] = _compact_discovery_cross_reference_for_llm(
+            cross_ref
+        )
+
+    trimmed.pop("instruction", None)
+    trimmed.pop("pipeline", None)
 
     return trimmed
-
-
-def _compact_benchmark_spec_for_llm(spec: Mapping[str, Any]) -> dict[str, Any]:
-    """Keep benchmark identity/role/evidence while excluding verbose raw contract text."""
-
-    components: list[dict[str, Any]] = []
-    for value in spec.get("components") or []:
-        if not isinstance(value, Mapping):
-            continue
-        components.append(
-            {
-                key: value.get(key)
-                for key in (
-                    "component_id",
-                    "component_type",
-                    "name",
-                    "benchmark_code",
-                    "weight_percent",
-                    "max_lag_calendar_days",
-                )
-                if value.get(key) is not None
-            }
-        )
-    return {
-        key: spec.get(key)
-        for key in (
-            "schema_version",
-            "mapping_id",
-            "tier",
-            "status",
-            "fund_code",
-            "benchmark_kind",
-            "contract_verification_kind",
-            "completeness",
-            "benchmark_name",
-            "benchmark_code",
-            "valid_from",
-            "available_at",
-            "confidence",
-            "formal_excess_eligible",
-            "reason",
-        )
-        if spec.get(key) is not None
-    } | {"components": components}
 
 
 @dataclass
@@ -1649,8 +1829,16 @@ def build_user_payload(
         "profile": slim_profile_for_llm(request.profile),
         "holding_return_semantics": HOLDING_RETURN_SEMANTICS,
         "analysis_facts": facts,
-        "news_titles": compact_news_titles(prefetched_news, briefs),
-        "topic_briefs": compact_topic_briefs(briefs, minimal=minimal_briefs),
+        "news_titles": compact_news_titles(
+            prefetched_news,
+            briefs,
+            include_announcements=False,
+        ),
+        "topic_briefs": compact_topic_briefs(
+            briefs,
+            minimal=minimal_briefs,
+            exclude_fund_code_topics=True,
+        ),
         "requirements": list(OUTPUT_REQUIREMENTS_USER),
     }
     if operator_notes:

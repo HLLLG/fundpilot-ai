@@ -78,6 +78,7 @@ GRAPH_NODE_OWNERS: dict[tuple[str, str], GraphOwner] = {
     ("daily_report_stream", "fund_data"): "code",
     ("daily_report_stream", "news_prefetch"): "worker",
     ("daily_report_stream", "news_summarize"): "worker",
+    ("daily_report_stream", "context"): "code",
     ("daily_report_stream", "generating"): "worker",
     ("daily_report_stream", "judging"): "worker",
     ("daily_report_stream", "saving"): "code",

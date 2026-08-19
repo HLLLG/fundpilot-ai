@@ -15,19 +15,13 @@ FUND_ENTRY_POLICY_VERSION = "fund_entry_position.2026-08.v2"
 
 
 def balanced_score(row: dict) -> float:
-    """Score higher for recent strength without extreme 1y chasing."""
-    r1y = _num(row.get("return_1y_percent")) or 0.0
-    r6m = _num(row.get("return_6m_percent"))
+    """Score higher for recent 3/6-month strength; one-year returns are ignored."""
+    r6m = _num(row.get("return_6m_percent")) or 0.0
     r3m = _num(row.get("return_3m_percent"))
-    if r6m is None:
-        r6m = r1y
     if r3m is None:
         r3m = r6m
 
     recent_strength = r3m * 0.45 + r6m * 0.35
-    annualized_recent = (r3m * 4 + r6m * 2) / 6
-    momentum_gap = max(0.0, annualized_recent - r1y * 0.25)
-    chase_penalty = max(0.0, r1y - 70.0) * 0.4
 
     nav_trend = row.get("nav_trend") or {}
     dist_high = _num(nav_trend.get("distance_from_high_percent"))
@@ -35,7 +29,7 @@ def balanced_score(row: dict) -> float:
     if dist_high is not None and dist_high < 0:
         room_bonus = min(12.0, abs(dist_high) * 0.25)
 
-    return recent_strength + momentum_gap - chase_penalty + room_bonus
+    return recent_strength + room_bonus
 
 
 def rank_candidates_balanced(candidates: list[dict]) -> list[dict]:
@@ -121,8 +115,7 @@ def recall_upside_score(row: Mapping[str, object]) -> float:
     """Pre-enrichment score that prevents stable funds monopolising recall.
 
     Full 20/60-day NAV volatility is not available yet at this stage.  Recent
-    3/6-month momentum is therefore combined with the observed one-year range
-    amplitude (maximum drawdown) as a recall proxy. Hard maturity, scale and
+    3/6-month momentum is the recall proxy. Hard maturity, scale and
     research-quality checks still run later; this score only decides which
     funds receive the more expensive NAV enrichment.
     """
@@ -132,20 +125,11 @@ def recall_upside_score(row: Mapping[str, object]) -> float:
         return current
     r3 = _num(row.get("return_3m_percent"))
     r6 = _num(row.get("return_6m_percent"))
-    r1 = _num(row.get("return_1y_percent"))
-    drawdown = _num(row.get("max_drawdown_1y_percent"))
     score = 0.0
     if r3 is not None:
         score += r3 * 1.2
     if r6 is not None:
         score += r6 * 0.55
-    if r1 is not None:
-        score += r1 * 0.12
-    recent_has_turned_up = (r3 is not None and r3 > 0) or (
-        r3 is None and r6 is not None and r6 > 0
-    )
-    if recent_has_turned_up and drawdown is not None:
-        score += abs(drawdown) * 0.30
     if r3 is not None and r3 > 0 and r6 is not None and r6 < 0:
         score += 10.0
     return round(score, 2)

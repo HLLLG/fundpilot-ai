@@ -36,8 +36,8 @@ from app.services.fund_profile import FundProfileService
 from app.services.analysis_payload import prepare_analysis_bundle
 from app.services.news_service import (
     NewsService,
-    announcement_fetch_facts,
-    merge_market_news_with_announcements,
+    exclude_fund_announcements,
+    skipped_daily_announcement_facts,
 )
 from app.services.news_summarizer import (
     build_topic_briefs_offline,
@@ -66,10 +66,7 @@ from app.services.langgraph_trace import (
     finish_stream_run,
     try_get_stream_recorder,
 )
-from app.services.decision_time_call import (
-    call_with_optional_time,
-    prefetch_fund_announcements_compat,
-)
+from app.services.decision_time_call import call_with_optional_time
 from app.services.provider_lane import LANE_ANALYSIS, provider_lane
 from app.services.shared_executors import (
     get_analysis_context_executor,
@@ -164,27 +161,11 @@ def _stream_analysis_on_lane(
                 ),
             )
             prep_futures.append(news_future)
-            announcement_future = executor.submit(
-                run_with_request_user,
-                user_id,
-                lambda: prefetch_fund_announcements_compat(
-                    NewsService(),
-                    [holding.fund_code for holding in enriched.holdings],
-                    decision_at=decision_at,
-                ),
-            )
-            prep_futures.append(announcement_future)
             snapshots, nav_trends = _await_future_or_cancel(fund_data_future, stop)
-            market_news = _await_future_or_cancel(news_future, stop)
-            announcement_result = _await_future_or_cancel(announcement_future, stop)
-            market_news = merge_market_news_with_announcements(
-                market_news,
-                list(announcement_result.get("items") or []),
-                now=decision_at,
+            market_news = exclude_fund_announcements(
+                _await_future_or_cancel(news_future, stop)
             )
-            announcement_meta = announcement_fetch_facts(
-                announcement_result
-            )
+            announcement_meta = skipped_daily_announcement_facts()
         finally:
             for future in prep_futures:
                 future.cancel()
@@ -214,8 +195,7 @@ def _stream_analysis_on_lane(
         }
         yield _emit_stage(
             session.session_id,
-            "generating",
-            "正在整理分析上下文…",
+            "context",
             started_at=started_at,
         )
         bundle = yield from _prepare_analysis_bundle_with_progress(
@@ -580,7 +560,7 @@ def _prepare_analysis_bundle_with_progress(
             except FutureTimeoutError:
                 yield _emit_stage(
                     session_id,
-                    "generating",
+                    "context",
                     "正在整理分析上下文…",
                     started_at=started_at,
                 )

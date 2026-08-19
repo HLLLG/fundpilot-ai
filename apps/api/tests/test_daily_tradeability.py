@@ -245,7 +245,8 @@ def test_daily_guard_keeps_reduction_percentage_while_requiring_fee_review() -> 
     assert guarded[0].estimated_position_change_amount_yuan == 2500
     assert "相对当前估算持仓" in guarded[0].suggested_position_change_basis
     assert guarded[0].transaction_execution["acquisition_lot_status"] == "unverified"
-    assert any("逐笔" in point for point in guarded[0].points)
+    assert all("逐笔" not in point for point in guarded[0].points)
+    assert all("赎回费" not in point for point in guarded[0].points)
 
 
 def test_daily_guard_downgrades_reduction_when_redemption_is_not_open() -> None:

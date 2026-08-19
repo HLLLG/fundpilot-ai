@@ -224,11 +224,21 @@ def _guard(action: str):
     return guarded[0]
 
 
+def test_risk_review_is_a_bearish_decision_class() -> None:
+    """超限「风控复核」必须进入费后对照，不能被记成观察后永久不结算。"""
+    from app.services.decision_contract import _evaluation_class
+
+    assert _evaluation_class("风控复核", "daily") == "bearish"
+    assert _evaluation_class("减仓评估", "daily") == "bearish"
+    assert _evaluation_class("观察", "daily") == "observation"
+
+
 @pytest.mark.parametrize("action", ["风控复核", "减仓评估"])
 def test_risk_actions_survive_a_missing_direction_layer(action: str) -> None:
     """线上正是这里出的事：012200 的「风控复核」被降成「观察」。"""
     rec = _guard(action)
     assert rec.action == action
+    assert rec.suggested_position_change_percent == -25.0
     assert _BLOCKED_POINT_FALLBACK_DEFAULT not in rec.points
 
 

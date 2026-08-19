@@ -22,6 +22,11 @@ from app.services.sector_canonical import get_canonical_sector, get_intraday_can
 from app.services.sector_labels import normalize_sector_label
 from app.services.sector_registry import resolve_theme_sector_label
 from app.services.discovery_sector_context import execution_qualified_fund_codes
+from app.services.discovery_recommendation_scope import (
+    held_sector_labels_from_discovery_facts,
+    resolve_theme_vehicle_fallback_opportunity,
+    theme_pair_conflict_label,
+)
 from app.services.discovery_sector_identity import candidate_sector_identity_is_executable
 from app.services.discovery_strategy import (
     discovery_horizon_label,
@@ -549,6 +554,62 @@ def apply_discovery_guards(
             if corrected:
                 caveats.append(f"已按候选池校正基金名称/板块：{code}。")
         opportunity = opportunity_by_sector.get(copy.sector_name)
+        scope = (
+            (discovery_facts or {}).get("recommendation_candidate_scope")
+            if isinstance(discovery_facts, Mapping)
+            else None
+        )
+        fallback_opportunity = resolve_theme_vehicle_fallback_opportunity(
+            fund_code=code,
+            vehicle_sector=str(copy.sector_name or ""),
+            opportunity_by_sector=opportunity_by_sector,
+            theme_vehicle_fallbacks=(
+                scope.get("theme_vehicle_fallbacks")
+                if isinstance(scope, Mapping)
+                else None
+            ),
+        )
+        held_theme_labels = held_sector_labels_from_discovery_facts(discovery_facts)
+        occupied_theme = theme_pair_conflict_label(
+            str(copy.sector_name or ""),
+            held_theme_labels,
+            fallback_thesis=(
+                str(fallback_opportunity.get("thesis_sector_label") or "")
+                if fallback_opportunity is not None
+                else None
+            ),
+        )
+        if occupied_theme:
+            fallback_opportunity = None
+            if copy.action == "分批买入":
+                copy.action = "建议关注"
+                copy.suggested_amount_yuan = None
+                copy.amount_note = (
+                    f"组合已有{occupied_theme}敞口，不再开同主题新仓；加减仓由日报处理"
+                )
+                occupied_note = (
+                    f"组合已有「{occupied_theme}」敞口，本次不把{copy.sector_name}"
+                    "当作新的同主题买入；已有仓位的加减仓由日报处理。"
+                )
+                if occupied_note not in copy.points:
+                    copy.points = [occupied_note, *copy.points]
+                copy.validation_notes = [
+                    *copy.validation_notes,
+                    "同主题已有持仓时，发现扫描不再用黄金股回退或第二只黄金基金加仓。",
+                ]
+                caveats.append(
+                    f"{code} 与已持仓方向「{occupied_theme}」同属一笔黄金主题敞口，"
+                    "已阻断新买入。"
+                )
+        elif fallback_opportunity is not None:
+            opportunity = fallback_opportunity
+            fallback_note = (
+                f"{fallback_opportunity.get('thesis_sector_label')}可布局但缺少过门载体，"
+                f"本次用{copy.sector_name}基金执行；板块身份保持独立。"
+            )
+            if fallback_note not in copy.points:
+                copy.points = [fallback_note, *copy.points]
+            copy.entry_path = copy.entry_path or "theme_vehicle_fallback"
         sector_move = heat_by_sector.get(copy.sector_name)
         nav_trend = pool_item.get("nav_trend") or {}
         if not isinstance(nav_trend, Mapping):
@@ -801,53 +862,11 @@ def apply_discovery_guards(
                     copy.points = list(copy.points) + [
                         f"板块当日 {sector_move:+.2f}% 偏热，拒绝追高模式下建议等待回调。"
                     ]
-                else:
-                    r1y = pool_item.get("return_1y_percent")
-                    if r1y is not None and float(r1y) >= 100.0:
-                        copy.action = "等待回调"
-                        copy.points = list(copy.points) + [
-                            f"近1年涨幅 {float(r1y):+.1f}% 偏高，拒绝追高模式下建议等待回调。"
-                        ]
-                    elif dist_high is not None and dist_high > -5.0:
-                        copy.action = "等待回调"
-                        copy.points = list(copy.points) + [
-                            f"净值距区间高点仅 {dist_high:+.1f}%，短线追高风险偏高。"
-                        ]
-
-        drawdown = _as_float(pool_item.get("max_drawdown_1y_percent"))
-        drawdown_limit = _profile_drawdown_limit(profile)
-        if drawdown is not None and abs(drawdown) > drawdown_limit:
-            if opportunity_first:
-                copy.points = _remove_legacy_drawdown_profile_comparisons(copy.points)
-                copy.risks = _remove_legacy_drawdown_profile_comparisons(copy.risks)
-                copy.fund_evidence = _remove_legacy_drawdown_profile_comparisons(
-                    copy.fund_evidence
-                )
-                copy.validation_notes = _remove_legacy_drawdown_profile_comparisons(
-                    copy.validation_notes
-                )
-                horizon_context = _horizon_drawdown_context(nav_trend)
-                copy.risks = [
-                    (
-                        f"历史波动偏高：近1年最大回撤 {drawdown:.2f}%"
-                        f"{horizon_context}；这不会单独否决当前机会，但会压低本次投入。"
-                    ),
-                    *copy.risks,
-                ]
-                copy.validation_notes = [
-                    *copy.validation_notes,
-                    "账户亏损复核线与候选历史回撤已分开判断；历史回撤只参与风险提示和仓位缩放。",
-                ]
-            elif copy.action == "分批买入":
-                copy.action = "建议关注"
-                copy.points = [
-                    f"近1年最大回撤 {drawdown:.2f}% 超过当前风格的候选准入线 {drawdown_limit:.1f}%，仅保留观察。",
-                    *copy.points,
-                ]
-                copy.validation_notes = [
-                    *copy.validation_notes,
-                    "候选历史回撤与当前投资风格不匹配，系统已阻断买入动作。",
-                ]
+                elif dist_high is not None and dist_high > -5.0:
+                    copy.action = "等待回调"
+                    copy.points = list(copy.points) + [
+                        f"净值距区间高点仅 {dist_high:+.1f}%，短线追高风险偏高。"
+                    ]
 
         # M4 双向 guard：与日报 resolve_escalation_floor 同一套"量价背离显著"入口，
         # 但荐基语义不同——负向共振时整条剔除候选池（而非降级动作文字），正向共振时
@@ -1278,40 +1297,6 @@ def _enforce_discovery_execution_projection(rec: DiscoveryRecommendation) -> Non
     rec.points = [*business_points, projection]
     if not rec.decision_path:
         rec.decision_path = f"确定性守卫完成候选、证据与预算校验；最终动作：{rec.action}。"
-
-
-def _profile_drawdown_limit(profile: InvestorProfile) -> float:
-    base = max(float(profile.max_drawdown_percent or 0.0), 0.0)
-    return max(20.0, base * 2.0)
-
-
-def _remove_legacy_drawdown_profile_comparisons(values: list[str]) -> list[str]:
-    mismatch_markers = (
-        "风险偏好",
-        "风险承受",
-        "心理压力",
-        "严重不符",
-        "不匹配",
-        "复核线",
-        "准入线",
-    )
-    return [
-        str(value)
-        for value in values
-        if not (
-            "最大回撤" in str(value)
-            and any(marker in str(value) for marker in mismatch_markers)
-        )
-    ]
-
-
-def _horizon_drawdown_context(nav_trend: Mapping[str, object]) -> str:
-    parts: list[str] = []
-    for days in (20, 60):
-        value = _as_float(nav_trend.get(f"max_drawdown_{days}d_percent"))
-        if value is not None:
-            parts.append(f"近{days}日最大回撤 {value:.2f}%")
-    return "，" + "、".join(parts) if parts else ""
 
 
 def _should_downgrade_weak_evidence(
@@ -1888,7 +1873,6 @@ def _build_fund_evidence(pool_item: dict) -> list[str]:
     for key, label in (
         ("return_3m_percent", "近3月"),
         ("return_6m_percent", "近6月"),
-        ("return_1y_percent", "近1年"),
     ):
         value = pool_item.get(key)
         if value is not None:

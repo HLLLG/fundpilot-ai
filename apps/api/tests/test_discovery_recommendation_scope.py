@@ -323,6 +323,117 @@ def test_name_and_new_issue_recall_never_open_execution_by_score() -> None:
     }
 
 
+def test_gold_falls_back_to_gold_equity_vehicle_without_merging_identity() -> None:
+    failed_gold = _candidate(
+        "000031",
+        "黄金",
+        vehicle_status="watch_only",
+        sector_match_kind="name",
+    )
+    gold_equity = _candidate("021362", "黄金股")
+    scope = build_recommendation_candidate_scope(
+        [failed_gold, gold_equity],
+        [
+            _opportunity("黄金", "ready_to_start", priority=92),
+            _opportunity("黄金股", "ready_on_pullback", priority=70),
+        ],
+    )
+
+    assert scope["ordered_eligible_fund_codes"] == ["021362"]
+    assert scope["eligible_sector_labels"] == ["黄金"]
+    assert scope["unmatched_actionable_sector_labels"] == []
+    assert scope["theme_vehicle_fallbacks"] == {
+        "021362": {
+            "thesis_sector_label": "黄金",
+            "vehicle_sector_label": "黄金股",
+            "entry_path": "theme_vehicle_fallback",
+        }
+    }
+    decisions = {item["fund_code"]: item for item in scope["candidate_decisions"]}
+    assert decisions["021362"]["entry_path"] == "theme_vehicle_fallback"
+    assert decisions["021362"]["status"] == "actionable"
+    assert decisions["021362"]["sector_label"] == "黄金股"
+
+
+def test_gold_equity_does_not_fallback_when_it_already_has_its_own_vehicle() -> None:
+    failed_gold = _candidate(
+        "000031",
+        "黄金",
+        vehicle_status="watch_only",
+        sector_match_kind="name",
+    )
+    gold_equity = _candidate("021362", "黄金股")
+    scope = build_recommendation_candidate_scope(
+        [failed_gold, gold_equity],
+        [
+            _opportunity("黄金", "ready_to_start", priority=92),
+            _opportunity("黄金股", "ready_to_start", priority=80),
+        ],
+    )
+
+    assert scope["ordered_eligible_fund_codes"] == ["021362"]
+    assert scope["eligible_sector_labels"] == ["黄金股"]
+    assert scope["unmatched_actionable_sector_labels"] == ["黄金"]
+    assert scope["theme_vehicle_fallbacks"] == {}
+
+
+def test_held_gold_blocks_gold_equity_fallback() -> None:
+    failed_gold = _candidate(
+        "000031",
+        "黄金",
+        vehicle_status="watch_only",
+        sector_match_kind="name",
+    )
+    gold_equity = _candidate("021958", "黄金股")
+    scope = build_recommendation_candidate_scope(
+        [failed_gold, gold_equity],
+        [
+            _opportunity("黄金", "ready_to_start", priority=92),
+            _opportunity("黄金股", "ready_on_pullback", priority=70),
+        ],
+        held_sector_labels=["黄金"],
+    )
+
+    assert scope["ordered_eligible_fund_codes"] == []
+    assert scope["theme_vehicle_fallbacks"] == {}
+    assert "黄金" in scope["unmatched_actionable_sector_labels"]
+
+
+def test_held_gold_blocks_independent_gold_equity_buy() -> None:
+    gold_equity = _candidate("021958", "黄金股")
+    scope = build_recommendation_candidate_scope(
+        [gold_equity],
+        [_opportunity("黄金股", "ready_to_start", priority=88)],
+        held_sector_labels=["黄金"],
+    )
+
+    assert scope["ordered_eligible_fund_codes"] == []
+    assert scope["theme_exposure_blocks"] == [
+        {
+            "fund_code": "021958",
+            "sector_label": "黄金股",
+            "held_sector_label": "黄金",
+            "reason": "existing_theme_exposure",
+        }
+    ]
+    decisions = {item["fund_code"]: item for item in scope["candidate_decisions"]}
+    assert decisions["021958"]["status"] == "watch_only"
+    assert "existing_theme_exposure" in decisions["021958"]["reason_codes"]
+
+
+def test_held_gold_equity_blocks_new_gold_etf_buy() -> None:
+    gold = _candidate("002610", "黄金")
+    scope = build_recommendation_candidate_scope(
+        [gold],
+        [_opportunity("黄金", "ready_to_start", priority=90)],
+        held_sector_labels=["黄金股"],
+    )
+
+    assert scope["ordered_eligible_fund_codes"] == []
+    assert scope["theme_exposure_blocks"][0]["fund_code"] == "002610"
+    assert scope["theme_exposure_blocks"][0]["held_sector_label"] == "黄金股"
+
+
 def test_scope_keeps_candidates_without_direction_evidence_visible_and_fail_closed() -> None:
     candidate = _candidate("000023", "未记录方向")
 

@@ -12,6 +12,7 @@ from app.services.discovery_allocation_service import (
 )
 from app.services.discovery_candidate_llm import slim_candidate_for_llm
 from app.services.discovery_candidate_pool import (
+    _index_rank_rows_by_name_sectors,
     _is_execution_verified_primary_mapping,
     _name_matches_sector,
     _sector_keywords,
@@ -375,6 +376,22 @@ def test_discovery_keywords_cover_target_directions_without_single_cloud_false_p
     assert not _name_matches_sector("彩云成长混合A", cloud_keywords)
 
 
+def test_name_index_groups_each_row_without_rescanning_unrelated_names() -> None:
+    rows = [
+        {"fund_code": "000001", "fund_name": "某某半导体ETF联接A"},
+        {"fund_code": "000002", "fund_name": "某某白酒ETF联接A"},
+        {"fund_code": "000003", "fund_name": "某某成长混合A"},
+    ]
+
+    index = _index_rank_rows_by_name_sectors(rows, ["半导体", "白酒"])
+
+    assert [row["fund_code"] for row in index["半导体"]] == ["000001"]
+    assert [row["fund_code"] for row in index["白酒"]] == ["000002"]
+    assert "000003" not in {
+        row["fund_code"] for bucket in index.values() for row in bucket
+    }
+
+
 def test_primary_match_survives_build_enrich_finalize_llm_and_guard(
     monkeypatch,
 ) -> None:
@@ -427,7 +444,7 @@ def test_primary_match_survives_build_enrich_finalize_llm_and_guard(
     assert built[0]["sector_identity_status"] == SECTOR_IDENTITY_VERIFIED
     assert built[0]["sector_identity_eligible"] is True
     assert built[0]["sector_fit_score"] == 36.8
-    assert built[0]["quality_score_version"] == "fund_quality.v4"
+    assert built[0]["quality_score_version"] == "fund_quality.v5"
     assert not any(key.startswith("_") for key in built[0])
 
     snapshot = SimpleNamespace(
@@ -462,7 +479,7 @@ def test_primary_match_survives_build_enrich_finalize_llm_and_guard(
     assert enriched[0]["sector_match_kind"] == "primary"
     assert enriched[0]["sector_fit_score"] == 36.8
     assert "板块匹配置信偏低" not in enriched[0]["quality_penalties"]
-    assert enriched[0]["quality_score_version"] == "fund_quality.v4"
+    assert enriched[0]["quality_score_version"] == "fund_quality.v5"
 
     finalized = finalize_candidate_pool(enriched, ["半导体"], per_sector=1, pool_cap=1)
     assert finalized[0]["sector_match_kind"] == "primary"

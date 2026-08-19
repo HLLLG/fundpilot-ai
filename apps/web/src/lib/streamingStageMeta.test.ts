@@ -5,6 +5,7 @@ import { formatThinkingNote, stageCardStatus, stageShortLabel } from "@/lib/stre
 describe("streamingStageMeta", () => {
   it("maps stage short labels", () => {
     expect(stageShortLabel("fund_data")).toBe("净值与诊断");
+    expect(stageShortLabel("context")).toBe("整理上下文");
     expect(stageShortLabel("generating")).toBe("AI 分析");
   });
 
@@ -12,6 +13,7 @@ describe("streamingStageMeta", () => {
     const completed = new Set(["fund_data", "news_prefetch"]);
     expect(stageCardStatus("fund_data", "news_summarize", completed)).toBe("done");
     expect(stageCardStatus("news_summarize", "news_summarize", completed)).toBe("active");
+    expect(stageCardStatus("context", "news_summarize", completed)).toBe("pending");
     expect(stageCardStatus("generating", "news_summarize", completed)).toBe("pending");
   });
 

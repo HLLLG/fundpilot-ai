@@ -13,9 +13,6 @@ import { translateEvidenceText } from "@/lib/decisionText";
 import { MethodologyNote } from "@/components/MethodologyNote";
 
 const CORE_FIELD_LABELS: Record<string, string> = {
-  return_3m_percent: "近3月收益",
-  return_6m_percent: "近6月收益",
-  max_drawdown_1y_percent: "近1年回撤",
   fund_scale_yi: "最新规模",
   established_date: "成立日期",
   fund_manager: "基金经理",
@@ -141,15 +138,11 @@ function profileSourceLabel(source: string): string {
 const PEER_METRIC_ORDER = [
   "return_3m_percent",
   "return_6m_percent",
-  "return_1y_percent",
-  "max_drawdown_1y_percent",
   "fund_scale_yi",
 ] as const;
 const PEER_SUMMARY_METRIC_ORDER = [
   "return_6m_percent",
-  "return_1y_percent",
   "return_3m_percent",
-  "max_drawdown_1y_percent",
   "fund_scale_yi",
 ] as const;
 
@@ -840,7 +833,6 @@ export function DiscoveryCandidatePoolPanel({
                     ["关联排序分", formatScore(item.sector_fit_score)],
                     ["近3月", formatPercent(item.return_3m_percent)],
                     ["近6月", formatPercent(item.return_6m_percent)],
-                    ["近1年", formatPercent(item.return_1y_percent)],
                   ];
               return (
                 <article

@@ -5,6 +5,7 @@ import {
   displayFundRecommendations,
   groupFundRecommendations,
   keyReasonLines,
+  cardSpecificValidationNotes,
   meaningfulNewsLines,
   portfolioRecommendationLines,
   safeDiagnosticMetrics,
@@ -84,14 +85,35 @@ describe("daily report presentation", () => {
     ).toBe("下交易日：若再跌2%则减仓");
   });
 
-  it("keeps only non-duplicated explanatory reasons", () => {
+  it("drops system-copy points from the why-this-recommendation list", () => {
     expect(
       keyReasonLines(
         rec({
-          points: ["已按风控规则调整", "资金偏弱", "下交易日：若再跌2%则减仓", "资金偏弱"],
+          points: [
+            "系统校验后的最终动作：减仓评估。建议相对当前持仓减少 25%。",
+            "赎回开放已核验，但缺少逐笔申购时间，无法确认锁定期与适用赎回费；保留减仓比例。",
+            "房地产趋势已跌破退出线",
+            "下交易日：若再跌2%则减仓",
+          ],
         }),
       ),
-    ).toEqual(["资金偏弱"]);
+    ).toEqual(["房地产趋势已跌破退出线"]);
+  });
+
+  it("keeps only card-specific validation notes", () => {
+    expect(
+      cardSpecificValidationNotes([
+        "IC 回测已过期，IC 未参与本次结论",
+        "1路已参与量化证据综合置信：不足",
+        "当日涨跌为板块估算",
+        "调整比例已由系统按最终动作重新计算，原始模型金额或比例不直接作为依据。",
+        "按先进先出，本次减仓将触及仍在 7 天惩罚费窗口内的批次",
+        "你 2026-08-12 刚买入过该基金",
+      ]),
+    ).toEqual([
+      "按先进先出，本次减仓将触及仍在 7 天惩罚费窗口内的批次",
+      "你 2026-08-12 刚买入过该基金",
+    ]);
   });
 
   it("maps confidence into beginner-facing reference labels", () => {

@@ -50,7 +50,8 @@ describe("DiscoveryCandidatePoolPanel", () => {
     expect(card).toHaveTextContent("质量分");
     expect(card).toHaveTextContent("关联排序分");
     expect(card).toHaveTextContent("近3月");
-    expect(card).toHaveTextContent("近1年");
+    expect(card).toHaveTextContent("近6月");
+    expect(card).not.toHaveTextContent("近1年");
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(screen.getByText("查看数据完整性与质量依据").closest("summary")).toHaveClass("min-h-11");
     expect(card).toHaveTextContent("待补/刷新 1 项");
@@ -292,9 +293,9 @@ describe("DiscoveryCandidatePoolPanel", () => {
             percentile: 87.5,
             sample_count: 38,
           },
-          max_drawdown_1y_percent: {
-            label: "近1年最大回撤",
-            role: "risk",
+          return_6m_percent: {
+            label: "近6月收益",
+            role: "performance",
             percentile: 62.5,
             sample_count: 40,
           },
@@ -322,7 +323,8 @@ describe("DiscoveryCandidatePoolPanel", () => {
     expect(research).toHaveTextContent("独立基金家族样本 42");
     expect(research).toHaveTextContent("近3月收益");
     expect(research).toHaveTextContent("87.5 分位 · n=38");
-    expect(research).toHaveTextContent("近1年最大回撤");
+    expect(research).toHaveTextContent("近6月收益");
+    expect(research).not.toHaveTextContent("近1年最大回撤");
     expect(research).not.toHaveTextContent("近1年跟踪误差");
     expect(research).toHaveTextContent("仅研究描述，不参与金额分配");
   });

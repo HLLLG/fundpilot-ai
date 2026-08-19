@@ -13,6 +13,10 @@ from app.services.csindex_daily_client import (
     fetch_csindex_daily_history,
     is_csindex_code,
 )
+from app.services.eastmoney_http import (
+    EastmoneyCircuitOpen,
+    eastmoney_requests_client,
+)
 from app.services.sector_registry_data import CANONICAL_SECTORS, THEME_BOARD_INDEX
 from app.services.xueqiu_index_daily_client import (
     fetch_xueqiu_index_daily_history,
@@ -112,7 +116,7 @@ def _fetch_eastmoney_daily_history(
 
     secid, _code = quote_ref
     try:
-        response = requests.get(
+        response = eastmoney_requests_client(_EASTMONEY_HEADERS).get(
             _EASTMONEY_URL,
             params={
                 "secid": secid,
@@ -123,12 +127,16 @@ def _fetch_eastmoney_daily_history(
                 "fields1": "f1,f2,f3,f4,f5,f6",
                 "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
             },
-            headers=_EASTMONEY_HEADERS,
             timeout=6,
-            proxies={"http": None, "https": None},
         )
         response.raise_for_status()
         payload = response.json()
+    except EastmoneyCircuitOpen:
+        logger.info(
+            "eastmoney index daily skipped for %s: host circuit open",
+            index_symbol,
+        )
+        return None
     except Exception as exc:
         logger.warning("eastmoney index daily failed for %s: %s", index_symbol, exc)
         return None

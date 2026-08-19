@@ -1057,6 +1057,62 @@ def _ready_direction_row(label: str, score: float) -> dict:
     }
 
 
+def test_incomplete_evidence_does_not_consume_auto_direction_slots() -> None:
+    from app.services.sector_opportunity_scoring import (
+        select_scored_sector_opportunities,
+    )
+
+    incomplete = [
+        {
+            **_ready_direction_row(f"热门{index}", 90.0 - index),
+            "score_policy_version": ENTRY_POLICY_VERSION_V3,
+            "evidence_quality": "partial",
+        }
+        for index in range(8)
+    ]
+    complete = {
+        **_ready_direction_row("证据完整", 40.0),
+        "score_policy_version": ENTRY_POLICY_VERSION_V3,
+    }
+    pinned = {
+        **_ready_direction_row("关注不完整", 5.0),
+        "score_policy_version": ENTRY_POLICY_VERSION_V3,
+        "evidence_quality": "partial",
+    }
+
+    selected = select_scored_sector_opportunities(
+        [*incomplete, complete, pinned],
+        max_total=8 + 1,
+        pinned_labels=["关注不完整"],
+    )
+
+    assert [item["sector_label"] for item in selected] == ["证据完整", "关注不完整"]
+
+
+def test_constrained_ready_does_not_outrank_strong_participation() -> None:
+    from app.services.sector_opportunity_scoring import (
+        select_scored_sector_opportunities,
+    )
+
+    weak = {
+        **_ready_direction_row("刚过线", 95.0),
+        "score_policy_version": ENTRY_POLICY_VERSION_V3,
+        "constrained_ready_to_start": True,
+        "participation_score": 38.0,
+        "selection_priority_score": 95.0,
+    }
+    strong = {
+        **_ready_direction_row("强参与", 70.0),
+        "score_policy_version": ENTRY_POLICY_VERSION_V3,
+        "constrained_ready_to_start": False,
+        "participation_score": 72.0,
+        "selection_priority_score": 70.0,
+    }
+
+    selected = select_scored_sector_opportunities([weak, strong], max_total=1)
+    assert [item["sector_label"] for item in selected] == ["强参与"]
+
+
 def test_pinned_focus_direction_is_kept_without_consuming_auto_slots() -> None:
     """用户点名的关注方向额外占位：既不被名额挤掉，也不挤掉自动方向。"""
     from app.services.sector_opportunity_scoring import (
@@ -1309,6 +1365,33 @@ def test_v3_overheat_discloses_risk_instead_of_blocking_entry() -> None:
         entry_policy_version=ENTRY_POLICY_VERSION,
     )[0]
     assert v2_row["entry_state"] == "ready_on_pullback"
+
+
+def test_v3_just_passed_trend_with_weak_flow_shrinks_first_tranche() -> None:
+    mainline = _mainline_row("煤炭")
+    mainline["component_scores"].update(
+        {
+            "relative_strength": 62.0,
+            "trend_persistence": 62.0,
+            "fund_flow": 38.0,
+            "breadth": 40.0,
+            "market_structure": 40.0,
+        }
+    )
+
+    row = score_sector_opportunity_rows(
+        [_heat_row("煤炭", 1.1, 2.4)],
+        sector_flow_by_label={
+            "煤炭": _aligned_flow(4.0, 8.0, pattern="price_flow_aligned_up")
+        },
+        mainline_by_label={"煤炭": mainline},
+    )[0]
+
+    assert row["entry_state"] == ENTRY_READY_TO_START
+    assert 35.0 <= row["participation_score"] < 50.0
+    assert row["trend_strength_score"] < 70.0
+    assert row["constrained_ready_to_start"] is True
+    assert row["first_tranche_scale"] == 0.25
 
 
 def test_v3_current_flow_improvement_opens_only_a_reduced_probe_channel() -> None:

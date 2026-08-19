@@ -4,8 +4,6 @@ import re
 
 from app.models import FundRecommendation, NewsItem, TopicBrief
 
-_NO_NEWS_BULLISH = "暂无明确利好"
-_NO_NEWS_BEARISH = "暂无明确利空"
 _PLACEHOLDER_MARKERS = ("暂无", "无明确", "未检索", "未能")
 
 
@@ -18,8 +16,8 @@ def apply_news_citation_guards(
     guarded: list[FundRecommendation] = []
     for rec in fund_recs:
         copy = rec.model_copy(deep=True)
-        copy.news_bullish = _sanitize_headlines(copy.news_bullish, titles, bullish=True)
-        copy.news_bearish = _sanitize_headlines(copy.news_bearish, titles, bullish=False)
+        copy.news_bullish = _sanitize_headlines(copy.news_bullish, titles)
+        copy.news_bearish = _sanitize_headlines(copy.news_bearish, titles)
         guarded.append(copy)
     return guarded
 
@@ -38,8 +36,6 @@ def _collect_citable_titles(
 def _sanitize_headlines(
     headlines: list[str],
     known_titles: list[str],
-    *,
-    bullish: bool,
 ) -> list[str]:
     cleaned: list[str] = []
     for headline in headlines:
@@ -55,11 +51,7 @@ def _sanitize_headlines(
 
     if cleaned:
         return cleaned[:3]
-
-    default = _NO_NEWS_BULLISH if bullish else _NO_NEWS_BEARISH
-    if not known_titles:
-        return [default]
-    return [default]
+    return []
 
 
 def _is_placeholder(text: str) -> bool:

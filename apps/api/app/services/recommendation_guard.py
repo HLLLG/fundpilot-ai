@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from math import floor, isfinite
 
 from app.config import get_settings
@@ -44,6 +45,10 @@ from app.services.sector_opportunity_scoring import (
     V3_BLOCK_WEIGHTS,
     V3_GATE_THRESHOLDS,
     V3_IMPROVING_FLOW_FIRST_TRANCHE_SCALE,
+    _CORRELATION_DEDUP_EXEMPT_PAIRS,
+    _SECTOR_GROUPS,
+    _direction_identity,
+    _sector_group,
 )
 from app.services.signal_guard_policy import resolve_signal_guard_policy
 from app.services.recommendations import build_offline_fund_recommendation
@@ -73,6 +78,9 @@ _REPORT_HUMANIZE_TEXT_REPLACEMENTS = (
 _VALID_EVIDENCE_SOURCES = frozenset({"factor", "signal", "risk"})
 _VALID_EVIDENCE_LEVELS = frozenset({"高", "中", "低", "不足"})
 _VALID_IC_STATES = frozenset({"available", "unavailable", "stale"})
+#: 场外基金短持惩罚赎回费窗口。同一只基金在窗口内再加一笔，一旦要走就要交 1.5%。
+#: 取自然日而不是交易日，与赎回费规则一致，不另造未回测的间隔参数。
+ADD_INTERVAL_CALENDAR_DAYS = 7
 
 
 def apply_recommendation_guards(
@@ -216,6 +224,12 @@ def apply_recommendation_guards(
             ),
             reversal_blocked=reversal_blocked,
             execution_blocked=execution_blocked,
+            additional_add_blocks=_additional_add_blocks(
+                vehicle_quality,
+                facts_row,
+                sector_opportunity,
+                facts=facts,
+            ),
         )
         proposal_enforced = settings.daily_action_proposal_mode == "enforced"
         # 动作链的输入**始终**是 LLM 草案：既有的每一道 clamp 与它对应的解释文案都建立在
@@ -350,6 +364,25 @@ def apply_recommendation_guards(
                     f"当前采用模型草案「{llm_action}」。"
                 )
 
+        # 提升之后再拦：载体不合格 / 加仓间隔不能被「门都开着」抬回去。
+        vehicle_note = None
+        interval_note = None
+        if _execution_direction(normalized) == "add" and _vehicle_quality_blocks_add(
+            vehicle_quality
+        ):
+            normalized = "观察"
+            vehicle_note = (
+                "被动载体质量未达标，本轮不加现持仓；请评估同方向是否有更合适的载体。"
+            )
+            proposal_note = None
+        interval_block_reason = _recent_buy_add_block_reason(
+            facts_row, sector_opportunity, facts=facts
+        )
+        if _execution_direction(normalized) == "add" and interval_block_reason:
+            normalized = "暂停追涨"
+            interval_note = interval_block_reason
+            proposal_note = None
+
         allowed_actions = {
             str(value).strip()
             for value in (facts or {}).get("allowed_actions") or []
@@ -432,6 +465,8 @@ def apply_recommendation_guards(
             note_forbidden_action
             or tradeability_note
             or escalation_note
+            or vehicle_note
+            or interval_note
             or position_note
             or snapshot_note
             or reversal_note
@@ -472,7 +507,7 @@ def apply_recommendation_guards(
                 *copy.validation_notes,
                 "关键持仓或行情数据未确认完整且为最新；本次不提供金额、权重和仓位动作。",
             ]
-        if note:
+        if note and not _is_redundant_user_point(note):
             copy.points = [note, *copy.points]
         copy.confidence = _normalize_confidence(copy.confidence)
         if escalation_note is not None:
@@ -577,6 +612,14 @@ def apply_recommendation_guards(
         )
         guarded.append(copy)
 
+    _apply_correlated_add_dedup(guarded, facts)
+    if isinstance(facts, dict) and proposal_audit:
+        by_code = {rec.fund_code: rec.action for rec in guarded}
+        for row in proposal_audit:
+            final = by_code.get(str(row.get("fund_code") or ""))
+            if final:
+                row["final_action"] = final
+
     portfolio = _guard_portfolio_lines(portfolio_lines, risk)
     from app.services.decision_data_evidence import contains_trade_instruction_text
 
@@ -677,9 +720,12 @@ def _blocked_points_fallback(reasons: list[str] | tuple[str, ...]) -> str:
 
 def _execution_direction(action: str) -> str:
     normalized = normalize_action_text(action)
-    if normalized == "分批加仓":
+    bucket = _action_bucket(normalized)
+    if bucket >= ACTION_BUCKET_ADD:
         return "add"
-    if any(token in normalized for token in ("减仓", "清仓")):
+    # 风控复核与减仓评估同属 REDUCE 档，不能只认「减仓/清仓」字样，
+    # 否则超限持仓会停在「复核」且没有可执行比例。
+    if bucket <= ACTION_BUCKET_REDUCE:
         return "reduce"
     return "none"
 
@@ -1122,15 +1168,13 @@ def _entry_state_add_block_reason(sector_opportunity: dict | None) -> str | None
     held_raw_state = _hysteresis_held_raw_entry_state(sector_opportunity)
     if held_raw_state is None and state == _ENTRY_STATE_READY:
         return None
-    # 荐基对这两类"早期试仓"开了口子（资金刚转强 / 趋势成形信号分够），日报沿用同一判定，
-    # 否则同一天同一板块两个界面结论相反。它们仍会通过 first_tranche_scale 缩小比例。
+    # 资金刚转强的试仓通道已经过门槛标定，日报继续开门，否则同一板块会和荐基打架。
+    # 放在滞回判定之前是刻意的：通道由当日原始档位开出，滞回不影响成立性
+    # （2026-08-13 数字经济参与度 29.24，今日资金转强，按 40% 试仓系数拿到小额加仓）。
     #
-    # 放在滞回判定**之前**是刻意的：这两条通道由当日原始档位开出，滞回不影响它们的成立性，
-    # 所以滞回态下它们照样有效（2026-08-13 的数字经济就是这条路，参与度 29.24 略低于门槛
-    # 但今日资金转强，按 40% 试仓系数拿到小额加仓）。
+    # `probability_early_probe_eligible` 刻意**不再**给日报推门：趋势成形信号分未经校准，
+    # 不是收益概率。荐基仍可用它开第一笔试仓；日报只披露、不加现持仓。
     if sector_opportunity.get("flow_improving_probe_eligible") is True:
-        return None
-    if sector_opportunity.get("probability_early_probe_eligible") is True:
         return None
     if held_raw_state is not None:
         return _hysteresis_hold_add_block_reason(sector_opportunity)
@@ -1211,7 +1255,7 @@ def _first_tranche_scaled_percent(
 def _vehicle_quality_add_percent(
     current_percent: float,
     vehicle_quality: dict | None,
-) -> tuple[float, str | None]:
+) -> tuple[float | None, str | None]:
     """被动载体质量未达标时再把档位下调一级。
 
     与 `_fund_evidence_add_percent` 是两个独立维度：量化证据回答"这只基金接下来的收益
@@ -1223,27 +1267,176 @@ def _vehicle_quality_add_percent(
     * **只对 `applicable=True` 生效**。主动持仓拿到的是 `not_applicable`（日报没有经理
       业绩证据），缺失同样不触发——两者都是"没有可判断的证据"，不是"载体更差"。
     * **只下调不提额**：`eligible` 不会换来比板块档位更大的仓位。
-    * **不做硬拦**。荐基侧对 `vehicle_quality_status != eligible` 是直接剔除候选的
-      （`discovery_guard.py`），但那条硬门与 `sector_match_kind` 绑在一起，而日报持仓行
-      没有该字段；在缺身份核验的前提下照搬硬拦等于禁掉所有指数持仓的加仓。降一级是与
-      现有档位语言一致的比例收紧，硬门留给后续单独论证。
+    * **适用持仓硬拦加仓**。持仓侧评分已经去掉 `sector_match_kind` 身份硬门，只看规模、
+      费率、跟踪误差；`applicable=True` 且 `watch_only` 表示工具本身不合格。这时正确
+      动作是观察并评估同方向更好的载体，而不是给现持仓再加一档。主动持仓
+      `not_applicable` 仍不触发——没有经理业绩证据不等于载体更差。
     """
-    if not isinstance(vehicle_quality, dict):
+    if not _vehicle_quality_blocks_add(vehicle_quality):
         return current_percent, None
-    if vehicle_quality.get("applicable") is not True:
-        return current_percent, None
-    if str(vehicle_quality.get("status") or "") != "watch_only":
-        return current_percent, None
-    stepped = _tier_percent_one_step_down(current_percent)
-    if stepped >= current_percent:
-        return current_percent, None
+    assert isinstance(vehicle_quality, dict)
     penalties = [
         str(item).strip()
         for item in vehicle_quality.get("penalties") or []
         if str(item).strip()
     ]
     detail = f"（{'、'.join(penalties[:2])}）" if penalties else ""
-    return stepped, f"被动载体质量未达标{detail}，档位下调至 {stepped:g}%"
+    return None, f"被动载体质量未达标{detail}，本轮不加现持仓"
+
+
+def _vehicle_quality_blocks_add(vehicle_quality: object) -> bool:
+    if not isinstance(vehicle_quality, dict):
+        return False
+    return (
+        vehicle_quality.get("applicable") is True
+        and str(vehicle_quality.get("status") or "") == "watch_only"
+    )
+
+
+def _additional_add_blocks(
+    vehicle_quality: object,
+    facts_row: dict | None,
+    sector_opportunity: dict | None,
+    *,
+    facts: dict | None,
+) -> tuple[str, ...]:
+    blocks: list[str] = []
+    if _vehicle_quality_blocks_add(vehicle_quality):
+        blocks.append("vehicle_quality_not_eligible")
+    if _recent_buy_add_block_reason(facts_row, sector_opportunity, facts=facts):
+        blocks.append("add_interval_not_elapsed")
+    return tuple(blocks)
+
+
+def _parse_iso_date(value: object) -> date | None:
+    text = str(value or "").strip()[:10]
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _recent_buy_add_block_reason(
+    facts_row: dict | None,
+    sector_opportunity: dict | None,
+    *,
+    facts: dict | None = None,
+) -> str | None:
+    """同一基金距上次买入未满短持惩罚费窗口、且未见回踩时，禁止再加。
+
+    缺交易摘要或日期时不拦——"不知道"不等于"刚买过"。当日板块涨跌 < 0 视为一次
+    可执行回踩，间隔放开。
+    """
+    recent = (facts_row or {}).get("recent_transactions")
+    if not isinstance(recent, dict) or recent.get("available") is not True:
+        return None
+    last_buy = recent.get("last_buy")
+    if not isinstance(last_buy, dict):
+        return None
+    buy_date = _parse_iso_date(last_buy.get("trade_date"))
+    as_of = _parse_iso_date(recent.get("as_of_date"))
+    if as_of is None and isinstance(facts, dict):
+        session = facts.get("session")
+        if isinstance(session, dict):
+            as_of = _parse_iso_date(session.get("effective_trade_date"))
+    if buy_date is None or as_of is None:
+        return None
+    elapsed = (as_of - buy_date).days
+    if elapsed < 0 or elapsed >= ADD_INTERVAL_CALENDAR_DAYS:
+        return None
+    change_1d = _num((sector_opportunity or {}).get("change_1d_percent"))
+    if change_1d is None and isinstance(sector_opportunity, dict):
+        mainline = sector_opportunity.get("mainline_regime")
+        features = mainline.get("features") if isinstance(mainline, dict) else None
+        if isinstance(features, dict):
+            change_1d = _num(features.get("change_1d_percent"))
+    if change_1d is not None and change_1d < 0:
+        return None
+    remaining = ADD_INTERVAL_CALENDAR_DAYS - elapsed
+    return (
+        f"距 {buy_date.isoformat()} 买入未满 {ADD_INTERVAL_CALENDAR_DAYS} 个自然日"
+        f"（还差 {remaining} 天出惩罚赎回费窗口），且未见可执行回踩，本轮不再加仓。"
+    )
+
+
+def _same_daily_add_risk(left: str, right: str) -> bool:
+    a = str(left or "").strip()
+    b = str(right or "").strip()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if frozenset((a, b)) in _CORRELATION_DEDUP_EXEMPT_PAIRS:
+        return False
+    if _direction_identity(a) == _direction_identity(b):
+        return True
+    group_a = _sector_group(a)
+    group_b = _sector_group(b)
+    named_groups = set(_SECTOR_GROUPS.values())
+    return bool(group_a == group_b and group_a in named_groups)
+
+
+def _apply_correlated_add_dedup(
+    guarded: list[FundRecommendation],
+    facts: dict | None,
+) -> None:
+    """同一笔风险暴露上，当天只允许方向分最强的一只加仓，其余暂停追涨。"""
+    if not isinstance(facts, dict) or len(guarded) < 2:
+        return
+    holdings = facts.get("holdings")
+    if not isinstance(holdings, list):
+        return
+    rows_by_code: dict[str, dict] = {}
+    for row in holdings:
+        if isinstance(row, dict) and row.get("fund_code"):
+            rows_by_code[str(row["fund_code"])] = row
+
+    add_indexes = [
+        index
+        for index, rec in enumerate(guarded)
+        if _execution_direction(rec.action) == "add"
+    ]
+    if len(add_indexes) < 2:
+        return
+
+    def _label_for(rec: FundRecommendation) -> str:
+        row = rows_by_code.get(rec.fund_code) or {}
+        opportunity = row.get("sector_opportunity")
+        if isinstance(opportunity, dict) and opportunity.get("sector_label"):
+            return str(opportunity["sector_label"])
+        return str(row.get("sector_label") or rec.fund_name or rec.fund_code)
+
+    def _strength(rec: FundRecommendation) -> tuple[float, float, float]:
+        row = rows_by_code.get(rec.fund_code) or {}
+        opportunity = row.get("sector_opportunity")
+        if not isinstance(opportunity, dict):
+            opportunity = {}
+        return (
+            _num(opportunity.get("direction_score")) or -1.0,
+            _num(opportunity.get("trend_strength_score")) or -1.0,
+            float(rec.suggested_position_change_percent or 0.0),
+        )
+
+    ranked = sorted(add_indexes, key=lambda index: _strength(guarded[index]), reverse=True)
+    kept_labels: list[str] = []
+    for index in ranked:
+        rec = guarded[index]
+        label = _label_for(rec)
+        rival = next((other for other in kept_labels if _same_daily_add_risk(label, other)), None)
+        if rival is None:
+            kept_labels.append(label)
+            continue
+        rec.action = "暂停追涨"
+        rec.suggested_position_change_percent = None
+        rec.suggested_position_change_basis = ""
+        note = (
+            f"与已持仓方向「{rival}」同属一笔风险暴露，本轮只允许更强的一只加仓。"
+        )
+        rec.points = [note, *rec.points]
+        rec.validation_notes = [*rec.validation_notes, note]
+        _sync_decision_path_with_final_action(rec)
 
 
 def _unrealized_loss_add_percent(
@@ -1375,6 +1568,8 @@ def _resolve_deterministic_position_change(
         base_percent,
         vehicle_quality,
     )
+    if base_percent is None:
+        return None, "", vehicle_basis
     # 方向成熟度的分段试仓系数最后作用（乘法缩放，语义是"本次投入占计划仓位的比例"）。
     # 返回 None 表示方向层本轮压根没授权投入——此时不能退回"不缩放"，必须放弃这次加仓。
     #
@@ -1495,13 +1690,6 @@ def _estimated_position_change_amount_yuan(
     if not isfinite(amount) or amount <= 0:
         return None
     return round(amount, 2)
-
-
-def _format_position_percent(percent: float) -> str:
-    value = abs(float(percent))
-    if abs(value - round(value)) < 1e-9:
-        return f"{value:.0f}"
-    return f"{value:.1f}"
 
 
 def _apply_holding_tradeability_guard(
@@ -1679,22 +1867,17 @@ def _enforce_final_execution_projection(
 
     rec.risks = rec.risks or _build_default_risks(rec, None)
 
-    projection = f"系统校验后的最终动作：{rec.action}。"
-    if rec.suggested_position_change_percent is not None:
-        verb = "增加" if rec.suggested_position_change_percent > 0 else "减少"
-        projection += (
-            f"建议相对当前持仓{verb} "
-            f"{_format_position_percent(rec.suggested_position_change_percent)}%。"
-        )
-    rec.points = [*rec.points, projection]
-    if rec.decision_path:
-        rec.decision_path = (
-            f"{rec.decision_path.rstrip('。')}。系统校验后的最终动作：{rec.action}。"
-        )
-    else:
+    rec.points = [point for point in rec.points if not _is_redundant_user_point(point)]
+    if not rec.decision_path:
         rec.decision_path = f"确定性守卫完成身份、证据与风险校验；最终动作：{rec.action}。"
-    rec.validation_notes.append(
-        "调整比例已由系统按最终动作重新计算，原始模型金额或比例不直接作为依据。"
+
+
+def _is_redundant_user_point(text: str | None) -> bool:
+    """System copy that the action badge / professional banner already covers."""
+
+    value = str(text or "").strip()
+    return value.startswith("系统校验后的最终动作") or value.startswith(
+        "赎回开放已核验，但缺少逐笔申购时间"
     )
 
 

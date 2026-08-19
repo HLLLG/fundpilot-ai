@@ -14,6 +14,9 @@ const EMPTY_NEWS = new Set(["", "无", "暂无", "暂无利好", "暂无利空",
 const ACTION_TONES = new Set(["add", "reduce", "deep_reduce", "clear_all"]);
 const GUARD_NOTE = /已按.*(?:风控|规则).*调整|对照本地规则/;
 const NEXT_PLAN = /(?:下一交易日|下交易日|开盘)/;
+const SYSTEM_POINT = /系统校验后的最终动作|赎回开放已核验，但缺少逐笔申购时间/;
+const GENERIC_VALIDATION =
+  /IC\s*回测已过期|IC\s*未参与本次结论|量化证据综合置信|现有非 IC 证据置信偏低|现有可用证据置信偏低|当日涨跌为板块估算|调整比例已由系统按最终动作重新计算|交易条件或逐笔持有期仍需在实际操作前核对/;
 
 function normalizedFundName(value?: string | null): string {
   return (value ?? "").replace(/\s+/g, "").trim();
@@ -253,7 +256,10 @@ export function selectPrimaryReason(item: FundRecommendation): string {
   const candidate =
     item.suggested_position_change_basis?.trim() ||
     item.amount_note?.trim() ||
-    item.points.find((point) => point.trim() && !GUARD_NOTE.test(point)) ||
+    item.points.find(
+      (point) => point.trim() && !GUARD_NOTE.test(point) && !SYSTEM_POINT.test(point),
+    ) ||
+    item.points.find((point) => point.trim() && !SYSTEM_POINT.test(point)) ||
     item.points[0] ||
     "暂无需要立即操作的新增信号";
   return translateEvidenceText(candidate);
@@ -267,10 +273,20 @@ export function selectNextTradingPlan(points: string[]): string | null {
 export function keyReasonLines(item: FundRecommendation): string[] {
   const result: string[] = [];
   for (const point of item.points) {
-    if (GUARD_NOTE.test(point) || NEXT_PLAN.test(point)) continue;
+    if (GUARD_NOTE.test(point) || NEXT_PLAN.test(point) || SYSTEM_POINT.test(point)) continue;
     const value = translateEvidenceText(point.trim());
     if (value && !result.includes(value)) result.push(value);
     if (result.length === 3) break;
+  }
+  return result;
+}
+
+export function cardSpecificValidationNotes(values?: string[]): string[] {
+  const result: string[] = [];
+  for (const raw of values ?? []) {
+    const value = translateEvidenceText(raw.trim());
+    if (!value || GENERIC_VALIDATION.test(value) || result.includes(value)) continue;
+    result.push(value);
   }
   return result;
 }

@@ -435,17 +435,23 @@ def test_ready_to_start_does_not_block() -> None:
     assert _entry_state_add_block_reason({"entry_state": "ready_to_start"}) is None
 
 
-@pytest.mark.parametrize(
-    "probe_key",
-    ["flow_improving_probe_eligible", "probability_early_probe_eligible"],
-)
-def test_early_probe_eligibility_keeps_the_add_open(probe_key: str) -> None:
-    """荐基对这两类早期试仓开了口子，日报沿用同一判定，否则两个界面结论相反。"""
+def test_flow_improving_probe_keeps_the_add_open() -> None:
+    """资金刚转强的通道已标定，日报继续开门，避免与荐基打架。"""
     reason = _entry_state_add_block_reason(
-        {"entry_state": "forming", probe_key: True}
+        {"entry_state": "forming", "flow_improving_probe_eligible": True}
     )
 
     assert reason is None
+
+
+def test_probability_early_probe_no_longer_opens_daily_add() -> None:
+    """趋势成形信号分未经校准：日报只披露、不给现持仓加仓。"""
+    reason = _entry_state_add_block_reason(
+        {"entry_state": "forming", "probability_early_probe_eligible": True}
+    )
+
+    assert reason is not None
+    assert "条件仍在形成中" in reason
 
 
 def test_weak_evidence_reasons_include_the_entry_state_block() -> None:
@@ -574,8 +580,11 @@ def test_maturity_fields_survive_the_llm_projection(analysis_mode: str) -> None:
                     "entry_reason": "中期方向、资金确认和价格位置已同时通过入场线。",
                     "first_tranche_scale": 0.6,
                     "trend_formation_probability": 72.0,
+                    "waiting_reason_code": "none",
                     "overheat_flags": ["涨幅透支"],
                     "sector_group": "成长",
+                    "score_policy_version": "sector_entry_maturity.2026-08.v3",
+                    "verbose_history": [{"i": i} for i in range(20)],
                 },
             }
         ],
@@ -596,3 +605,5 @@ def test_maturity_fields_survive_the_llm_projection(analysis_mode: str) -> None:
     assert trimmed["sector_direction_maturity"]["available"] is True
     # 内部分组键不进 prompt。
     assert "sector_group" not in opportunity
+    assert "verbose_history" not in opportunity
+    assert "score_policy_version" not in opportunity

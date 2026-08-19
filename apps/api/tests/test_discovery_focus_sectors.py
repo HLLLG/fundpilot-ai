@@ -80,6 +80,55 @@ def test_focus_sector_labels_are_normalised_to_whitelist_labels() -> None:
     assert resolve_focus_sector_labels(None) == []
 
 
+def test_full_market_targets_mix_flow_and_setup_not_just_heat() -> None:
+    """全市场第一层不能只按 1/5 日热度圈满 8 个目标。"""
+    hot = [
+        {
+            "sector_label": f"热门{index}",
+            "heat_score": 20.0 - index,
+            "change_1d_percent": 8.0,
+            "change_5d_percent": 15.0,
+        }
+        for index in range(12)
+    ]
+    quiet = {
+        "sector_label": "安静蓄势",
+        "heat_score": 0.4,
+        "change_1d_percent": 0.2,
+        "change_5d_percent": 0.8,
+        "advancing_ratio_percent": 55.0,
+    }
+
+    selected = select_target_sectors(
+        [],
+        [],
+        [*hot, quiet],
+        InvestorProfile(),
+        flow_inflection_labels=["资金拐点"],
+    )
+
+    assert "资金拐点" in selected
+    assert "安静蓄势" in selected
+    assert len(selected) == 8
+
+
+def test_actionable_gold_adds_gold_equity_companion_for_vehicle_recall() -> None:
+    request = _request()
+    target_sectors, _per_sector, _pool_cap = resolve_scan_scope(
+        request,
+        ["黄金"],
+        [
+            {
+                "sector_label": "黄金",
+                "entry_state": "ready_to_start",
+                "opportunity_available": True,
+            }
+        ],
+    )
+
+    assert target_sectors == ["黄金", "黄金股"]
+
+
 def test_gap_quota_counts_normalised_focus_labels_as_focus() -> None:
     """缺口配额不得把「归一后改了名的关注方向」误计为缺口板块。
 

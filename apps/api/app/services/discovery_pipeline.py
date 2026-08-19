@@ -11,6 +11,7 @@ from app.models import DiscoveryRequest, FundDiscoveryReport
 from app.request_context import try_get_request_user_id
 from app.services.discovery_candidate_pool import (
     attach_candidate_benchmark_research,
+    attach_descriptive_peer_research,
     build_candidate_pool,
     enrich_candidates,
     finalize_candidate_pool,
@@ -26,7 +27,11 @@ from app.services.fund_primary_sector_precompute import (
 )
 from app.services.fund_vehicle_quality import assess_candidate_vehicle_quality_batch
 from app.services.discovery_client import DiscoveryClient
-from app.services.discovery_facts import build_discovery_facts
+from app.services.discovery_facts import (
+    build_discovery_facts,
+    refresh_candidate_pool_research,
+)
+from app.services.shared_executors import get_shared_io_executor
 from app.services.discovery_sector_opportunity import (
     build_sector_divergence_map_for_opportunities,
     build_sector_flow_map_for_opportunities,
@@ -36,6 +41,9 @@ from app.services.discovery_sector_heat import build_sector_heat_ranking
 from app.services.discovery_sector_position import (
     build_sector_percentile_universe_positions,
     build_sector_position_map_for_opportunities,
+)
+from app.services.discovery_recommendation_scope import (
+    companion_vehicle_sector_labels,
 )
 from app.services.discovery_sector_prefilter import (
     select_cached_high_elasticity_labels,
@@ -156,21 +164,27 @@ def run_discovery_impl(
         keyword="decision_at",
         decision_at=decision_at,
     )
+    effective_trade_date = str(
+        build_trading_session(decision_at).get("effective_trade_date") or ""
+    ).strip() or None
+    flow_inflections = _snapshot_flow_inflection_labels(
+        sector_heat,
+        effective_trade_date=effective_trade_date,
+    )
     target_sectors = select_target_sectors(
         holdings,
         request.focus_sectors,
         sector_heat,
         request.profile,
         scan_mode=request.scan_mode,
+        flow_inflection_labels=flow_inflections,
     )
-    effective_trade_date = str(
-        build_trading_session(decision_at).get("effective_trade_date") or ""
-    ).strip() or None
     flow_labels = _opportunity_flow_labels(
         sector_heat,
         target_sectors,
         list(request.focus_sectors),
         effective_trade_date=effective_trade_date,
+        flow_inflection_labels=flow_inflections,
     )
     # M1.4：量价背离历史回测（confidence 升级判定的证据来源），仅对候选方向拉取，
     # best-effort，任一板块失败/超时不影响其他板块或整体扫描。
@@ -278,6 +292,7 @@ def run_discovery_impl(
         target_sectors,
         per_sector=per_sector,
         pool_cap=pool_cap,
+        sector_opportunities=sector_opportunities,
         minimum_holding_days=discovery_minimum_holding_days(
             request.discovery_strategy,
             request.profile,
@@ -303,18 +318,19 @@ def run_discovery_impl(
         str(item.get("fund_code") or "") for item in pool[:12]
     ]
     request_user_id = try_get_request_user_id()
+    research_future = _submit_with_optional_request_user(
+        get_shared_io_executor(),
+        request_user_id,
+        lambda candidate_pool=pool: prepare_finalist_research_context(
+            candidate_pool,
+            universe=prepared_universe_rows,
+            decision_at=decision_at,
+        ),
+    )
     with ThreadPoolExecutor(
         max_workers=3,
         thread_name_prefix="discovery-evidence",
     ) as executor:
-        benchmark_future = _submit_with_optional_request_user(
-            executor,
-            request_user_id,
-            lambda candidate_pool=pool: _prepare_candidate_benchmark_context(
-                candidate_pool,
-                decision_at=decision_at,
-            ),
-        )
         news_future = _submit_with_optional_request_user(
             executor,
             request_user_id,
@@ -334,7 +350,6 @@ def run_discovery_impl(
                 decision_at=decision_at,
             ),
         )
-        pool, benchmark_specs, benchmark_metrics = benchmark_future.result()
         market_news = news_future.result()
         announcement_result = announcement_future.result()
     enqueue_candidate_sector_precompute(pool)
@@ -382,22 +397,6 @@ def run_discovery_impl(
     discovery_facts["fund_announcements"] = announcement_meta
     discovery_facts["candidate_selection_audit"] = candidate_selection_audit
     discovery_facts["candidate_selection_audit_v1"] = candidate_selection_audit_v1
-    discovery_facts["benchmark_specs"] = benchmark_specs
-    discovery_facts["benchmark_contract"] = {
-        "schema_version": "fund_benchmark_mapping.v1",
-        "lookup_policy": "cached_point_in_time_before_generation",
-        "formal_excess_policy": "verified_fund_contract_only",
-        "available_count": sum(
-            1 for spec in benchmark_specs.values() if spec.get("tier") != "unavailable"
-        ),
-        "unavailable_count": sum(
-            1 for spec in benchmark_specs.values() if spec.get("tier") == "unavailable"
-        ),
-    }
-    discovery_facts["benchmark_research"] = benchmark_metrics
-    discovery_facts["benchmark_research_contract"] = summarize_benchmark_research(
-        benchmark_metrics
-    )
     discovery_facts = attach_discovery_data_evidence(
         discovery_facts,
         holdings=holdings,
@@ -425,6 +424,22 @@ def run_discovery_impl(
         decision_at=decision_at,
         announcement_meta=announcement_meta,
     )
+    pool, benchmark_specs, benchmark_metrics = research_future.result()
+    discovery_facts = apply_finalist_research_to_facts(
+        discovery_facts,
+        pool=pool,
+        benchmark_specs=benchmark_specs,
+        benchmark_metrics=benchmark_metrics,
+        holdings=holdings,
+        portfolio_context=request.portfolio_snapshot_context,
+    )
+    if hasattr(report, "model_copy"):
+        report = report.model_copy(
+            update={"candidate_pool": pool, "discovery_facts": discovery_facts}
+        )
+    else:
+        report.candidate_pool = pool
+        report.discovery_facts = discovery_facts
     progress("guarding")
     progress("saving")
     from app.services.langgraph_trace import apply_current_graph_run
@@ -476,6 +491,54 @@ def _submit_with_optional_request_user(
     return executor.submit(run_with_request_user, user_id, fn)
 
 
+def prepare_finalist_research_context(
+    pool: list[dict[str, Any]],
+    *,
+    universe: list[dict] | None,
+    decision_at: Any,
+) -> tuple[list[dict[str, Any]], dict[str, dict], dict[str, dict]]:
+    attach_descriptive_peer_research(
+        pool,
+        universe=universe,
+        decision_at=decision_at,
+    )
+    return _prepare_candidate_benchmark_context(pool, decision_at=decision_at)
+
+
+def apply_finalist_research_to_facts(
+    discovery_facts: dict[str, Any],
+    *,
+    pool: list[dict[str, Any]],
+    benchmark_specs: dict[str, dict],
+    benchmark_metrics: dict[str, dict],
+    holdings: Any,
+    portfolio_context: Any,
+) -> dict[str, Any]:
+    refresh_candidate_pool_research(discovery_facts, pool)
+    discovery_facts["benchmark_specs"] = benchmark_specs
+    discovery_facts["benchmark_contract"] = {
+        "schema_version": "fund_benchmark_mapping.v1",
+        "lookup_policy": "cached_point_in_time_before_generation",
+        "formal_excess_policy": "verified_fund_contract_only",
+        "available_count": sum(
+            1 for spec in benchmark_specs.values() if spec.get("tier") != "unavailable"
+        ),
+        "unavailable_count": sum(
+            1 for spec in benchmark_specs.values() if spec.get("tier") == "unavailable"
+        ),
+    }
+    discovery_facts["benchmark_research"] = benchmark_metrics
+    discovery_facts["benchmark_research_contract"] = summarize_benchmark_research(
+        benchmark_metrics
+    )
+    return attach_discovery_data_evidence(
+        discovery_facts,
+        holdings=holdings,
+        candidate_pool=pool,
+        portfolio_context=portfolio_context,
+    )
+
+
 def _prepare_candidate_benchmark_context(
     pool: list[dict[str, Any]],
     *,
@@ -502,10 +565,8 @@ def _prepare_candidate_benchmark_context(
     return enriched_pool, benchmark_specs, benchmark_metrics
 
 
-def _opportunity_flow_labels(
+def _snapshot_flow_inflection_labels(
     sector_heat: list[dict],
-    target_sectors: list[str],
-    focus_sectors: list[str],
     *,
     effective_trade_date: str | None = None,
 ) -> list[str]:
@@ -518,15 +579,30 @@ def _opportunity_flow_labels(
         if effective_trade_date
         else None
     )
-    flow_inflections = select_snapshot_flow_inflection_labels(
-        sector_heat,
-        snapshot,
+    return select_snapshot_flow_inflection_labels(sector_heat, snapshot)
+
+
+def _opportunity_flow_labels(
+    sector_heat: list[dict],
+    target_sectors: list[str],
+    focus_sectors: list[str],
+    *,
+    effective_trade_date: str | None = None,
+    flow_inflection_labels: list[str] | None = None,
+) -> list[str]:
+    inflections = (
+        list(flow_inflection_labels)
+        if flow_inflection_labels is not None
+        else _snapshot_flow_inflection_labels(
+            sector_heat,
+            effective_trade_date=effective_trade_date,
+        )
     )
     return select_opportunity_evidence_labels(
         sector_heat,
         target_sectors,
         focus_sectors,
-        flow_inflection_labels=flow_inflections,
+        flow_inflection_labels=inflections,
     )
 
 
@@ -608,6 +684,17 @@ def resolve_scan_scope(
             if (label := str(item.get("sector_label") or "").strip())
         ]
         target_sectors = list(dict.fromkeys([*focus_labels, *opportunity_labels]))
+    target_sectors = list(
+        dict.fromkeys(
+            [
+                *target_sectors,
+                *companion_vehicle_sector_labels(
+                    target_sectors,
+                    sector_opportunities,
+                ),
+            ]
+        )
+    )
     pool_cap = _BASE_CANDIDATE_POOL_CAP + _PER_SECTOR_CANDIDATES * len(focus_labels)
     return target_sectors, _PER_SECTOR_CANDIDATES, pool_cap
 
@@ -677,8 +764,11 @@ def _score_select_and_persist_directions(
     selectable = [
         row
         for row in rows
-        if row.get("opportunity_available")
-        or str(row.get("sector_label") or "").strip() in pinned
+        if str(row.get("sector_label") or "").strip() in pinned
+        or (
+            row.get("opportunity_available")
+            and str(row.get("evidence_quality") or "") == "complete"
+        )
     ]
     return select_scored_sector_opportunities(
         selectable,

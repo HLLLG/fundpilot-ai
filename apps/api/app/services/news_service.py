@@ -551,10 +551,10 @@ def _build_announcement_prefetch_result(
 def compact_announcement_fetch_status(result: dict[str, object]) -> dict[str, object]:
     """Return the bounded announcement retrieval state exposed to the LLM.
 
-    The item list and per-fund details intentionally stay out of this projection:
-    announcement titles already travel through the normal news payload, while
-    these counters let the model distinguish a genuine empty provider response
-    from missing evidence caused by timeout or error.
+    The item list and per-fund details intentionally stay out of this projection.
+    Daily reports no longer merge announcement titles into market news; discovery
+    still can. These counters let the model distinguish a genuine empty provider
+    response from missing evidence caused by timeout, error, or an intentional skip.
     """
 
     def count(name: str) -> int:
@@ -580,6 +580,7 @@ def compact_announcement_fetch_status(result: dict[str, object]) -> dict[str, ob
     if explicit_status in {
         "disabled",
         "not_requested",
+        "skipped_for_daily_tactical",
         "ok",
         "empty",
         "partial",
@@ -634,6 +635,32 @@ def merge_market_news_with_announcements(
     """Merge both evidence streams into one decision-time, newest-first view."""
 
     return _prepare_news([*market_news, *announcement_items], now=now)
+
+
+def exclude_fund_announcements(items: list[NewsItem]) -> list[NewsItem]:
+    """Drop periodic report filings so they cannot enter daily tactical news."""
+
+    return [item for item in items if str(item.source or "") != "fund-announcement"]
+
+
+def skipped_daily_announcement_facts() -> dict[str, object]:
+    """Daily reports do not treat fund filings as same-day trading news."""
+
+    facts = compact_announcement_fetch_status(
+        {
+            "status": "skipped_for_daily_tactical",
+            "requested": 0,
+            "ok": 0,
+            "empty": 0,
+            "error": 0,
+            "timeout": 0,
+            "coverage": 0.0,
+            "evidence_coverage": 0.0,
+            "fetched_at": "",
+        }
+    )
+    facts["reason"] = "daily_report_excludes_fund_announcements"
+    return facts
 
 
 def _normalize_topic(topic: str | None) -> str | None:

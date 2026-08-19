@@ -17,7 +17,11 @@ from app.services.deepseek_http import ProviderOutputError
 from app.services.deepseek_streaming import stream_chat_completion
 from app.services.discovery_client import DiscoveryClient, build_discovery_report_from_parsed
 from app.services.discovery_judge import judge_parsed_discovery_report
-from app.services.deepseek_client import _is_valid_discovery_report_payload, _parse_model_json
+from app.services.deepseek_client import (
+    _is_valid_discovery_report_payload,
+    _parse_model_json,
+    normalize_discovery_report_payload,
+)
 from app.services.decision_repository import (
     canonical_hash,
     get_decision_quality_artifact_receipt,
@@ -472,7 +476,7 @@ def process_prompt_shadow_run(
                 # raises; the trace and stored bytes must remain consistent.
                 raw_content = "".join(chunks)
             raw_content = raw_content or ""
-            parsed = _parse_model_json(raw_content)
+            parsed = normalize_discovery_report_payload(_parse_model_json(raw_content))
             if parsed.get("_truncated") or not _is_valid_discovery_report_payload(parsed):
                 raise ProviderOutputError("invalid_json")
         report = _build_challenger_report(registration=registration, parsed=parsed)

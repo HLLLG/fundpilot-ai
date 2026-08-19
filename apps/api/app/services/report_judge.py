@@ -36,6 +36,13 @@ logger = logging.getLogger(__name__)
 LLM_JUDGE_TIMEOUT_SECONDS = 10.0
 
 
+def _llm_judge_budget_can_receive_first_token() -> bool:
+    first_byte = max(0.0, float(get_settings().deepseek_first_byte_timeout_seconds))
+    if first_byte <= 0:
+        return True
+    return LLM_JUDGE_TIMEOUT_SECONDS > first_byte
+
+
 def judge_parsed_report(
     parsed: dict,
     request: AnalysisRequest,
@@ -81,6 +88,11 @@ def judge_parsed_report(
     # 避免产生一笔注定不会应用的模型调用与延迟。
     if get_settings().decision_escalation_mode != "enforced":
         meta["llm_judge_skipped_reason"] = "decision_escalation_shadow"
+        return judged, meta
+    if not _llm_judge_budget_can_receive_first_token():
+        # 审校走 first-byte watchdog（默认 60s），外层却只等 10s。v4-pro 日报首
+        # token 实测 80–120s，这次调用数学上不可能成功，只会白等满超时。
+        meta["llm_judge_skipped_reason"] = "timeout_below_provider_first_byte"
         return judged, meta
     meta["llm_judge_attempted"] = True
     escalation_floors = _escalation_floor_by_fund_code(judged, facts)

@@ -29,6 +29,7 @@ from app.services.deepseek_client import (
     _execute_fetch_market_news,
     _is_valid_discovery_report_payload,
     _parse_model_json,
+    normalize_discovery_report_payload,
     tool_round_stage_label,
 )
 from app.services.discovery_guard import apply_discovery_guards
@@ -487,7 +488,7 @@ class DiscoveryClient:
                         error_category="empty_content",
                     )
                 raise ProviderOutputError("empty_content")
-            parsed = _parse_model_json(content)
+            parsed = normalize_discovery_report_payload(_parse_model_json(content))
             if parsed.get("_truncated") or not _is_valid_discovery_report_payload(parsed):
                 if trace_collector is not None:
                     trace_collector.finish_error(

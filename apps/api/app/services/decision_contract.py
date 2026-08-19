@@ -1153,7 +1153,10 @@ def _prompt_version(
 
 def _evaluation_class(action: str, decision_kind: str) -> str:
     if decision_kind == "daily":
-        if any(token in action for token in ("清仓", "减仓", "暂停追涨", "卖出", "赎回")):
+        if any(
+            token in action
+            for token in ("清仓", "减仓", "暂停追涨", "卖出", "赎回", "风控", "复核")
+        ):
             return "bearish"
         if any(token in action for token in ("加仓", "定投", "买入", "申购", "分批")):
             return "bullish"

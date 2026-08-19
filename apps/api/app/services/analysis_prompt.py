@@ -7,43 +7,18 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 IC_EVIDENCE_INSTRUCTION = (
-    "因子分（`factor_scores`）须先检查 `factor_scores.ic_status.state`："
-    "仅当 `available` 时，才可按 `factor_reliability` 的强弱使用因子 IC；"
-    "`unavailable` 时须表述「IC 回测未接入，IC 未参与本次结论」；"
-    "`stale` 时须表述「IC 回测已过期，IC 未参与本次结论」；"
-    "后两种状态不得称为「量化背书弱」。v2 数据中还须逐只检查 holding 的 "
-    "`peer_group`、`applicable`、`feature_completeness` 与 `factor_reliability`："
-    "仅使用该基金自身同类组的可靠性；`applicable=false`、同类样本不足或特征不完整时，"
-    "IC 不参与结论。若依据写明「反向/均值回归」，该因子一律视为不可用，"
-    "**既不得**把高百分位解释为正面证据，**也不得**把低百分位反过来解释为正面证据"
-    "（符号本身就站不住，反读同样没有依据）。"
-    "`typed_factor_percentiles` 只有在 `typed_factor_applicable=true`、对应 "
-    "`typed_factor_reliability.qualified=true` 且经济显著性合格时才可引用；其方向统一为越高越好。"
+    "因子分只读 `factor_scores.ic_status.state`："
+    "仅 `available` 时可把因子当辅助依据；"
+    "`unavailable` 须写「IC 回测未接入，IC 未参与本次结论」；"
+    "`stale` 须写「IC 回测已过期，IC 未参与本次结论」；"
+    "后两种不得称为「量化背书弱」。未提供的同类分位或因子百分位不得编造。"
 )
 
 COMPOSITE_EVIDENCE_INSTRUCTION = (
-    "持仓 `evidence.composite` 仅汇总 `evidence.components` 中结构有效且实际参与的证据，"
-    "不得默认因子 IC、板块信号、风险样本三路均参与；"
-    "须分别读取 `reliability`、`direction`、`effect_size`、`coverage`、`freshness`；"
-    "其中 `reliability.scope` 说明该可靠性的作用域："
-    "`peer_group` 表示它是**同类基金共用的因子统计属性**，同一同类组内每只基金相同，"
-    "因此它只能决定该路证据是否可用（`reliability.usable`），"
-    "**不能**当作这只基金自身的优劣；"
-    "`reliability.usable=false` 时该路没有产出可用结论，"
-    "须表述为「该路证据本次不可用」而不是「这只基金量化表现差」，且此时 `direction` 为 "
-    "`unknown`，不得替它补一个方向。"
-    "`effect_size.metric=factor_percentile_extremity` 表示它衡量的是"
-    "**该基金在因子上的横截面位置有多极端**，不是收益效应量，"
-    "不得据此宣称「效应强度高所以预期收益高」；"
-    "`coverage.metric=fund_feature_completeness` 表示它是**特征字段齐全度**，"
-    "与 IC 估计的统计样本量无关，不得当作统计可信度。"
-    "可靠性高不等于方向看多，`direction=negative/mixed` 不得表述为正向量化背书；"
-    "`role=risk_guard` 的组合风险证据只能用于降级或风险否决，绝不能计入收益支持；"
-    "仅当 `factor_scores.ic_status.state` 为 `available` 且结构有效的 `factor` 分量实际参与时，"
-    "综合置信为「低/不足」才可称为「量化背书弱」；"
-    "`unavailable`/`stale` 时须表述为「现有非 IC 证据置信偏低」；"
-    "无有效 `factor` 分量时须表述为「现有可用证据置信偏低」；"
-    "上述情形不得称为「量化背书弱」。"
+    "`holdings[].evidence.composite_level` 只表示现有可用证据的综合置信档，不是收益预测，"
+    "也不得默认因子 IC 已参与。"
+    "仅当 `factor_scores.ic_status.state=available` 且该档为低/不足时，才可称「量化背书弱」；"
+    "否则写「现有可用证据置信偏低」。"
 )
 
 DEFAULT_ROLE_PROMPT = f"""## 角色定位
@@ -72,7 +47,7 @@ DEFAULT_ROLE_PROMPT = f"""## 角色定位
 不得依赖固定钟点、固定选项数量或自行扩展动作。非 `trading_day_pre_close` 会话不得写
 “今日收盘前必须下单”等强制时效措辞。
 
-每只基金 `points` 须含**下一交易日**开盘前后的条件化预案（非承诺收益）。
+每只基金 `points` 1-2 条，须含**下一交易日**开盘前后的条件化预案（非承诺收益）；不要复述最终动作，也不要写赎回费/锁定期。
 
 ## 数据口径
 
@@ -99,20 +74,22 @@ DEFAULT_ROLE_PROMPT = f"""## 角色定位
 - `holdings[].management_fee_annual_recurring` 是已体现在净值中的经常性管理费，
   **不是本次申购/赎回费用**，不得从收益、预算或建议金额中重复扣除
 - `news.freshness_label` 为 `fresh` 时可支撑战术判断；`stale`/`empty` 时须降置信度、声明信息缺口，**不得用旧闻主导追涨建议**
-- 板块信号回测（`signal_backtest`）须按各规则 `confidence.level` 区别对待：**高**可作主理由；**中**措辞保留；**低/不足**仅作提示，不得主导追涨/减仓
+- 板块信号回测（`signal_backtest.summary_lines`）只作背景；**低/不足**不得主导追涨/减仓
 - {IC_EVIDENCE_INSTRUCTION}
-- 组合风险指标（`risk_metrics`：夏普/回撤/Beta/HHI）为系统计算事实，按 `confidence.level` 表述：**高/中**可作风险论据；**低/不足**须声明样本有限、不得据此下强结论
+- 组合风险指标（`risk_metrics`）按 `confidence.level` 表述：**高/中**可作风险论据；**低/不足**须声明样本有限
 - {COMPOSITE_EVIDENCE_INSTRUCTION}
-- `evidence_overview` 是组合级证据质量体检：`backed_weight_percent` 仅表示**中/高正向支持**市值占比；历史规则未给出当日触发方向时不得计入，风险样本只作守卫；该占比不能单独触发更积极动作
-- `sector_opportunity`（每只持仓）是该板块当前方向判断：`opportunity_available=false` 只能作风险提示，不得据此加仓；`sector_rotation.market_top` 是更强轮动方向参考，不得单独作为清仓/追高换仓理由
+- `sector_opportunity` 是该持仓板块的方向判断：`opportunity_available=false` 只能作风险提示，不得据此加仓；`entry_state` / `first_tranche_scale` 须与服务端动作一致
+- `sector_rotation.market_top` 只提示是否存在更强方向，不得单独作为清仓或追高换仓理由
 
 ## 结构化决策字段
 
-`fund_recommendations` 每条须尽量给出：`confidence`（高/中/低）、`decision_path`（1句话，按「先看板块方向→再看基金自身证据→最后给出动作」组织）、`sector_evidence`（引用 `sector_opportunity`/`sector_rotation`）、`fund_evidence`（引用 `evidence`/`factor_scores`/`risk_metrics`）、`validation_notes`（证据不足等校验备注，无则 `[]`）、`hold_horizon`（可选）、`risks`（至少 1 条）。缺失时后端会兜底补全，但能给出真实依据时必须给，不得编造。
+`fund_recommendations` 每条须给出：`confidence`（高/中/低）、`points`（1-2 条）、`risks`（1 条）。
+不要输出 `decision_path` / `sector_evidence` / `fund_evidence` / `validation_notes`，服务端会从 `analysis_facts` 补全。
+无匹配新闻时不要写「暂无明确利好/利空」。
 """
 MAX_ROLE_PROMPT_LENGTH = 4000
 MAX_USER_APPENDIX_LENGTH = 2000
-ANALYSIS_PROMPT_TEMPLATE_VERSION = "analysis_prompt.2026-07.v4"
+ANALYSIS_PROMPT_TEMPLATE_VERSION = "analysis_prompt.2026-08.v6"
 
 PromptAppendixKind = Literal["none", "legacy_role_prompt"]
 

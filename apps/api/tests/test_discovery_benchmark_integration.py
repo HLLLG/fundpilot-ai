@@ -104,37 +104,24 @@ def _request() -> DiscoveryRequest:
     )
 
 
-def test_candidate_llm_distinguishes_qualified_and_unavailable_metrics() -> None:
+def test_candidate_llm_omits_benchmark_metrics() -> None:
     qualified = slim_candidate_for_llm(
         {"fund_code": "000001", "benchmark_metrics": _qualified_metrics()},
         sector_change_index={},
         trade_date=None,
-    )["benchmark_metrics"]
+    )
     unavailable = slim_candidate_for_llm(
         {"fund_code": "000002", "benchmark_metrics": _unavailable_metrics()},
         sector_change_index={},
         trade_date=None,
-    )["benchmark_metrics"]
+    )
 
-    assert qualified["status"] == "qualified"
-    assert qualified["qualified"] is True
-    assert qualified["formal_excess_eligible"] is True
-    assert qualified["descriptive_only"] is True
-    assert qualified["execution_tilt_eligible"] is False
-    assert qualified["horizons"]["3m"]["formal_excess_return_percent"] == 3.3
-    assert "5y" not in qualified["horizons"]
-    assert "raw_nav_points" not in qualified
-    assert "private_alignment_detail" not in qualified["alignment"]
-
-    assert unavailable["status"] == "unavailable"
-    assert unavailable["qualified"] is False
-    assert unavailable["formal_excess_eligible"] is False
-    assert unavailable["execution_tilt_eligible"] is False
-    assert unavailable["reason_codes"] == ["benchmark_spec_unavailable"]
-    assert unavailable["horizons"] == {}
+    assert "benchmark_metrics" not in qualified
+    assert "benchmark_research" not in qualified
+    assert "benchmark_metrics" not in unavailable
 
 
-def test_discovery_payload_preserves_benchmark_research_contract() -> None:
+def test_discovery_payload_omits_benchmark_research_contract() -> None:
     contract = {
         "schema_version": "fund_benchmark_research.v1",
         "calculation_policy": "strict_pit_aligned_before_generation",
@@ -155,7 +142,9 @@ def test_discovery_payload_preserves_benchmark_research_contract() -> None:
         focus_sectors=["半导体"],
     )
 
-    assert payload["discovery_facts"]["benchmark_research_contract"] == contract
+    assert "benchmark_research_contract" not in payload["discovery_facts"]
+    assert "benchmark_contract" not in payload["discovery_facts"]
+    assert "candidate_peer_summary" not in payload["discovery_facts"]
 
 
 def _benchmark_specs() -> dict[str, dict[str, Any]]:
@@ -251,6 +240,10 @@ def _patch_path(
     monkeypatch.setattr(
         f"{module_name}.finalize_candidate_pool",
         lambda pool, *_args, **_kwargs: pool,
+    )
+    monkeypatch.setattr(
+        f"{module_name}.attach_descriptive_peer_research",
+        lambda pool, **_kwargs: pool,
     )
     monkeypatch.setattr(
         f"{module_name}.load_decision_benchmark_specs",

@@ -9,6 +9,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.services.chat_agent_loop import CHAT_AGENT_MAX_TOKENS
 from app.services.chat_agent_tools import ChatAgentContext, execute_chat_tool, tool_status_label
 from app.services.langgraph_runner import emit_custom, iter_graph_events
 from app.services.streaming_heartbeat import raise_if_stream_cancelled
@@ -74,7 +75,7 @@ def llm_call(state: ChatFollowupState) -> dict[str, Any]:
         messages=list(state.get("messages") or []),
         tools=list(state.get("tools") or []),
         response_format=None,
-        max_tokens=int(state.get("max_tokens") or 4096),
+        max_tokens=int(state.get("max_tokens") or CHAT_AGENT_MAX_TOKENS),
         model=str(state.get("model") or ""),
     )
     tool_calls = message.get("tool_calls")
@@ -172,7 +173,7 @@ def stream_answer(state: ChatFollowupState) -> dict[str, Any]:
     for chunk in stream_chat_completion(
         messages=list(state.get("messages") or []),
         model=str(state.get("model") or ""),
-        max_tokens=int(state.get("max_tokens") or 4096),
+        max_tokens=int(state.get("max_tokens") or CHAT_AGENT_MAX_TOKENS),
         response_format=None,
         stop_event=_stop_event.get(),
         deadline_monotonic=_deadline.get(),

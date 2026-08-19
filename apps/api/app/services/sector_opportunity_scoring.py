@@ -178,6 +178,12 @@ V3_TREND_TRANCHE_SCALES: tuple[tuple[float, float], ...] = (
     (70.0, 0.65),
     (60.0, 0.4),
 )
+#: 趋势刚过 60、资金参与度仍弱的 ready_to_start：门禁仍算通过（35 分线有回测支撑），
+#: 但选择权与首仓必须低于强参与度方向，避免和确认充分的 ready 平权。
+V3_CONSTRAINED_READY_TREND_CEILING = 70.0
+V3_CONSTRAINED_READY_PARTICIPATION_CEILING = 50.0
+V3_CONSTRAINED_READY_FIRST_TRANCHE_CAP = 0.25
+V3_CONSTRAINED_READY_SELECTION_PRIORITY = 3.6
 
 _ENTRY_STATE_PRIORITY = {
     ENTRY_READY_TO_START: 4,
@@ -195,6 +201,8 @@ _IMPROVING_FLOW_PATTERNS = _SETUP_PATTERNS | _MOMENTUM_PATTERNS
 _SECTOR_GROUPS = {
     "半导体": "tmt",
     "半导体材料": "tmt",
+    "半导体设备": "tmt",
+    "数字经济": "tmt",
     "存储芯片": "tmt",
     "CPO": "tmt",
     "人工智能": "tmt",
@@ -509,6 +517,14 @@ def select_scored_sector_opportunities(
     contested = [row for row in rows if id(row) not in pinned_ids]
 
     if entry_policy_enabled:
+        # v3 自动席只给证据完整的方向。v2 历史回放仍保留 incomplete 研究行；
+        # partial / insufficient 在 v3 里可以 pin 给关注方向做说明，但不能占执行名额。
+        contested = [
+            row
+            for row in contested
+            if str(row.get("score_policy_version") or "") != ENTRY_POLICY_VERSION_V3
+            or str(row.get("evidence_quality") or "") == "complete"
+        ]
         # 入场状态优先于分数：证据完整且可布局的方向必须排在热门但不可执行的
         # 方向之前；缺少 mainline 证据的方向不能再因为跳过混合评分而占便宜。
         ordered = sorted(contested, key=_entry_sort_score, reverse=True)
@@ -1699,14 +1715,24 @@ def _entry_maturity_v3(
     # 的比例，`discovery_allocation_service` 对 `not 0 < scale <= 1` 换成 0.4。发 0 会在这
     # 两处被静默当成缺数据，比不发更危险；None 与它们既有的 None 分支语义一致（且两处都
     # 另有 entry_state 门禁在前，本身不会走到）。
+    constrained_ready_to_start = _is_constrained_ready_to_start(
+        entry_state=entry_state,
+        trend_strength=trend_strength,
+        participation=participation,
+    )
     first_tranche_scale: float | None
     if entry_state == ENTRY_READY_TO_START:
         # 已成熟方向也分段建仓，不把"通过门槛"误解为一次性建满。刻度改用趋势强度：
         # 它是唯一实测有效的轴，而原来那个信号分未经校准（中性方向即读出 56），
-        # 不该由它决定投多少钱。
+        # 不该由它决定投多少钱。趋势刚过线且资金仍弱时再加一道更小的执行上限。
         first_tranche_scale = min(
             overheat_scale,
             trend_scale if trend_scale > 0 else 0.25,
+            (
+                V3_CONSTRAINED_READY_FIRST_TRANCHE_CAP
+                if constrained_ready_to_start
+                else 1.0
+            ),
         )
     elif flow_improving_probe_eligible:
         first_tranche_scale = min(
@@ -1758,7 +1784,11 @@ def _entry_maturity_v3(
     )
     entry_hint = {
         ENTRY_READY_TO_START: (
-            "条件成熟，可按本次参考金额布局" if not overheat_flags else "条件成熟但短期加速，本次投入更小"
+            "趋势刚过线且资金参与度仍弱，本次投入更小"
+            if constrained_ready_to_start
+            else "条件成熟，可按本次参考金额布局"
+            if not overheat_flags
+            else "条件成熟但短期加速，本次投入更小"
         ),
         ENTRY_READY_ON_PULLBACK: "方向仍强，资金或结构尚不支持立即入场",
         ENTRY_FORMING: "条件形成中，暂不下单",
@@ -1772,7 +1802,11 @@ def _entry_maturity_v3(
             f"基金早期信号通过时可按计划仓位的 {first_tranche_scale:.0%} 试仓"
         )
     entry_reason = {
-        ENTRY_READY_TO_START: "中期趋势、市场参与度与价格位置已同时通过入场线。",
+        ENTRY_READY_TO_START: (
+            "中期趋势刚过入场线，但资金参与度仍偏弱，只按缩小后的本次金额布局。"
+            if constrained_ready_to_start
+            else "中期趋势、市场参与度与价格位置已同时通过入场线。"
+        ),
         ENTRY_READY_ON_PULLBACK: "中期趋势仍有优势，但资金参与度或价格位置尚未同时达标。",
         ENTRY_FORMING: "趋势强度或多周期证据尚未成熟。",
         ENTRY_INVALID: "趋势强度与资金参与度同时处于横截面低位，或主线退潮、价格结构破坏。",
@@ -1828,6 +1862,7 @@ def _entry_maturity_v3(
         "probability_early_probe_eligible": probability_early_probe_eligible,
         "flow_signal_state": "improving" if flow_improving else "unconfirmed",
         "flow_improving_probe_eligible": flow_improving_probe_eligible,
+        "constrained_ready_to_start": constrained_ready_to_start,
         "waiting_reason_code": waiting_reason_code,
         "entry_gate_inputs": {
             "policy_version": ENTRY_POLICY_VERSION_V3,
@@ -1836,6 +1871,7 @@ def _entry_maturity_v3(
             "structure_broken": structure_broken,
             "overheated": bool(overheat_flags),
             "flow_improving": flow_improving,
+            "constrained_ready_to_start": constrained_ready_to_start,
             "leading_flow_confirmed": formation["leading_flow_confirmed"],
             "mainline_status": status,
             "position_label": position_label or None,
@@ -2286,13 +2322,31 @@ def _weighted_neutral_fill_score(
     return score, available_weight / total_weight
 
 
-def _entry_sort_score(row: dict[str, Any]) -> tuple[float, float, float, float, float]:
+def _is_constrained_ready_to_start(
+    *,
+    entry_state: str,
+    trend_strength: float,
+    participation: float,
+) -> bool:
+    return bool(
+        entry_state == ENTRY_READY_TO_START
+        and trend_strength < V3_CONSTRAINED_READY_TREND_CEILING
+        and participation < V3_CONSTRAINED_READY_PARTICIPATION_CEILING
+    )
+
+
+def _entry_sort_score(
+    row: dict[str, Any],
+) -> tuple[float, float, float, float, float, float]:
     entry_state = str(row.get("entry_state") or "")
     state_priority = float(_ENTRY_STATE_PRIORITY.get(entry_state, 0))
     if row.get("probability_early_probe_eligible") is True:
         # 提前试仓已经有领先资金、短周期强度和结构共振，并且仍需基金自身信号复核；
         # 它排在普通等待/资金拐点之前、成熟方向之后。
         state_priority = 3.7
+    elif row.get("constrained_ready_to_start") is True:
+        # 趋势刚过线 + 资金仍弱：仍是 ready_to_start，但不能和强参与度确认平权。
+        state_priority = V3_CONSTRAINED_READY_SELECTION_PRIORITY
     elif (
         entry_state == ENTRY_READY_ON_PULLBACK
         and row.get("flow_improving_probe_eligible") is True
@@ -2303,6 +2357,7 @@ def _entry_sort_score(row: dict[str, Any]) -> tuple[float, float, float, float, 
     return (
         state_priority,
         float(_EVIDENCE_QUALITY_PRIORITY.get(str(row.get("evidence_quality") or ""), 0)),
+        _num(row.get("participation_score")) or 0.0,
         _num(row.get("selection_priority_score"))
         or _num(row.get("research_score"))
         or 0.0,

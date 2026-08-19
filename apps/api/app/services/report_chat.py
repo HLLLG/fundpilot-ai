@@ -15,14 +15,14 @@ from app.services.deepseek_http import (
 )
 from app.database import get_report, list_report_chat_messages, save_chat_message
 from app.models import AnalysisMode, ChatMessage
-from app.services.chat_agent_loop import iter_chat_agent_events
+from app.services.chat_agent_loop import CHAT_AGENT_MAX_TOKENS, iter_chat_agent_events
 from app.services.chat_agent_tools import ChatAgentContext, tool_specs_for
 from app.services.report_chat_runtime import resolve_report_chat_runtime
 from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS
 from app.services.report_export import report_to_markdown
 from app.services.retired_market_evidence import sanitize_retired_market_evidence
 
-REPORT_CHAT_MAX_TOKENS = 4096
+REPORT_CHAT_MAX_TOKENS = CHAT_AGENT_MAX_TOKENS
 
 OFFLINE_REPLY = (
     "当前未配置有效的 DeepSeek API Key，无法在线追问。"

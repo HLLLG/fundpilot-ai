@@ -57,6 +57,30 @@ def test_priority_sector_gets_an_extra_fund_recall_slot() -> None:
     ) == 4
 
 
+def test_invalid_direction_keeps_only_a_small_explain_quota() -> None:
+    opportunities = {
+        "失效关注": {
+            "entry_state": "invalid",
+            "score": 12.0,
+            "selection_priority_score": 12.0,
+        },
+        "可布局": {
+            "entry_state": "ready_to_start",
+            "score": 80.0,
+            "selection_priority_score": 80.0,
+        },
+    }
+
+    assert _sector_candidate_limit(
+        "失效关注",
+        index=0,
+        base_limit=3,
+        pool_cap=13,
+        total_sectors=2,
+        opportunity_by_sector=opportunities,
+    ) == 2
+
+
 def test_nav_summary_exposes_full_20_and_60_day_opportunity_windows():
     navs = [100.0 + index for index in range(61)]
     navs[45] = 152.0

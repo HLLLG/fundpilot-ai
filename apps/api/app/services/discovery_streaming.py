@@ -24,6 +24,7 @@ from app.services.deepseek_client import (
     _is_usable_interrupted_response,
     _is_valid_discovery_report_payload,
     _parse_model_json,
+    normalize_discovery_report_payload,
 )
 from app.services.deepseek_streaming import stream_chat_completion
 from app.services.deepseek_http import ProviderOutputError, classify_deepseek_failure
@@ -33,6 +34,7 @@ from app.services.provider_call_trace import (
 )
 from app.services.discovery_candidate_pool import (
     attach_candidate_benchmark_research,
+    attach_descriptive_peer_research,
     build_candidate_pool,
     enrich_candidates,
     finalize_candidate_pool,
@@ -41,7 +43,6 @@ from app.services.benchmark_mapping_service import load_decision_benchmark_specs
 from app.services.fund_benchmark_research import (
     attach_fund_benchmark_metrics,
     build_fund_benchmark_research_batch,
-    summarize_benchmark_research,
 )
 from app.services.fund_primary_sector_precompute import (
     enqueue_candidate_sector_precompute,
@@ -56,7 +57,10 @@ from app.services.discovery_client import (
 from app.services.discovery_facts import build_discovery_facts
 from app.services.discovery_judge import judge_parsed_discovery_report
 from app.services.discovery_offline import build_offline_discovery_report
-from app.services.discovery_pipeline import DISCOVERY_JOB_STAGES
+from app.services.discovery_pipeline import (
+    DISCOVERY_JOB_STAGES,
+    apply_finalist_research_to_facts,
+)
 from app.services.langgraph_trace import (
     begin_stream_run,
     finish_stream_run,
@@ -247,21 +251,27 @@ def _stream_discovery(
             keyword="decision_at",
             decision_at=decision_at,
         )
+        effective_trade_date = str(
+            build_trading_session(decision_at).get("effective_trade_date") or ""
+        ).strip() or None
+        flow_inflections = _snapshot_flow_inflection_labels(
+            sector_heat,
+            effective_trade_date=effective_trade_date,
+        )
         target_sectors = select_target_sectors(
             holdings,
             request.focus_sectors,
             sector_heat,
             request.profile,
             scan_mode=request.scan_mode,
+            flow_inflection_labels=flow_inflections,
         )
-        effective_trade_date = str(
-            build_trading_session(decision_at).get("effective_trade_date") or ""
-        ).strip() or None
         flow_labels = _opportunity_flow_labels(
             sector_heat,
             target_sectors,
             list(request.focus_sectors),
             effective_trade_date=effective_trade_date,
+            flow_inflection_labels=flow_inflections,
         )
         news_service = NewsService()
         held_codes = {h.fund_code.strip().zfill(6) for h in holdings if h.fund_code}
@@ -273,6 +283,7 @@ def _stream_discovery(
 
         executor = get_shared_io_executor()
         prep_futures: list[Any] = []
+        research_future = None
         try:
             flow_future = executor.submit(
                 build_sector_flow_map_for_opportunities,
@@ -423,6 +434,7 @@ def _stream_discovery(
                     target_sectors,
                     per_sector=per_sector,
                     pool_cap=pool_cap,
+                    sector_opportunities=sector_opportunities,
                     minimum_holding_days=discovery_minimum_holding_days(
                         request.discovery_strategy,
                         request.profile,
@@ -447,15 +459,15 @@ def _stream_discovery(
                 prescreen_candidates=candidate_selection_stages.get("prescreen_candidates") or [],
                 final_candidates=candidate_selection_stages.get("final_candidates") or pool,
             )
-            benchmark_future = executor.submit(
+            research_future = executor.submit(
                 run_with_request_user,
                 user_id,
-                lambda candidate_pool=pool: _prepare_candidate_benchmark_context(
+                lambda candidate_pool=pool: prepare_finalist_research_context(
                     candidate_pool,
+                    universe=prepared_universe_rows,
                     decision_at=decision_at,
                 ),
             )
-            prep_futures.append(benchmark_future)
             announcement_codes = [
                 str(item.get("fund_code") or "") for item in pool[:12]
             ]
@@ -469,13 +481,6 @@ def _stream_discovery(
                 ),
             )
             prep_futures.append(announcement_future)
-            pool, benchmark_specs, benchmark_metrics = yield from _await_future_with_progress(
-                benchmark_future,
-                "candidate_pool",
-                "正在核验候选基金的基准表现…",
-                started_at=started_at,
-                stop_event=stop,
-            )
             enqueue_candidate_sector_precompute(pool)
             market_news = yield from _await_future_with_progress(
                 news_future,
@@ -556,26 +561,6 @@ def _stream_discovery(
         discovery_facts["fund_announcements"] = announcement_meta
         discovery_facts["candidate_selection_audit"] = candidate_selection_audit
         discovery_facts["candidate_selection_audit_v1"] = candidate_selection_audit_v1
-        discovery_facts["benchmark_specs"] = benchmark_specs
-        discovery_facts["benchmark_contract"] = {
-            "schema_version": "fund_benchmark_mapping.v1",
-            "lookup_policy": "cached_point_in_time_before_generation",
-            "formal_excess_policy": "verified_fund_contract_only",
-            "available_count": sum(
-                1
-                for spec in benchmark_specs.values()
-                if spec.get("tier") != "unavailable"
-            ),
-            "unavailable_count": sum(
-                1
-                for spec in benchmark_specs.values()
-                if spec.get("tier") == "unavailable"
-            ),
-        }
-        discovery_facts["benchmark_research"] = benchmark_metrics
-        discovery_facts["benchmark_research_contract"] = summarize_benchmark_research(
-            benchmark_metrics
-        )
         discovery_facts = attach_discovery_data_evidence(
             discovery_facts,
             holdings=holdings,
@@ -598,6 +583,13 @@ def _stream_discovery(
         discovery_facts["pipeline"] = base_pipeline
 
         if not settings.deepseek_configured:
+            pool, discovery_facts = _join_finalist_research(
+                research_future,
+                discovery_facts,
+                pool,
+                holdings=holdings,
+                portfolio_context=request.portfolio_snapshot_context,
+            )
             report = build_offline_discovery_report(
                 target_sectors=target_sectors,
                 candidate_pool=pool,
@@ -715,11 +707,15 @@ def _stream_discovery(
                 all_chunks.append(chunk)
                 # Raw model fragments are never SSE output.  The discovery
                 # report becomes visible only after judge + deterministic guards.
-            parsed = _parse_model_json("".join(all_chunks))
+            parsed = normalize_discovery_report_payload(
+                _parse_model_json("".join(all_chunks))
+            )
         except (httpx.StreamError, httpx.ReadTimeout, httpx.HTTPError) as exc:
             if all_chunks:
                 interrupted_content = "".join(all_chunks)
-                candidate = _parse_model_json(interrupted_content)
+                candidate = normalize_discovery_report_payload(
+                    _parse_model_json(interrupted_content)
+                )
                 if _is_usable_interrupted_response(
                     interrupted_content,
                     candidate,
@@ -733,6 +729,13 @@ def _stream_discovery(
                     provider_trace = provider_trace_collector.trace
                     if provider_trace is not None:
                         attach_provider_call_trace(discovery_facts, provider_trace)
+                    pool, discovery_facts = _join_finalist_research(
+                        research_future,
+                        discovery_facts,
+                        pool,
+                        holdings=holdings,
+                        portfolio_context=request.portfolio_snapshot_context,
+                    )
                     report = build_offline_discovery_report(
                         target_sectors=target_sectors,
                         candidate_pool=pool,
@@ -761,6 +764,13 @@ def _stream_discovery(
                 provider_trace = provider_trace_collector.trace
                 if provider_trace is not None:
                     attach_provider_call_trace(discovery_facts, provider_trace)
+                pool, discovery_facts = _join_finalist_research(
+                    research_future,
+                    discovery_facts,
+                    pool,
+                    holdings=holdings,
+                    portfolio_context=request.portfolio_snapshot_context,
+                )
                 report = build_offline_discovery_report(
                     target_sectors=target_sectors,
                     candidate_pool=pool,
@@ -797,6 +807,13 @@ def _stream_discovery(
             provider_trace = provider_trace_collector.trace
             if provider_trace is not None:
                 attach_provider_call_trace(discovery_facts, provider_trace)
+            pool, discovery_facts = _join_finalist_research(
+                research_future,
+                discovery_facts,
+                pool,
+                holdings=holdings,
+                portfolio_context=request.portfolio_snapshot_context,
+            )
             report = build_offline_discovery_report(
                 target_sectors=target_sectors,
                 candidate_pool=pool,
@@ -826,6 +843,13 @@ def _stream_discovery(
             trace = provider_trace_collector.trace
             if trace is not None and trace["outcome"] == "interrupted":
                 provider_trace_collector.mark_interrupted_salvaged()
+        pool, discovery_facts = _join_finalist_research(
+            research_future,
+            discovery_facts,
+            pool,
+            holdings=holdings,
+            portfolio_context=request.portfolio_snapshot_context,
+        )
         yield _stage("guarding", started_at=started_at)
         # M4：deep 模式风控复核角色（fast 模式内部直接短路返回，零新增 LLM 调用）。
         parsed, judge_meta = judge_parsed_discovery_report(
@@ -958,6 +982,45 @@ def _await_future_with_progress(
                 next_heartbeat = time.monotonic() + PREP_HEARTBEAT_SECONDS
 
 
+def prepare_finalist_research_context(
+    pool: list[dict[str, Any]],
+    *,
+    universe: list[dict] | None,
+    decision_at: Any,
+) -> tuple[list[dict[str, Any]], dict[str, dict], dict[str, dict]]:
+    attach_descriptive_peer_research(
+        pool,
+        universe=universe,
+        decision_at=decision_at,
+    )
+    return _prepare_candidate_benchmark_context(pool, decision_at=decision_at)
+
+
+def _join_finalist_research(
+    research_future,
+    discovery_facts: dict[str, Any],
+    pool: list[dict[str, Any]],
+    *,
+    holdings: Any,
+    portfolio_context: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if research_future is None:
+        return pool, discovery_facts
+    try:
+        researched, specs, metrics = research_future.result()
+    except Exception:  # noqa: BLE001 - descriptive research must not fail the scan
+        logger.exception("finalist peer/benchmark research failed; continuing without it")
+        return pool, discovery_facts
+    return researched, apply_finalist_research_to_facts(
+        discovery_facts,
+        pool=researched,
+        benchmark_specs=specs,
+        benchmark_metrics=metrics,
+        holdings=holdings,
+        portfolio_context=portfolio_context,
+    )
+
+
 def _prepare_candidate_benchmark_context(
     pool: list[dict[str, Any]],
     *,
@@ -1022,12 +1085,25 @@ def _resolve_scan_scope(
     return _impl(request, target_sectors, sector_opportunities)
 
 
+def _snapshot_flow_inflection_labels(
+    sector_heat: list[dict],
+    *,
+    effective_trade_date: str | None = None,
+) -> list[str]:
+    from app.services.discovery_pipeline import (
+        _snapshot_flow_inflection_labels as _impl,
+    )
+
+    return _impl(sector_heat, effective_trade_date=effective_trade_date)
+
+
 def _opportunity_flow_labels(
     sector_heat: list[dict],
     target_sectors: list[str],
     focus_sectors: list[str],
     *,
     effective_trade_date: str | None = None,
+    flow_inflection_labels: list[str] | None = None,
 ) -> list[str]:
     from app.services.discovery_pipeline import (
         _opportunity_flow_labels as _impl,
@@ -1038,4 +1114,5 @@ def _opportunity_flow_labels(
         target_sectors,
         focus_sectors,
         effective_trade_date=effective_trade_date,
+        flow_inflection_labels=flow_inflection_labels,
     )

@@ -12,6 +12,7 @@ import type {
 import { actionBadgeClass, actionTone, isExtremeAction } from "@/lib/actionStyles";
 import { translateEvidenceText } from "@/lib/decisionText";
 import {
+  cardSpecificValidationNotes,
   confidenceDisplayLabel,
   keyReasonLines,
   meaningfulNewsLines,
@@ -747,16 +748,9 @@ export function FundRecommendationCard({
                 <QuantEvidenceSummary evidence={evidence} />
               </div>
             ) : null}
-            {item.decision_path ? (
-              <p className="mt-3 break-words text-sm leading-6 text-[var(--info-fg)] [overflow-wrap:anywhere]">
-                {translateEvidenceText(item.decision_path)}
-              </p>
-            ) : null}
             <DecisionEvidenceGrid
               className="mt-3"
-              sectorEvidence={item.sector_evidence}
-              fundEvidence={item.fund_evidence}
-              validationNotes={item.validation_notes}
+              validationNotes={cardSpecificValidationNotes(item.validation_notes)}
             />
           </Disclosure>
         </div>

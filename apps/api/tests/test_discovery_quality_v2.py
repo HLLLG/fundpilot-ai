@@ -76,15 +76,16 @@ def test_enrichment_recomputes_bounded_score_and_quality_gate(monkeypatch):
     )
 
     item = result[0]
-    assert item["max_drawdown_1y_percent"] == -20.0
+    assert "max_drawdown_1y_percent" not in item
+    assert "return_1y_percent" not in item
     assert 0 <= item["fund_quality_score"] <= 100
-    assert item["quality_score_version"] == "fund_quality.v4"
+    assert item["quality_score_version"] == "fund_quality.v5"
     assert item["quality_gate"]["status"] == "eligible"
     assert item["quality_gate"]["coverage_percent"] == 100.0
     assert "nav_quality_return_coverage" not in item
 
 
-def test_share_family_alternative_is_enriched_before_final_selection(monkeypatch):
+def test_share_family_alternatives_are_not_nav_enriched(monkeypatch):
     monkeypatch.setattr(
         "app.services.discovery_candidate_pool.FundDataService._snapshot_and_trend_for_holding",
         lambda *_args, **_kwargs: (_snapshot(), None),
@@ -146,12 +147,16 @@ def test_share_family_alternative_is_enriched_before_final_selection(monkeypatch
         discovery_strategy="opportunity_first",
     )
 
-    assert {item["fund_code"] for item in enriched} == {"013596", "016347"}
-    assert [item["fund_code"] for item in result] == ["013596"]
-    assert result[0]["share_family"]["member_codes"] == ["013596", "016347"]
+    assert {item["fund_code"] for item in enriched} == {"016347"}
+    assert [item["fund_code"] for item in result] == ["016347"]
+    assert enriched[0]["share_family"]["member_codes"] == ["016347", "013596"]
+    assert result[0]["share_family"]["member_codes"] == ["016347", "013596"]
+    assert result[0]["share_family"]["selected_basis"] == (
+        "prescreen_representative_nav_not_expanded"
+    )
 
 
-def test_opportunity_first_keeps_high_drawdown_candidate_eligible():
+def test_one_year_drawdown_no_longer_changes_quality_gate():
     row = {
         "return_3m_percent": 18.0,
         "return_6m_percent": 32.0,
@@ -174,8 +179,9 @@ def test_opportunity_first_keeps_high_drawdown_candidate_eligible():
     )
 
     assert opportunity["quality_gate"]["status"] == "eligible"
-    assert any("高弹性机会排序" in reason for reason in opportunity["quality_gate"]["reasons"])
-    assert risk_first["quality_gate"]["status"] == "watch_only"
+    assert risk_first["quality_gate"]["status"] == "eligible"
+    assert "max_drawdown_1y_percent" not in opportunity
+    assert "max_drawdown_1y_percent" not in risk_first
 
 
 def test_opportunity_quality_score_does_not_reward_shallow_drawdown():
@@ -281,17 +287,17 @@ def test_enrichment_derives_drawdown_from_fetched_nav_when_diagnostics_is_missin
         decision_at=_DECISION_AT,
     )[0]
 
-    assert item["max_drawdown_1y_percent"] == -20.0
+    assert "max_drawdown_1y_percent" not in item
     assert "max_drawdown_1y_percent" not in item["quality_gate"]["missing_fields"]
 
 
-def test_enrichment_backfills_all_quality_windows_from_complete_nav_history(
+def test_enrichment_backfills_three_month_return_from_short_nav_history(
     monkeypatch,
 ):
-    first_day = date(2025, 11, 4)
+    first_day = date(2026, 7, 13) - timedelta(days=89)
     points = []
     nav = 1.0
-    for index in range(252):
+    for index in range(90):
         if index:
             nav *= 1.001
         points.append(
@@ -350,20 +356,11 @@ def test_enrichment_backfills_all_quality_windows_from_complete_nav_history(
         ((1.001**60) - 1) * 100,
         abs=1e-4,
     )
-    assert item["return_6m_percent"] == pytest.approx(
-        ((1.001**120) - 1) * 100,
-        abs=1e-4,
-    )
-    assert item["return_1y_percent"] == pytest.approx(
-        ((1.001**250) - 1) * 100,
-        abs=1e-4,
-    )
-    assert item["return_1y_percent"] != 999.0
-    assert item["max_drawdown_1y_percent"] == 0.0
+    assert "return_1y_percent" not in item
+    assert "max_drawdown_1y_percent" not in item
     assert item["quality_gate"]["status"] == "eligible"
     assert item["quality_gate"]["coverage_percent"] == 100.0
     assert item["return_3m_percent_source"] == "akshare_total_return"
-    assert item["return_3m_percent_as_of"] == "2026-07-13"
     assert item["nav_quality_return_coverage"] == 1.0
 
 
@@ -441,7 +438,7 @@ def test_small_or_incomplete_fund_cannot_become_actionable(monkeypatch):
     assert any("0.5亿元" in reason for reason in item["quality_gate"]["reasons"])
 
 
-def test_borderline_scale_fund_is_watch_only():
+def test_borderline_scale_fund_is_eligible_to_buy():
     item = _with_data_quality_gate(
         {
             "fund_scale_yi": 0.56,
@@ -451,10 +448,41 @@ def test_borderline_scale_fund_is_watch_only():
             "established_date": "2024-01-01",
             "fund_manager": "测试经理",
             "nav_date": "2026-07-10",
-        }
+        },
+        as_of_date=_DECISION_DATE,
     )
-    assert item["quality_gate"]["status"] == "watch_only"
-    assert item["quality_gate"]["eligible"] is False
+    assert item["quality_gate"]["status"] == "eligible"
+    assert item["quality_gate"]["eligible"] is True
+    assert "max_drawdown_1y_percent" not in item
+
+
+def test_fund_established_90_days_is_eligible():
+    item = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 0.8,
+            "return_3m_percent": 6.0,
+            "established_date": "2026-04-15",
+            "fund_manager": "测试经理",
+            "nav_date": "2026-07-10",
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    assert item["quality_gate"]["status"] == "eligible"
+
+
+def test_fund_established_89_days_is_excluded():
+    item = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 2.0,
+            "return_3m_percent": 6.0,
+            "established_date": "2026-04-16",
+            "fund_manager": "测试经理",
+            "nav_date": "2026-07-10",
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    assert item["quality_gate"]["status"] == "excluded"
+    assert any("成立不足90天" in reason for reason in item["quality_gate"]["reasons"])
 
 
 def test_stale_profile_fallback_is_watch_only_even_when_fields_are_complete():
@@ -490,7 +518,7 @@ def test_stale_profile_fields_do_not_trigger_hard_exclusion_or_full_coverage():
     )
 
     assert item["quality_gate"]["status"] == "watch_only"
-    assert item["quality_gate"]["coverage_percent"] == 57.1
+    assert item["quality_gate"]["coverage_percent"] == 25.0
     assert set(item["quality_gate"]["profile_stale_fields"]) == {
         "fund_scale_yi",
         "established_date",
@@ -523,9 +551,7 @@ def test_zero_returns_and_drawdown_are_valid_core_values_but_non_finite_values_a
     assert valid["quality_gate"]["coverage_percent"] == 100.0
     assert valid["quality_gate"]["status"] == "eligible"
     assert invalid["quality_gate"]["status"] == "watch_only"
-    assert {"fund_scale_yi", "return_3m_percent"}.issubset(
-        invalid["quality_gate"]["missing_fields"]
-    )
+    assert "fund_scale_yi" in invalid["quality_gate"]["missing_fields"]
 
 
 @pytest.mark.parametrize("nav_date", ["2099-01-01", "not-a-date"])
@@ -849,40 +875,28 @@ def test_guard_deterministically_downgrades_high_score_watch_only_candidate():
     assert any("研究观察" in caveat for caveat in caveats)
 
 
-def test_guard_applies_profile_drawdown_suitability_before_buy():
-    pool_item = {
-        "fund_code": "020356",
-        "fund_name": "高回撤基金A",
-        "sector_label": "半导体",
-        "max_drawdown_1y_percent": -25.0,
-        "fund_quality_score": 70.0,
-        "sector_fit_score": 30.0,
-        "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
-    }
-    guarded, _caveats, _eliminated = apply_discovery_guards(
+def test_guard_does_not_block_buy_on_one_year_drawdown():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    candidate["max_drawdown_1y_percent"] = -25.0
+    guarded, _caveats, _eliminated = _run_guard_for_test(
         [
             DiscoveryRecommendation(
                 fund_code="020356",
-                fund_name="高回撤基金A",
+                fund_name="守卫测试基金A",
                 sector_name="半导体",
                 action="分批买入",
                 suggested_amount_yuan=3000,
             )
         ],
-        candidate_pool=[pool_item],
-        held_codes=set(),
-        profile=InvestorProfile(
-            decision_style="conservative",
-            max_drawdown_percent=8,
-            concentration_limit_percent=100,
-        ),
-        budget_yuan=10_000,
-        sector_heat=[],
-        discovery_facts={"candidate_pool": [pool_item]},
+        candidate,
+        extra_facts={
+            "effective_configuration": {"discovery_strategy": "opportunity_first"}
+        },
     )
-    assert guarded[0].action == "建议关注"
-    assert guarded[0].suggested_amount_yuan is None
-    assert "当前风格" in guarded[0].points[0]
+    assert guarded[0].action == "分批买入"
+    assert all("近1年最大回撤" not in item for item in guarded[0].points)
 
 
 def test_guard_blocks_buy_when_candidate_is_outside_quant_coverage() -> None:
@@ -1073,7 +1087,77 @@ def _run_guard_for_test(
     )
 
 
-def test_opportunity_first_uses_drawdown_and_quant_coverage_as_soft_risk_inputs():
+def test_guard_blocks_gold_equity_buy_when_gold_already_held():
+    candidate = _eligible_guard_candidate(
+        quality_gate={"status": "eligible", "eligible": True, "reasons": []}
+    )
+    candidate.update(
+        {
+            "fund_code": "021958",
+            "fund_name": "南方黄金股A",
+            "sector_label": "黄金股",
+        }
+    )
+    guarded, caveats, _ = _run_guard_for_test(
+        [
+            DiscoveryRecommendation(
+                fund_code="021958",
+                fund_name="南方黄金股A",
+                sector_name="黄金股",
+                action="分批买入",
+                suggested_amount_yuan=3500,
+                confidence="中",
+            )
+        ],
+        candidate,
+        extra_facts={
+            "effective_configuration": {"discovery_strategy": "opportunity_first"},
+            "portfolio_gap": {
+                "available_budget_yuan": 10_000,
+                "total_amount": 2044,
+                "weight_denominator_yuan": 18_000,
+                "holdings_slim": [
+                    {
+                        "fund_code": "002610",
+                        "fund_name": "博时黄金ETF联接A",
+                        "sector_name": "黄金",
+                        "holding_amount": 2044,
+                    }
+                ],
+            },
+            "recommendation_candidate_scope": {
+                "theme_vehicle_fallbacks": {
+                    "021958": {
+                        "thesis_sector_label": "黄金",
+                        "vehicle_sector_label": "黄金股",
+                        "entry_path": "theme_vehicle_fallback",
+                    }
+                }
+            },
+            "sector_opportunities": [
+                {
+                    "sector_label": "黄金",
+                    "score_policy_version": "sector_entry_maturity.2026-08.v3",
+                    "entry_state": "ready_to_start",
+                    "opportunity_available": True,
+                },
+                {
+                    "sector_label": "黄金股",
+                    "score_policy_version": "sector_entry_maturity.2026-08.v3",
+                    "entry_state": "ready_on_pullback",
+                    "opportunity_available": True,
+                },
+            ],
+        },
+    )
+
+    assert guarded[0].action == "建议关注"
+    assert guarded[0].suggested_amount_yuan is None
+    assert any("已有「黄金」敞口" in point for point in guarded[0].points)
+    assert any("同属一笔黄金主题敞口" in item for item in caveats)
+
+
+def test_opportunity_first_keeps_quant_coverage_as_soft_risk_input():
     candidate = _eligible_guard_candidate(
         quality_gate={"status": "eligible", "eligible": True, "reasons": []}
     )
@@ -1100,7 +1184,7 @@ def test_opportunity_first_uses_drawdown_and_quant_coverage_as_soft_risk_inputs(
                 suggested_amount_yuan=1000,
                 confidence="高",
                 points=["板块资金和净值趋势共同改善。"],
-                risks=["近1年最大回撤高达-37.26%，与您保守的风险偏好严重不符。"],
+                risks=["近20日最大回撤 -5.4%，需关注修复是否持续。"],
             )
         ],
         candidate,
@@ -1122,7 +1206,7 @@ def test_opportunity_first_uses_drawdown_and_quant_coverage_as_soft_risk_inputs(
     assert guarded[0].points[0] == "板块资金和净值趋势共同改善。"
     assert any("量化 IC 快照当前不可用" in item for item in guarded[0].points)
     assert any("系统级量化证据状态" in item for item in guarded[0].validation_notes)
-    assert any("不会单独否决当前机会" in item for item in guarded[0].risks)
+    assert all("近1年最大回撤" not in item for item in guarded[0].risks)
     assert all("严重不符" not in item for item in guarded[0].risks)
     assert any("未把证据不足误判为负面信号" in item for item in caveats)
 

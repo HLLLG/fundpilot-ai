@@ -17,6 +17,11 @@ DEFAULT_EVIDENCE_LABEL_LIMIT = 32
 DEFAULT_FLOW_INFLECTION_SLOTS = 8
 DEFAULT_ELASTICITY_SLOTS = 10
 DEFAULT_CACHED_ELASTICITY_EXPANSION_SLOTS = 6
+DEFAULT_TARGET_MOMENTUM_SLOTS = 2
+DEFAULT_TARGET_FLOW_SLOTS = 2
+DEFAULT_TARGET_ELASTICITY_SLOTS = 2
+DEFAULT_TARGET_QUIET_SLOTS = 1
+DEFAULT_TARGET_PULLBACK_SLOTS = 1
 
 
 def select_opportunity_evidence_labels(
@@ -73,6 +78,86 @@ def select_opportunity_evidence_labels(
     # Fill any remaining budget deterministically.  This also covers providers
     # that temporarily omit one of the change windows.
     append_labels(_label(row) for row in momentum)
+    return result[:limit]
+
+
+def select_balanced_target_labels(
+    sector_heat: list[dict],
+    focus_sectors: list[str],
+    *,
+    flow_inflection_labels: list[str] | None = None,
+    max_labels: int = 8,
+) -> list[str]:
+    """全市场目标方向：关注优先，其余按资金拐点 / 热度 / 弹性 / 蓄势轮转，不单吃短热度。
+
+    1/5 日热度只是其中一路。资金拐点、价格弹性与安静蓄势已经在证据预筛里算过，
+    这里把它们提升为与热度并列的目标席，避免 8 个自动方向全被短热度占满。
+    """
+
+    limit = max(1, int(max_labels))
+    result: list[str] = []
+    seen: set[str] = set()
+
+    def append_one(raw: str) -> bool:
+        label = str(raw or "").strip()
+        if not label or label in seen or len(result) >= limit:
+            return False
+        seen.add(label)
+        result.append(label)
+        return True
+
+    for raw in focus_sectors:
+        append_one(raw)
+
+    rows = [row for row in sector_heat if _label(row)]
+    momentum = [
+        _label(row)
+        for row in sorted(
+            rows,
+            key=lambda row: (
+                _num(row.get("heat_score")) or -999.0,
+                _num(row.get("change_5d_percent")) or -999.0,
+            ),
+            reverse=True,
+        )
+    ]
+    elasticity = [
+        _label(row)
+        for row in sorted(rows, key=_price_elasticity_recall_score, reverse=True)
+    ]
+    quiet = [
+        _label(row) for row in sorted(rows, key=_quiet_setup_score, reverse=True)
+    ]
+    pullbacks = [
+        _label(row)
+        for row in sorted(
+            [row for row in rows if _is_pullback_candidate(row)],
+            key=_pullback_score,
+            reverse=True,
+        )
+    ]
+    buckets = [
+        list((flow_inflection_labels or [])[:DEFAULT_TARGET_FLOW_SLOTS]),
+        momentum[:DEFAULT_TARGET_MOMENTUM_SLOTS],
+        elasticity[:DEFAULT_TARGET_ELASTICITY_SLOTS],
+        quiet[:DEFAULT_TARGET_QUIET_SLOTS],
+        pullbacks[:DEFAULT_TARGET_PULLBACK_SLOTS],
+        list(flow_inflection_labels or []),
+        momentum,
+        elasticity,
+        quiet,
+        pullbacks,
+    ]
+    progressed = True
+    while len(result) < limit and progressed:
+        progressed = False
+        for bucket in buckets:
+            while bucket and (not bucket[0] or bucket[0] in seen):
+                bucket.pop(0)
+            if not bucket or len(result) >= limit:
+                continue
+            if append_one(bucket.pop(0)):
+                progressed = True
     return result[:limit]
 
 
@@ -278,6 +363,7 @@ def _num(value: object) -> float | None:
 
 __all__ = [
     "DEFAULT_EVIDENCE_LABEL_LIMIT",
+    "select_balanced_target_labels",
     "select_cached_high_elasticity_labels",
     "select_opportunity_evidence_labels",
     "select_snapshot_flow_inflection_labels",

@@ -107,6 +107,7 @@ def propose_daily_action(
     weak_evidence_reasons: tuple[str, ...] | list[str],
     reversal_blocked: bool,
     execution_blocked: bool,
+    additional_add_blocks: tuple[str, ...] | list[str] = (),
 ) -> DailyActionProposal:
     """按已算好的门禁结果给出动作提议。
 
@@ -148,6 +149,10 @@ def propose_daily_action(
         blocked.append("risk_ceiling")
     if reversal_blocked:
         blocked.append("reversal_or_pullback")
+    for extra in additional_add_blocks or ():
+        code = str(extra).strip()
+        if code:
+            blocked.append(code)
 
     if blocked:
         return DailyActionProposal(

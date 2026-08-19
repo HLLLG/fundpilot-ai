@@ -1,13 +1,12 @@
-"""基金层退出证据：载体相对所属板块显著跑输 → 暂停追涨（不要求卖出）。
+"""基金层退出证据：载体相对所属板块跑输 → 停加；够深或持续则减仓。
 
 背景：确定性减仓链路的两个来源（量价背离共振、方向退出）主语都是**板块**。加仓侧有
 基金证据、载体质量、用户成本三道基金层门禁，减仓侧此前一道都没有——一只持续跑输
 自己板块的基金，只要板块方向还在线上，永远收不到任何信号。
 
 口径：基金 `nav_trend.return_20d_percent` vs 板块
-`mainline_regime.features.return_20d_percent`，落后 `FUND_SECTOR_LAG_THRESHOLD_20D`
-（8 个百分点）以上触发。**阈值未经回测，因此只封加仓（暂停追涨）、不产生减仓比例**——
-跑输识别的是"载体没跟上方向"，正确动作往往是换载体，而"换成哪只"是发现基金的职责。
+`mainline_regime.features.return_20d_percent`。20 日落后 ≥8pp 暂停追涨；≥12pp，或
+≥8pp 且 5 日也落后 ≥4pp，升到减仓评估 −25%。
 
 另一半兜底：板块方向证据缺失的持仓在整条退出链路上是盲区（退出的主语全是板块），
 必须披露"方向退出与减仓信号对该仓不可用"，否则"系统没让我卖"会被读成"系统认为不用卖"。
@@ -21,6 +20,7 @@ from app.models import AnalysisRequest, FundRecommendation, Holding, InvestorPro
 from app.services.decision_guard_shared import (
     ACTION_BUCKET_PAUSE,
     ACTION_BUCKET_REDUCE,
+    FUND_SECTOR_LAG_DEEP_THRESHOLD_20D,
     FUND_SECTOR_LAG_THRESHOLD_20D,
     resolve_escalation_floor,
 )
@@ -29,11 +29,19 @@ from app.services.risk import RiskAssessment
 from app.services.sector_opportunity_scoring import ENTRY_POLICY_VERSION_V3
 
 
-def _nav_trend(return_20d: float | None) -> dict:
-    return {"return_20d_percent": return_20d, "trend_label": "震荡"}
+def _nav_trend(return_20d: float | None, *, recent_5d: float | None = None) -> dict:
+    row = {"return_20d_percent": return_20d, "trend_label": "震荡"}
+    if recent_5d is not None:
+        row["recent_5d_change_percent"] = recent_5d
+    return row
 
 
-def _sector_opportunity(sector_return_20d: float | None = 12.0, **overrides) -> dict:
+def _sector_opportunity(
+    sector_return_20d: float | None = 12.0,
+    *,
+    sector_return_5d: float | None = None,
+    **overrides,
+) -> dict:
     row = {
         "sector_label": "半导体",
         "score_policy_version": ENTRY_POLICY_VERSION_V3,
@@ -47,7 +55,14 @@ def _sector_opportunity(sector_return_20d: float | None = 12.0, **overrides) -> 
         "mainline_regime": {
             "schema_version": "mainline_regime.v1",
             "status": "confirmed",
-            "features": {"return_20d_percent": sector_return_20d},
+            "features": {
+                "return_20d_percent": sector_return_20d,
+                **(
+                    {"return_5d_percent": sector_return_5d}
+                    if sector_return_5d is not None
+                    else {}
+                ),
+            },
         },
     }
     row.update(overrides)
@@ -73,18 +88,50 @@ def _floor(*, nav_trend: dict | None, sector_opportunity: dict | None, **overrid
 # --------------------------------------------------------------------------
 
 
-def test_significant_lag_pauses_the_add_without_a_reduction() -> None:
+def test_moderate_lag_pauses_the_add_without_a_reduction() -> None:
+    """8–12 个百分点：停加，但不凭单窗口浅落后要求卖出。"""
     result = _floor(
-        nav_trend=_nav_trend(-2.0),
-        sector_opportunity=_sector_opportunity(12.0),
+        nav_trend=_nav_trend(3.5),
+        sector_opportunity=_sector_opportunity(12.0),  # 落后 8.5
     )
 
     assert result["min_bucket"] == ACTION_BUCKET_PAUSE
-    # 未回测的阈值不得处置真实仓位：无减仓比例。
     assert result["suggested_position_change_percent"] is None
     basis = str(result["basis"])
-    assert "-2.00%" in basis and "+12.00%" in basis and "14.0" in basis
-    assert "未经回测" in basis
+    assert "+3.50%" in basis and "+12.00%" in basis and "8.5" in basis
+    assert "减仓" not in basis
+
+
+def test_deep_20d_lag_escalates_to_a_reduction() -> None:
+    result = _floor(
+        nav_trend=_nav_trend(-2.0),
+        sector_opportunity=_sector_opportunity(12.0),  # 落后 14 ≥ 12
+    )
+
+    assert result["min_bucket"] == ACTION_BUCKET_REDUCE
+    assert result["suggested_position_change_percent"] == pytest.approx(-25.0)
+    basis = str(result["basis"])
+    assert "14.0" in basis and "减仓评估" in basis
+
+
+def test_persistent_lag_across_both_windows_escalates() -> None:
+    result = _floor(
+        nav_trend=_nav_trend(3.5, recent_5d=-1.0),
+        sector_opportunity=_sector_opportunity(12.0, sector_return_5d=4.0),
+    )
+
+    assert result["min_bucket"] == ACTION_BUCKET_REDUCE
+    assert result["suggested_position_change_percent"] == pytest.approx(-25.0)
+    assert "掉队持续" in str(result["basis"])
+
+
+def test_moderate_lag_without_a_5d_leg_does_not_invent_persistence() -> None:
+    result = _floor(
+        nav_trend=_nav_trend(3.5),
+        sector_opportunity=_sector_opportunity(12.0),
+    )
+    assert result["min_bucket"] == ACTION_BUCKET_PAUSE
+    assert result["suggested_position_change_percent"] is None
 
 
 def test_lag_inside_the_threshold_does_not_trigger() -> None:
@@ -102,6 +149,15 @@ def test_threshold_is_exclusive_at_the_boundary() -> None:
         sector_opportunity=_sector_opportunity(4.0 + FUND_SECTOR_LAG_THRESHOLD_20D),
     )
     assert result["min_bucket"] == ACTION_BUCKET_PAUSE
+
+
+def test_deep_threshold_escalates_at_the_boundary() -> None:
+    result = _floor(
+        nav_trend=_nav_trend(0.0),
+        sector_opportunity=_sector_opportunity(FUND_SECTOR_LAG_DEEP_THRESHOLD_20D),
+    )
+    assert result["min_bucket"] == ACTION_BUCKET_REDUCE
+    assert result["suggested_position_change_percent"] == pytest.approx(-25.0)
 
 
 @pytest.mark.parametrize(
@@ -155,7 +211,7 @@ def test_direction_exit_reduce_wins_over_the_lag_pause() -> None:
 
 def test_lag_alone_still_surfaces_when_no_other_source_triggers() -> None:
     result = _floor(
-        nav_trend=_nav_trend(-2.0),
+        nav_trend=_nav_trend(3.5),
         sector_opportunity=_sector_opportunity(12.0),
         direction_exit={"min_bucket": None, "reasons": []},
     )
@@ -224,7 +280,7 @@ def _guard(facts, *, llm_action: str) -> FundRecommendation:
     return guarded[0]
 
 
-def test_guard_pauses_an_llm_add_on_a_lagging_fund() -> None:
+def test_guard_reduces_an_llm_add_on_a_deeply_lagging_fund() -> None:
     facts = {
         "holdings": [
             {
@@ -244,8 +300,8 @@ def test_guard_pauses_an_llm_add_on_a_lagging_fund() -> None:
 
     rec = _guard(facts, llm_action="分批加仓")
 
-    assert rec.action == "暂停追涨"
-    assert rec.suggested_position_change_percent is None
+    assert rec.action == "减仓评估"
+    assert rec.suggested_position_change_percent == pytest.approx(-25.0)
     assert any("载体未跟上方向" in point for point in rec.points)
 
 

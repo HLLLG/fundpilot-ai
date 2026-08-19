@@ -29,24 +29,12 @@ def test_deepseek_key_strips_quotes_and_whitespace(monkeypatch):
     assert settings.deepseek_api_key == PYTEST_VALID_DEEPSEEK_KEY
 
 
-def test_vlm_ocr_settings_defaults(monkeypatch):
-    for name in (
-        "FUND_AI_VLM_OCR_API_KEY",
-        "FUND_AI_VLM_OCR_MODEL",
-        "FUND_AI_VLM_OCR_TIMEOUT_SECONDS",
-        "FUND_AI_VLM_OCR_MIN_PIXELS",
-        "FUND_AI_VLM_OCR_MAX_PIXELS",
-        "FUND_AI_VLM_OCR_COMPRESS_ENABLED",
-        "FUND_AI_VLM_OCR_JPEG_QUALITY",
-        "FUND_AI_VLM_OCR_MAX_IMAGE_SIDE",
-    ):
-        monkeypatch.delenv(name, raising=False)
-
-    s = refresh_settings()
+def test_vlm_ocr_settings_defaults():
+    s = Settings(_env_file=None)
     assert s.vlm_ocr_model == "qwen-vl-ocr"
     assert s.vlm_ocr_base_url.startswith("https://dashscope.aliyuncs.com")
     assert s.vlm_ocr_timeout_seconds == 15
-    # 注：不断言 vlm_ocr_api_key（会被本地 .env 真实 key 覆盖，与「默认值」语义无关）
+    # 走 `_env_file=None`，避免本地 .env 的超时/像素覆盖冒充代码默认值。
     # qwen-vl-ocr 图像缩放 + 上传前压缩默认值：2.0M 像素是实测保准确率的下界，
     # 再压到 1.2M 长截图就开始认错字（见 docs 与 test_alipay_holdings_parser.py）。
     assert s.vlm_ocr_min_pixels == 3072
@@ -100,7 +88,7 @@ def test_deepseek_resilience_defaults_are_bounded(monkeypatch):
     settings = Settings(_env_file=None)
 
     assert settings.deepseek_max_tokens == 32_768
-    assert settings.deepseek_max_tokens_report == 32_768
+    assert settings.deepseek_max_tokens_report == 16_384
     assert settings.deepseek_connection_retries == 2
     assert settings.deepseek_timeout_seconds == 300
     assert settings.deepseek_request_budget_seconds == 180

@@ -14,7 +14,7 @@ from app.services.deepseek_http import (
     deepseek_request_deadline,
     format_deepseek_http_error,
 )
-from app.services.chat_agent_loop import iter_chat_agent_events
+from app.services.chat_agent_loop import CHAT_AGENT_MAX_TOKENS, iter_chat_agent_events
 from app.services.chat_agent_tools import ChatAgentContext, tool_specs_for
 from app.services.discovery_chat_guard import (
     format_candidate_pool_whitelist,
@@ -24,7 +24,7 @@ from app.services.discovery_export import discovery_report_to_markdown
 from app.services.report_chat_runtime import resolve_report_chat_runtime
 from app.services.retired_market_evidence import sanitize_retired_market_evidence
 
-DISCOVERY_CHAT_MAX_TOKENS = 4096
+DISCOVERY_CHAT_MAX_TOKENS = CHAT_AGENT_MAX_TOKENS
 
 OFFLINE_REPLY = (
     "当前未配置有效的 DeepSeek API Key，无法在线追问。"

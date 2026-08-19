@@ -195,6 +195,40 @@ def test_trading_days_trims_from_the_recent_end(monkeypatch) -> None:
 # --- 2. 在 index_daily_client 里的位置 ---------------------------------------
 
 
+def test_eastmoney_index_daily_skips_when_host_circuit_is_open(monkeypatch) -> None:
+    """push2his 熔断后不得再打东财日线，应立刻落到新浪/中证兜底。"""
+    from app.services import eastmoney_http
+    from app.services import index_daily_client as index_client
+
+    assert index_client._eastmoney_quote_ref("399989") is not None
+    eastmoney_http._circuit_failures.clear()
+    eastmoney_http._circuit_open_until.clear()
+    eastmoney_http._circuit_open_until["push2his.eastmoney.com"] = time.monotonic() + 60
+    with index_client._INDEX_TTL_CACHE_LOCK:
+        index_client._INDEX_TTL_CACHE.clear()
+    sina_calls: list[str] = []
+    monkeypatch.setattr(
+        index_client,
+        "_fetch_sina_daily_history",
+        lambda symbol, days: sina_calls.append(symbol)
+        or {
+            "data": [
+                {"date": "2026-07-01", "close": 1.0},
+                {"date": "2026-07-02", "close": 1.1},
+            ],
+            "source": "sina",
+        },
+    )
+    try:
+        assert index_client._fetch_eastmoney_daily_history("399989", 40) is None
+        result = index_client.fetch_index_daily_history("399989", trading_days=40)
+        assert result is not None and result["source"] == "sina"
+        assert sina_calls == ["399989"]
+    finally:
+        eastmoney_http._circuit_open_until.clear()
+        eastmoney_http._circuit_failures.clear()
+
+
 def test_csindex_is_the_last_resort_not_the_first_choice(monkeypatch) -> None:
     """新浪能报的代码不得消耗中证配额——它是稀缺资源（约 50 次就 403 且不快恢复）。"""
     monkeypatch.setattr(

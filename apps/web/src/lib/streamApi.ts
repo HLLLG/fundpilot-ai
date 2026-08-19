@@ -26,6 +26,7 @@ export const PRE_LLM_FOLLOWUP_STAGES = new Set([
   "fund_data",
   "news_prefetch",
   "news_summarize",
+  "context",
 ]);
 
 export type StreamingReportState = {

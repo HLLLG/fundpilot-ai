@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Literal
 
 from app.models import Holding, InvestorProfile
+from app.services.discovery_sector_prefilter import select_balanced_target_labels
 from app.services.risk import holding_weight_percent, resolve_weight_denominator
 from app.services.sector_canonical import get_canonical_sector
 from app.services.sector_labels import normalize_sector_label
@@ -23,10 +24,16 @@ def select_target_sectors(
     scan_mode: DiscoveryScanMode = "full_market",
     max_sectors: int | None = None,
     gap_weight_threshold: float = 15.0,
+    flow_inflection_labels: list[str] | None = None,
 ) -> list[str]:
     if scan_mode == "full_market":
         limit = max_sectors or _FULL_MARKET_MAX_SECTORS
-        return _select_full_market_sectors(focus_sectors, heat_ranking, max_sectors=limit)
+        return _select_full_market_sectors(
+            focus_sectors,
+            heat_ranking,
+            max_sectors=limit,
+            flow_inflection_labels=flow_inflection_labels,
+        )
     limit = max_sectors or _GAP_MAX_SECTORS
     return _select_portfolio_gap_sectors(
         holdings,
@@ -59,19 +66,16 @@ def _select_full_market_sectors(
     heat_ranking: list[dict],
     *,
     max_sectors: int,
+    flow_inflection_labels: list[str] | None = None,
 ) -> list[str]:
-    """全市场模式：用户关注方向优先，其余按热度降序，不限于持仓缺口。"""
-    ordered = resolve_focus_sector_labels(focus_sectors)
+    """全市场模式：关注方向优先，其余按资金拐点 / 热度 / 弹性 / 蓄势并列补齐。"""
+    ordered = select_balanced_target_labels(
+        heat_ranking,
+        resolve_focus_sector_labels(focus_sectors),
+        flow_inflection_labels=flow_inflection_labels,
+        max_labels=max_sectors,
+    )
     seen: set[str] = set(ordered)
-
-    for row in sorted(heat_ranking, key=lambda item: float(item.get("heat_score") or -999), reverse=True):
-        label = str(row.get("sector_label", "")).strip()
-        if not label or label in seen:
-            continue
-        seen.add(label)
-        ordered.append(label)
-        if len(ordered) >= max_sectors:
-            break
 
     if not ordered:
         for label in list_theme_board_labels()[:max_sectors]:

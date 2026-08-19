@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 import re
-from concurrent.futures import TimeoutError as FutureTimeoutError
+from concurrent.futures import FIRST_COMPLETED, wait
 import threading
 from typing import Callable, TypeVar
 
@@ -31,27 +31,35 @@ def _map_holdings_concurrently(
         return []
     if len(items) == 1:
         return [worker(items[0])]
-    # Submit at most the historical per-call cap, but reuse the bounded
-    # process-wide pool so concurrent SSE requests cannot each create eight
-    # fresh threads. Results retain input order.
+    # 滑动窗口而不是「满 8 只才开下一波」：一批里只要有一只慢，旧实现会让
+    # 其余 7 个 worker 空转。共享池仍然最多占 _MAX_FETCH_WORKERS 个名额。
     executor = get_shared_io_executor()
-    results: list[_R] = []
-    for start in range(0, len(items), _MAX_FETCH_WORKERS):
-        batch = items[start : start + _MAX_FETCH_WORKERS]
-        futures = [executor.submit(worker, item) for item in batch]
-        try:
-            for future in futures:
-                while True:
-                    raise_if_stream_cancelled(stop_event)
-                    try:
-                        results.append(future.result(timeout=0.25))
-                        break
-                    except FutureTimeoutError:
-                        continue
-        finally:
-            for future in futures:
-                future.cancel()
-    return results
+    results: list[_R | None] = [None] * len(items)
+    remaining = list(enumerate(items))
+    in_flight: dict = {}
+
+    def _submit_available() -> None:
+        while remaining and len(in_flight) < _MAX_FETCH_WORKERS:
+            index, item = remaining.pop(0)
+            in_flight[executor.submit(worker, item)] = index
+
+    _submit_available()
+    try:
+        while in_flight:
+            raise_if_stream_cancelled(stop_event)
+            done, _ = wait(
+                tuple(in_flight.keys()),
+                timeout=0.25,
+                return_when=FIRST_COMPLETED,
+            )
+            for future in done:
+                index = in_flight.pop(future)
+                results[index] = future.result()
+            _submit_available()
+    finally:
+        for future in in_flight:
+            future.cancel()
+    return results  # type: ignore[return-value]
 
 
 class FundDataService:
@@ -94,6 +102,7 @@ class FundDataService:
         *,
         trading_days: int = 90,
         cache_only: bool = False,
+        canonical_backfill: bool = True,
     ) -> FundNavHistory:
         if fund_code == "000000":
             return FundNavHistory(
@@ -109,6 +118,7 @@ class FundDataService:
                 fund_name,
                 trading_days=trading_days,
                 cache_only=cache_only,
+                canonical_backfill=canonical_backfill,
             )
         except Exception as exc:
             return FundNavHistory(
@@ -123,6 +133,8 @@ class FundDataService:
         holding: Holding,
         *,
         trading_days: int,
+        include_diagnostics: bool = True,
+        canonical_backfill: bool = True,
     ) -> tuple[FundSnapshot, FundNavHistory | None]:
         if holding.fund_code == "000000":
             return (
@@ -136,7 +148,12 @@ class FundDataService:
             )
 
         try:
-            return self._from_akshare_combined(holding, trading_days=trading_days)
+            return self._from_akshare_combined(
+                holding,
+                trading_days=trading_days,
+                include_diagnostics=include_diagnostics,
+                canonical_backfill=canonical_backfill,
+            )
         except Exception as exc:
             return (
                 FundSnapshot(
@@ -155,6 +172,7 @@ class FundDataService:
         *,
         trading_days: int,
         cache_only: bool = False,
+        canonical_backfill: bool = True,
     ) -> FundNavHistory:
         from app.services.fund_nav_cache import (
             CANONICAL_NAV_TRADING_DAYS,
@@ -183,7 +201,11 @@ class FundDataService:
 
         from app.services.akshare_subprocess import fetch_fund_nav_history
 
-        fetch_days = max(trading_days, CANONICAL_NAV_TRADING_DAYS)
+        fetch_days = (
+            max(trading_days, CANONICAL_NAV_TRADING_DAYS)
+            if canonical_backfill
+            else max(1, trading_days)
+        )
         result = fetch_fund_nav_history(fund_code, trading_days=fetch_days)
         if result is None or "data" not in result:
             raise ValueError("AkShare 获取净值数据失败或返回空数据")
@@ -220,11 +242,14 @@ class FundDataService:
         holding: Holding,
         *,
         trading_days: int,
+        include_diagnostics: bool = True,
+        canonical_backfill: bool = True,
     ) -> tuple[FundSnapshot, FundNavHistory]:
         history = self.get_nav_history(
             holding.fund_code,
             holding.fund_name,
             trading_days=trading_days,
+            canonical_backfill=canonical_backfill,
         )
         if history.source != "akshare" or not history.points:
             raise ValueError("AkShare 获取净值数据失败")
@@ -233,12 +258,13 @@ class FundDataService:
 
         # 获取基金诊断信息（这会单独调用AkShare）
         diagnostics = {}
-        try:
-            from app.services.fund_diagnostics_cache import load_fund_diagnostics
+        if include_diagnostics:
+            try:
+                from app.services.fund_diagnostics_cache import load_fund_diagnostics
 
-            diagnostics = load_fund_diagnostics(holding.fund_code)
-        except Exception:
-            pass  # 诊断信息失败不影响主逻辑
+                diagnostics = load_fund_diagnostics(holding.fund_code)
+            except Exception:
+                pass  # 诊断信息失败不影响主逻辑
 
         snapshot = FundSnapshot(
             fund_code=holding.fund_code,

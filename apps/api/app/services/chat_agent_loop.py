@@ -14,7 +14,8 @@ from app.services.chat_agent_tools import (
 from app.services.deepseek_client import DeepSeekClient
 from app.services.streaming_heartbeat import raise_if_stream_cancelled
 
-CHAT_AGENT_MAX_TOKENS = 4096
+# 追问要求 800 字内；预留思考/列表后 2048 足够，再大只会增加调度延迟。
+CHAT_AGENT_MAX_TOKENS = 2048
 
 
 def _yield_text_chunks(text: str) -> Iterator[str]:

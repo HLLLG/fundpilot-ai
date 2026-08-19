@@ -280,11 +280,13 @@ def _patch_path(monkeypatch: pytest.MonkeyPatch, module, captured: dict) -> None
 
     monkeypatch.setattr(module, "build_candidate_pool", fake_build)
     monkeypatch.setattr(module, "enrich_candidates", lambda pool, **_kwargs: pool)
+    monkeypatch.setattr(module, "attach_descriptive_peer_research", lambda pool, **_kwargs: pool)
     monkeypatch.setattr(module, "load_decision_benchmark_specs", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(module, "attach_candidate_benchmark_research", lambda pool, *_args, **_kwargs: pool)
     monkeypatch.setattr(module, "build_fund_benchmark_research_batch", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(module, "attach_fund_benchmark_metrics", lambda pool, *_args, **_kwargs: pool)
-    monkeypatch.setattr(module, "summarize_benchmark_research", lambda *_args, **_kwargs: {})
+    if hasattr(module, "summarize_benchmark_research"):
+        monkeypatch.setattr(module, "summarize_benchmark_research", lambda *_args, **_kwargs: {})
 
     monkeypatch.setattr(module, "prefetch_fund_announcements_compat", lambda *_args, **_kwargs: {"items": []})
     monkeypatch.setattr(module, "announcement_fetch_facts", lambda *_args, **_kwargs: {})
