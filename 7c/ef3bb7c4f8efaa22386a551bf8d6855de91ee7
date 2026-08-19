@@ -1,0 +1,51 @@
+apps/api/tests/test_analysis_facts_holding_metrics.py
+  s_e960b4aded4005::t_759b31033648c9 7-8
+  s_e960b4aded4005::t_05697707d817db 189
+  s_e960b4aded4005::t_5018c849dfd580 110-111,113,127-131,133,138-151
+apps/web/src/lib/holdingMetrics.test.ts
+  s_e960b4aded4005::t_a28c07672f6e5e 394-429
+  s_e960b4aded4005::t_dceae76be9bf17 6-7,14
+apps/api/app/services/analysis_prompt.py
+  s_e960b4aded4005::t_a3804740417462 83
+docs/PROJECT_CONTEXT.md
+  s_e960b4aded4005::t_3d94b27a6df4dc 384-385
+  s_e960b4aded4005::t_27e51ebd7f6182 391-392
+  s_e960b4aded4005::t_a890b8c3bcee81 1026
+  s_e960b4aded4005::t_4764593e33277e 1070
+  s_e960b4aded4005::t_c243fde30849db 7
+  s_e960b4aded4005::t_77bf36f01281e2 18
+README.md
+  s_e960b4aded4005::t_1746871e9600d3 21
+apps/api/app/services/holding_estimates.py
+  s_e960b4aded4005::t_a30658fd53f79c 157,160-164,177,187-192,197,206,208,224-229
+  s_e960b4aded4005::t_faaab5182f65b2 81-86,99-131
+  s_e960b4aded4005::t_f73b96e951ffe7 322,335-339,343-348,355-359,369,378-383,388
+apps/api/app/services/portfolio_holdings_service.py
+  s_e960b4aded4005::t_f6979399efe96a 244-246,260-262
+apps/web/src/lib/holdingMetrics.ts
+  s_e960b4aded4005::t_56d5f0b608b5c7 7-13
+  s_e960b4aded4005::t_90c5dc6d879131 326-354,359,361-364,376-377
+  s_e960b4aded4005::t_05779c7d3ffab0 458-461,467,473-475,484
+  s_e960b4aded4005::t_16a9899472eb05 646-649,659-661,665
+  s_e960b4aded4005::t_9726caf3b6c9e7 396
+apps/api/tests/test_holding_return_session_estimate.py
+  s_e960b4aded4005::t_7253d690643edf 1-71
+apps/api/app/services/analysis_facts.py
+  s_e960b4aded4005::t_1051be6b4bab14 663
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "7cef3bb7c4f8efaa22386a551bf8d6855de91ee7",
+  "prompts": {},
+  "sessions": {
+    "s_e960b4aded4005": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "0780c2cc-6cb8-48c6-8bcf-0c81d5c07287",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
