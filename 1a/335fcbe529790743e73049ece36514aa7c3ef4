@@ -1,0 +1,441 @@
+apps/api/tests/test_config.py
+  s_ca1a1c159a5154::t_8dc737dbc91fa4 91
+  s_1a8df05fec3e36::t_767ebc4576626c 32-33,37
+apps/api/tests/test_daily_add_policy.py
+  s_ca1a1c159a5154::t_cf5903116acf8d 1-178,180-234
+  s_ca1a1c159a5154::t_038b88d8253d54 179
+apps/api/tests/test_discovery_strategy.py
+  s_1a8df05fec3e36::t_6338d3b11711dc 62-71
+  s_1a8df05fec3e36::t_dbebf2ea9db016 60-61,72-83
+apps/api/tests/test_discovery_recommendation_scope.py
+  s_1a8df05fec3e36::t_e64dc6f1470e07 326-379
+  s_ca1a1c159a5154::t_8425f34e24056a 380-436
+apps/api/app/services/discovery_recommendation_scope.py
+  s_ca1a1c159a5154::t_ce34d43f5b1186 537-608,616
+  s_1a8df05fec3e36::t_1966fafcd48318 168-173,182
+  s_1a8df05fec3e36::t_fd2e8552b99429 859-863,865,878-907
+  s_ca1a1c159a5154::t_e8e23a9fe65e5b 630-631
+  s_ca1a1c159a5154::t_ff8bc64168a92d 57
+  s_ca1a1c159a5154::t_cefe6899e7b79e 322
+  s_1a8df05fec3e36::t_3d5e0186e1919b 424-428,430,436-437
+  s_1a8df05fec3e36::t_439c6d3edca4ca 37-38,40,46
+  s_ca1a1c159a5154::t_fd1eccee18d0e4 174-181
+  s_ca1a1c159a5154::t_9fc1ff4bbf871d 676-740
+  s_ca1a1c159a5154::t_c04d73e96520c7 24,29,31,39,41
+  s_1a8df05fec3e36::t_8c5f0d5acf6d11 254,260
+  s_ca1a1c159a5154::t_e21d2c739aab89 357
+  s_1a8df05fec3e36::t_c6b088cc8b9d33 488-536,609-615,617-629,632-675
+apps/api/scripts/profile_candidate_pool.py
+  s_1a8df05fec3e36::t_559409e8cd32c8 8,11-13
+  s_1a8df05fec3e36::t_284e851ad446ff 1-7,9-10,14-65,75-103,105-135
+  s_1a8df05fec3e36::t_2edd8c7402d665 66-71
+apps/api/app/services/graphs/chat_followup.py
+  s_ca1a1c159a5154::t_9297b1ec8914e5 78,176
+  s_ca1a1c159a5154::t_70d65a1449bfc3 12
+docs/PROJECT_CONTEXT.md
+  s_1a8df05fec3e36::t_cca4c53cf02463 324
+  s_1a8df05fec3e36::t_6d0e57739923f6 1138,1148
+  s_1a8df05fec3e36::t_d3e6a06698da6e 496
+  s_1a8df05fec3e36::t_7f9d031baa3fb8 1174
+  s_1a8df05fec3e36::t_a4b8de0c00b1c7 1297
+  s_1a8df05fec3e36::t_e28e855fce9fad 785
+  s_1a8df05fec3e36::t_ecb8d2b7931e92 1381-1382
+  s_1a8df05fec3e36::t_d6154c7fc82875 322
+  s_1a8df05fec3e36::t_c463bf58234a04 7
+  s_1a8df05fec3e36::t_60f63487344620 479
+  s_1a8df05fec3e36::t_ddbc152c107e1b 18
+  s_1a8df05fec3e36::t_47f360b8641409 493-495,497-498
+apps/api/app/services/discovery_candidate_pool.py
+  s_1a8df05fec3e36::t_617862fc1c8f7d 1187-1234
+  s_1a8df05fec3e36::t_0782a4486dac57 1323
+  s_1a8df05fec3e36::t_b3bf27fde7cd87 45,48
+  s_1a8df05fec3e36::t_b2b50160d6fafb 548-549,551-553,557-569
+  s_1a8df05fec3e36::t_b8e1d61cd64cd1 706
+  s_1a8df05fec3e36::t_6b6b93734847e7 1732
+  s_1a8df05fec3e36::t_0ec79afbdfd62b 1783,1785
+  s_1a8df05fec3e36::t_367e19720143aa 209-210,224,239-240
+  s_1a8df05fec3e36::t_d9d4e40ba61d8b 1101-1119,1123-1124,1126-1130
+  s_1a8df05fec3e36::t_91a2db34ae2460 581,586
+  s_1a8df05fec3e36::t_7a742b09bbe827 1253-1254,1261-1262
+  s_1a8df05fec3e36::t_f3488f0aa0235f 744-748,751-762,766
+  s_1a8df05fec3e36::t_710e41cb1312e7 1432-1433
+  s_1a8df05fec3e36::t_7ea28a72ca3e27 1744
+  s_1a8df05fec3e36::t_780b7b8cb13fe4 1277-1278
+  s_1a8df05fec3e36::t_19138142d62ab9 1877,1880,1891
+  s_1a8df05fec3e36::t_7884db6ebe83cd 2069-2071
+  s_1a8df05fec3e36::t_5e8d2db65311d2 58-72
+  s_1a8df05fec3e36::t_913286192e35b6 304-322,324-325,328,340-341,348,352-358,362-363,368-376,382
+  s_1a8df05fec3e36::t_ea611aa6df76ba 611-612
+  s_1a8df05fec3e36::t_2dad5fbc9a87d1 36
+  s_1a8df05fec3e36::t_24f7dcaa76cb8b 1634
+  s_1a8df05fec3e36::t_29f8da3ca12ba5 1914-1920
+  s_1a8df05fec3e36::t_c2dd28db506662 2218
+  s_1a8df05fec3e36::t_abfb567bbeae4f 1862-1865
+  s_ca1a1c159a5154::t_906575351435e0 579-580,582-584
+apps/api/app/services/daily_action_proposal.py
+  s_ca1a1c159a5154::t_140136fe54d386 152-155
+  s_ca1a1c159a5154::t_7bdb516487df2f 110
+apps/api/app/services/discovery_guard.py
+  s_1a8df05fec3e36::t_e43d43f7312505 865-869
+  s_ca1a1c159a5154::t_465da43bab204b 26,28
+  s_ca1a1c159a5154::t_f13341474ae1c3 608
+  s_1a8df05fec3e36::t_74ea4663e0cbb9 557-561,567-568
+  s_1a8df05fec3e36::t_8fc2c3a74fa836 25,27,29
+  s_1a8df05fec3e36::t_0f4d2979e10ce1 562-566,569-571,605-607,609-612
+apps/api/tests/test_discovery_candidate_llm_compaction.py
+  s_1a8df05fec3e36::t_724f91da357f9c 5
+  s_1a8df05fec3e36::t_fc6c84eb733315 3,9
+  s_1a8df05fec3e36::t_ae32c959b7556d 154
+  s_1a8df05fec3e36::t_6e28e581d4e9f0 185-188
+  s_1a8df05fec3e36::t_5f8bb21d4924a6 189-223
+  s_1a8df05fec3e36::t_1e5e104ae5ad94 70
+apps/web/src/lib/streamingStageMeta.ts
+  s_ca1a1c159a5154::t_9839603b298df0 21
+  s_ca1a1c159a5154::t_691ffd8d07195b 7
+apps/api/app/services/discovery_streaming.py
+  s_1a8df05fec3e36::t_491f867c14e4af 586-592
+  s_1a8df05fec3e36::t_0334438f9b593c 732-738
+  s_1a8df05fec3e36::t_d3c6d6d7d5dd2c 810-816
+  s_1a8df05fec3e36::t_78de71f3eeda10 254-260,267,274
+  s_1a8df05fec3e36::t_d2babcb0494a1f 286
+  s_1a8df05fec3e36::t_220c4f77687d76 1088-1099,1106,1117
+  s_1a8df05fec3e36::t_a607c8cd28351a 767-773
+  s_1a8df05fec3e36::t_555a3527698643 985-1023
+  s_1a8df05fec3e36::t_7900f74b65e5e0 37
+  s_1a8df05fec3e36::t_e2695dbbf4cda1 437
+  s_1a8df05fec3e36::t_50575dfccb6005 846-852
+  s_1a8df05fec3e36::t_1c322519eb7664 60-63
+  s_1a8df05fec3e36::t_8709c368496233 462,465,467
+  s_1a8df05fec3e36::t_39cf7b23423f0d 710-712,716-718
+apps/api/app/services/fund_data.py
+  s_ca1a1c159a5154::t_467e9befef7487 151-156
+  s_ca1a1c159a5154::t_7296bcfcc5e7bf 105
+  s_ca1a1c159a5154::t_9890269c9ad4ec 175
+  s_ca1a1c159a5154::t_7a819cbd8717c7 204-208
+  s_ca1a1c159a5154::t_556ee2e3ff468f 5
+  s_ca1a1c159a5154::t_9af4013991dff3 136-137
+  s_ca1a1c159a5154::t_afad31bccd6c1e 245-246,252,261-263,265-267
+  s_ca1a1c159a5154::t_1e36c34913e123 121
+  s_ca1a1c159a5154::t_3d54009ed82314 34-35,37-62
+apps/api/app/services/recommendation_guard.py
+  s_ca1a1c159a5154::t_28663392447e6d 227-232
+  s_ca1a1c159a5154::t_2a83e012d60e9b 510
+  s_ca1a1c159a5154::t_10fdbe4a2686cd 1171-1173,1175-1176
+  s_ca1a1c159a5154::t_4c2a02235ccefb 1571-1572
+  s_ca1a1c159a5154::t_44324659ec9544 723-724,726-728
+  s_ca1a1c159a5154::t_7d60a91c6b8c00 4
+  s_ca1a1c159a5154::t_5b0aa076e459a7 615-622
+  s_ca1a1c159a5154::t_cd1e6f58050aaf 1870-1871,1873-1880
+  s_ca1a1c159a5154::t_5c01050d703f56 81-83
+  s_ca1a1c159a5154::t_7ca65ffa09eb67 1258
+  s_ca1a1c159a5154::t_13869a5149e5c5 1270-1273,1275,1277,1284
+  s_ca1a1c159a5154::t_aac2286edd2484 48-51
+  s_ca1a1c159a5154::t_433c616a385869 1287-1439
+  s_ca1a1c159a5154::t_9ff6114eebad0e 468-469
+  s_ca1a1c159a5154::t_1bfac7143109c5 367-384
+apps/api/tests/test_decision_contract_prompt_version.py
+  s_1a8df05fec3e36::t_37bf0d7bac9b38 6
+apps/api/tests/test_candidate_selection_audit_integration.py
+  s_1a8df05fec3e36::t_cfda0c8f14e1e0 283
+  s_1a8df05fec3e36::t_1942c20dab0448 288-289
+apps/api/app/services/discovery_selection_strategy.py
+  s_1a8df05fec3e36::t_d8408b4a72a2df 118
+  s_1a8df05fec3e36::t_b1d7b0ff906fb2 18-19,32
+apps/api/tests/test_phase_a_path_consistency.py
+  s_1a8df05fec3e36::t_ca71ce4f61b3f2 462-464
+apps/web/src/lib/reportPresentation.test.ts
+  s_ca1a1c159a5154::t_9511281abd0fee 8
+  s_ca1a1c159a5154::t_d44b45b1159e68 88,92-97,100-116
+.env.example
+  s_ca1a1c159a5154::t_07600086cb5a8f 123
+apps/api/app/services/discovery_chat.py
+  s_ca1a1c159a5154::t_e6d4eca09a9f06 27
+  s_ca1a1c159a5154::t_f9eea6014057d4 17
+apps/api/app/services/discovery_facts.py
+  s_ca1a1c159a5154::t_4a724f8ae9c102 116-120
+  s_1a8df05fec3e36::t_b8adf2da670743 230-237
+apps/api/tests/test_holding_vehicle_quality.py
+  s_ca1a1c159a5154::t_fc3942588d8fdf 250-251,260-264,267-269,285-287,290,292,297,302-304
+  s_ca1a1c159a5154::t_1a123bd643d39c 353-355
+apps/api/tests/test_report_add_unrealized_loss_gate.py
+  s_ca1a1c159a5154::t_38222935d60cd3 231-232,234,237,242-252
+apps/api/scripts/prod_counterfactual_replay.py
+  s_ca1a1c159a5154::t_600d305ef3da67 124-147,158-160,176-196,204-205,211-219,222-223
+  s_ca1a1c159a5154::t_b3cb1c552c7d56 1-15,17-123,148-157,161-175,197-203,206-210,220-221,224-239,241,255-260,262-263,279,283,286-311,313-317,319-320,322-323,327,350-365
+  s_ca1a1c159a5154::t_c5beb07c2e0d9b 16
+  s_ca1a1c159a5154::t_c7b904bfb258a6 240,242-254,261,264-278,280-282,284-285
+  s_ca1a1c159a5154::t_4ec75b2533d252 312,318,321,324-326,328-349
+apps/api/app/services/report_chat.py
+  s_ca1a1c159a5154::t_dde3cb6db45c36 25
+  s_ca1a1c159a5154::t_44029f3da086c7 18
+apps/api/tests/test_csindex_index_daily_source.py
+  s_ca1a1c159a5154::t_ebc05ae6361c6b 198-206,209-231
+  s_ca1a1c159a5154::t_56b83c75fcd67e 207-208
+apps/api/tests/test_report_direction_maturity.py
+  s_ca1a1c159a5154::t_e18e540e84f8a8 583,586-587
+  s_ca1a1c159a5154::t_d7c99a51af62d0 438-439,441,447-454
+  s_ca1a1c159a5154::t_484345a89115cd 608-609
+apps/api/app/services/discovery_candidate_llm.py
+  s_1a8df05fec3e36::t_1b42f385e62c33 56
+apps/api/app/services/fund_vehicle_quality.py
+  s_1a8df05fec3e36::t_869c4a7b27e44b 214
+apps/api/tests/test_discovery_report_payload_admission.py
+  s_1a8df05fec3e36::t_bfe43896616ff2 1-138
+apps/api/tests/test_discovery_focus_sectors.py
+  s_1a8df05fec3e36::t_217666dadacc61 83-131
+apps/api/app/services/analysis_prompt.py
+  s_ca1a1c159a5154::t_7c0fa623e6099e 92
+  s_ca1a1c159a5154::t_5739c2dc29783a 10-14,18-21
+  s_ca1a1c159a5154::t_57dd3f3d6fbe4f 86-88
+  s_ca1a1c159a5154::t_bb0a44640746cd 50
+  s_ca1a1c159a5154::t_c2480a20849566 77,79,81-82
+apps/api/app/services/decision_contract.py
+  s_ca1a1c159a5154::t_41695ced721a4f 1156-1159
+apps/api/app/services/discovery_client.py
+  s_1a8df05fec3e36::t_7fd8d7d09a6a49 491
+  s_1a8df05fec3e36::t_0a5340c5ba7c6e 32
+apps/web/src/lib/streamApi.ts
+  s_ca1a1c159a5154::t_256c934f002d06 29
+apps/web/src/components/DiscoveryCandidatePoolPanel.test.tsx
+  s_1a8df05fec3e36::t_db5512f82fbd25 296-298
+  s_1a8df05fec3e36::t_8cd99dee21700e 53-54
+  s_1a8df05fec3e36::t_9cdc2212ed97ce 326-327
+apps/web/src/components/FundRecommendationCard.tsx
+  s_ca1a1c159a5154::t_4e8fa627c50788 15
+  s_ca1a1c159a5154::t_8b570d32689654 753
+apps/api/tests/test_sector_direction_backtest.py
+  s_1a8df05fec3e36::t_4fbbe8731772bf 1099,1106
+  s_1a8df05fec3e36::t_0d4ccda793a465 1370-1396
+  s_1a8df05fec3e36::t_aa1c840faa2056 1060-1067,1069-1072,1077-1078,1080-1098,1100-1105,1107-1115
+  s_1a8df05fec3e36::t_c0821b18beeb02 1068
+  s_1a8df05fec3e36::t_1f5468999b0a10 1073-1076,1079
+apps/api/tests/test_discovery_quality_v2.py
+  s_1a8df05fec3e36::t_54edb211af117b 554
+  s_1a8df05fec3e36::t_db6d5b14268e61 294,300
+  s_1a8df05fec3e36::t_8a8e96ce596aa6 898-899
+  s_1a8df05fec3e36::t_4d475b7c6f74ed 297
+  s_1a8df05fec3e36::t_4b9537c9694a3c 359-360
+  s_1a8df05fec3e36::t_5a37549a7f9179 88
+  s_1a8df05fec3e36::t_dca38b20aa65d9 290
+  s_1a8df05fec3e36::t_8072a697369ea7 1209
+  s_1a8df05fec3e36::t_510a06664f8939 150-151,153-154,156
+  s_1a8df05fec3e36::t_e1f67d77b2a8cb 79-80,82
+  s_1a8df05fec3e36::t_9ba906f3990659 521
+  s_1a8df05fec3e36::t_c38afdb24313f5 1160,1187
+  s_1a8df05fec3e36::t_cfc05c697d7685 441,451-452,454-485
+  s_1a8df05fec3e36::t_6a3779bdf8cef0 152,155
+  s_1a8df05fec3e36::t_3c4ece3630a5f9 159,182-184
+  s_1a8df05fec3e36::t_ad4908d3198177 878-883,887,893-896
+  s_ca1a1c159a5154::t_a6d4e3a9202a82 1090-1159
+apps/api/app/services/decision_guard_shared.py
+  s_ca1a1c159a5154::t_704f545416243b 374-376,378-383,390,397-404,418-419,421-440,442-463
+  s_ca1a1c159a5154::t_2664cb824d7671 352-353
+apps/api/tests/test_report_generation_latency.py
+  s_ca1a1c159a5154::t_406078a23f8063 1-4,6-9,17-49,207-297,346-362
+  s_ca1a1c159a5154::t_8412353f62393b 298-312
+  s_ca1a1c159a5154::t_1862dd0fb1b157 363-419
+  s_ca1a1c159a5154::t_e9258447218ad9 10-16
+  s_ca1a1c159a5154::t_990fb45a118173 5
+  s_ca1a1c159a5154::t_249b37b1931096 50-206
+  s_ca1a1c159a5154::t_17405b094116f9 314-320,322,336,341-345
+  s_ca1a1c159a5154::t_7a7184ad9049e2 313,321,323-335,337-340
+apps/api/app/services/sector_opportunity_scoring.py
+  s_1a8df05fec3e36::t_5ffb8524ac89d3 522-524,527
+  s_1a8df05fec3e36::t_794a6a00a0fde8 1865
+  s_1a8df05fec3e36::t_1f6d6157289ac3 2325-2340,2347-2349,2360
+  s_1a8df05fec3e36::t_438ec63a9fef81 1787-1791
+  s_1a8df05fec3e36::t_fb7a60fd47e58a 1874
+  s_1a8df05fec3e36::t_198a6133b45c64 1805-1809
+  s_ca1a1c159a5154::t_8cca48f263115c 204-205
+  s_1a8df05fec3e36::t_589cd498588832 520-521,525-526
+  s_1a8df05fec3e36::t_916648d3e742a0 1718-1722,1727,1731-1735
+  s_1a8df05fec3e36::t_8b89b1aaa29191 181-186
+apps/api/app/services/deepseek_client.py
+  s_ca1a1c159a5154::t_3e691de50827c2 525-528
+  s_ca1a1c159a5154::t_179022c434d96d 87
+  s_ca1a1c159a5154::t_ea1805bac9538b 46-47
+  s_ca1a1c159a5154::t_5d5504c59f2f5c 207
+  s_ca1a1c159a5154::t_07600086cb5a8f 49
+  s_ca1a1c159a5154::t_c46adc392711b9 63
+  s_ca1a1c159a5154::t_3a05f4e12f90b6 533-534,537
+  s_ca1a1c159a5154::t_44f8ee92f4f2f1 170-171
+  s_1a8df05fec3e36::t_55b98abff6d647 1113-1142
+  s_1a8df05fec3e36::t_9565baca7e2d41 967-969
+apps/web/src/lib/streamingStageMeta.test.ts
+  s_ca1a1c159a5154::t_043ca87794a29e 16
+  s_ca1a1c159a5154::t_c44745cf6944e6 8
+apps/api/app/services/discovery_judge.py
+  s_ca1a1c159a5154::t_03fea42d56dcc2 42-48
+  s_ca1a1c159a5154::t_5cd555fd67b0d6 138-140
+apps/api/app/services/prompt_shadow_worker.py
+  s_1a8df05fec3e36::t_29c83fe475eb8f 20-24
+  s_1a8df05fec3e36::t_32e269b606e3b3 479
+apps/api/app/services/discovery_prompt.py
+  s_1a8df05fec3e36::t_255ea2999df806 11,13,15-19,21-22,24,26-28,30,32,35,38-39
+  s_1a8df05fec3e36::t_574f58a6ec4def 20
+apps/api/tests/test_daily_action_proposal.py
+  s_ca1a1c159a5154::t_af5d1402e3c59e 126-127
+apps/api/tests/test_sector_entry_maturity_v2.py
+  s_1a8df05fec3e36::t_9caa9a0ee3cc6c 4
+  s_1a8df05fec3e36::t_fa22ee67b55271 332-361
+apps/web/src/lib/reportPresentation.ts
+  s_ca1a1c159a5154::t_cf9c8d34f1596b 276,284-289
+  s_ca1a1c159a5154::t_1d6750fa5c7293 17-19
+  s_ca1a1c159a5154::t_5beadd62f4df01 259-262
+apps/api/app/services/discovery_payload.py
+  s_1a8df05fec3e36::t_48e81df26b0867 24-26,30-42,46
+  s_1a8df05fec3e36::t_84a0caa19019d8 124
+  s_1a8df05fec3e36::t_74cc5ea689c837 415,418-427
+README.md
+  s_1a8df05fec3e36::t_cae5a4747af2fe 157
+apps/api/app/services/discovery_sector_prefilter.py
+  s_1a8df05fec3e36::t_eae7e176afcf2b 20-24
+  s_1a8df05fec3e36::t_4f0c77bb39e308 84-163
+  s_1a8df05fec3e36::t_dabf96d6ac4d2e 366
+apps/api/tests/test_discovery_sector_match_provenance.py
+  s_1a8df05fec3e36::t_d6bc4294b09e1c 379-394
+  s_1a8df05fec3e36::t_d4fda475de771f 15
+  s_1a8df05fec3e36::t_181a1710bd513c 447
+  s_1a8df05fec3e36::t_2f0f29d93b4c97 482
+apps/api/app/services/discovery_target_sectors.py
+  s_1a8df05fec3e36::t_7236d68381c627 69,71-77
+  s_1a8df05fec3e36::t_12ff67c4e042bc 6
+apps/api/tests/test_report_add_tier_calibration.py
+  s_ca1a1c159a5154::t_02923a6ddbffbf 289-290,299
+apps/api/app/services/discovery_pipeline.py
+  s_1a8df05fec3e36::t_e0a834096d6fc6 34
+  s_1a8df05fec3e36::t_72bcc93eeabf39 14
+  s_1a8df05fec3e36::t_b1822991fda370 321-329
+  s_1a8df05fec3e36::t_58f47c9a5b506f 494-541
+  s_1a8df05fec3e36::t_fd15af94f2a42d 687-697
+  s_1a8df05fec3e36::t_c77ac76783b852 427-442
+  s_1a8df05fec3e36::t_54d72a5906b3b0 295
+  s_1a8df05fec3e36::t_ad4df82a06cbc1 568,582-599,605
+  s_1a8df05fec3e36::t_57cb277bbdb6b3 767-771
+  s_1a8df05fec3e36::t_00608aee422aaa 45-47
+  s_1a8df05fec3e36::t_03d08a26c5f031 167-173,180,187
+  s_1a8df05fec3e36::t_b461767d402ef1 30-33
+apps/api/tests/test_discovery_peer_research_attach.py
+  s_1a8df05fec3e36::t_ba2f83296450ca 11
+  s_1a8df05fec3e36::t_e55b4e2f512dc3 1-10,12-124
+apps/api/app/services/langgraph_trace.py
+  s_ca1a1c159a5154::t_d3f607ec46037f 81
+apps/api/app/services/analysis_payload.py
+  s_ca1a1c159a5154::t_dfa7b5b07abdaf 165,168-170,180
+  s_ca1a1c159a5154::t_a85c4dc9a1f671 1042,1067
+  s_ca1a1c159a5154::t_a1ad29c2769a7d 7
+  s_ca1a1c159a5154::t_07915decc735d2 89-97
+  s_ca1a1c159a5154::t_903ffca45b2a97 195-203
+  s_ca1a1c159a5154::t_b23233c1f1eafe 594-595
+  s_ca1a1c159a5154::t_6801315d63bf27 1107,1115
+  s_ca1a1c159a5154::t_e0f7f98a316f4f 105-107
+  s_ca1a1c159a5154::t_2263e405b5d0f3 526-529,537
+  s_ca1a1c159a5154::t_132fef214ef572 777
+  s_ca1a1c159a5154::t_10d95c1b62126b 1168-1170
+  s_ca1a1c159a5154::t_0aeb51c8070252 143-144,146-150
+  s_ca1a1c159a5154::t_af736044b26ed8 684-776,778-807,810-966,982-985,994,1001-1011,1025-1027,1032-1033,1036,1039-1041,1043-1045,1063-1064,1068-1071,1081,1085,1090-1093,1118-1120,1134-1135,1139-1140,1147-1160,1162-1165
+  s_ca1a1c159a5154::t_4bf3c8fc164642 158-159,161
+  s_ca1a1c159a5154::t_3e28e87712a22b 558-559,563-569
+  s_ca1a1c159a5154::t_35081075d1c8bb 113
+  s_ca1a1c159a5154::t_d4df466e999226 1832-1841
+  s_ca1a1c159a5154::t_454f49f54bca07 640,644-645
+  s_ca1a1c159a5154::t_1d99ee8ede7820 808-809
+apps/api/app/config.py
+  s_ca1a1c159a5154::t_23416a5694f0ef 123,125
+  s_ca1a1c159a5154::t_1a6a17900b29ef 127
+apps/api/app/services/analyze_streaming.py
+  s_ca1a1c159a5154::t_e9e5f461472606 39-40
+  s_ca1a1c159a5154::t_764bba811cebf1 563
+  s_ca1a1c159a5154::t_aa13d38ff086ef 165-166,168
+  s_ca1a1c159a5154::t_16c1c236f4ca25 198
+  s_ca1a1c159a5154::t_f5262d13f5d53b 69
+apps/api/app/services/report_judge.py
+  s_ca1a1c159a5154::t_08e13df975fdb9 92-96
+  s_ca1a1c159a5154::t_d74a7048eabb56 39-45
+apps/api/app/services/news_service.py
+  s_ca1a1c159a5154::t_0e3ff5e4a29143 583
+  s_ca1a1c159a5154::t_3d1fb3d060376c 554-557
+  s_ca1a1c159a5154::t_3383572b371a04 640-665
+apps/api/app/services/news_citation.py
+  s_ca1a1c159a5154::t_45e33e9483c691 54
+  s_ca1a1c159a5154::t_bca729571e21a2 19-20
+apps/api/tests/test_daily_report_output_slim.py
+  s_ca1a1c159a5154::t_c9d3a5151734a5 1-103
+apps/api/tests/test_analysis_lookthrough_wiring.py
+  s_ca1a1c159a5154::t_f140002065d2a9 363,365-366
+  s_ca1a1c159a5154::t_6c2459588dd88a 400,402-404
+  s_ca1a1c159a5154::t_6dc04ca8fac87c 249,253-254,274-283
+  s_ca1a1c159a5154::t_9f3abeffda15e3 518,523
+  s_ca1a1c159a5154::t_ea3eca14a41807 522
+  s_ca1a1c159a5154::t_be91eaad0ffea1 565-566
+  s_ca1a1c159a5154::t_13905cab363235 528,530-531
+apps/api/app/services/index_daily_client.py
+  s_ca1a1c159a5154::t_75bd4d7ffcfc89 16-19
+  s_ca1a1c159a5154::t_8a7ca7b494cf3a 119,134-139
+apps/api/app/services/fund_peer_ranking.py
+  s_1a8df05fec3e36::t_a1f1efa17e7c0e 25
+  s_1a8df05fec3e36::t_f568cd678c6291 582-607
+  s_1a8df05fec3e36::t_08cb50ebd3730e 511-552,561
+  s_1a8df05fec3e36::t_131186918fd819 1784
+apps/api/scripts/smoke_run_discovery.py
+  s_1a8df05fec3e36::t_6bcacf9de0bd4d 70-76
+  s_1a8df05fec3e36::t_439c6e7fe3c6f8 85-89,91,129-142
+  s_1a8df05fec3e36::t_3e00cbba88b9f1 92-128
+  s_1a8df05fec3e36::t_1748b7c49ce487 28
+  s_1a8df05fec3e36::t_74c114d199701f 22,27,35-68,77-84,90
+  s_1a8df05fec3e36::t_3e8e468bb0f1c4 155
+  s_1a8df05fec3e36::t_b5984b3236c519 299,303-305,309-323
+  s_1a8df05fec3e36::t_b703bff6a1fa4b 306-308
+  s_1a8df05fec3e36::t_0b0e52e1375fa2 324
+  s_1a8df05fec3e36::t_d028f4b8b32bd3 268-269,271-276,278-281
+  s_1a8df05fec3e36::t_49e5f1ea843952 327-443
+apps/api/tests/test_discovery_benchmark_integration.py
+  s_1a8df05fec3e36::t_9ba000e26eb5eb 107,112,117-121
+  s_1a8df05fec3e36::t_c7f329e84fbfc2 124
+  s_1a8df05fec3e36::t_6bc0d92dc04ca1 245-248
+  s_1a8df05fec3e36::t_7d5538af4caaf2 145-147
+apps/api/app/services/chat_agent_loop.py
+  s_ca1a1c159a5154::t_493c429b8c042a 17
+  s_ca1a1c159a5154::t_4df58dd68d9a97 18
+apps/api/tests/test_daily_evidence_gate_tiering.py
+  s_ca1a1c159a5154::t_adc876480e3d8c 227-235
+  s_ca1a1c159a5154::t_11f2482678ae72 241
+apps/api/tests/test_report_fund_lag_pause.py
+  s_ca1a1c159a5154::t_69dff56f1f35b7 1,8-9
+  s_ca1a1c159a5154::t_d1dd29a8dd88b0 303-304
+  s_ca1a1c159a5154::t_4cd5e644c538f5 214
+  s_ca1a1c159a5154::t_2378847abaee93 58-65
+  s_ca1a1c159a5154::t_a9c998d0d61fdd 32-36,39-44
+  s_ca1a1c159a5154::t_323b6c88eb09d1 91-92,94-95,101-134
+  s_ca1a1c159a5154::t_c1fda566879914 283
+  s_ca1a1c159a5154::t_615313faf0b8d2 154-162
+  s_ca1a1c159a5154::t_f4cef1fb1123b0 23
+apps/api/tests/test_report_hysteresis_add_authorization.py
+  s_ca1a1c159a5154::t_2b82044051d97e 423,426-427
+apps/api/tests/test_daily_tradeability.py
+  s_ca1a1c159a5154::t_a2ee0f9fd7c47b 248-249
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "1a335fcbe529790743e73049ece36514aa7c3ef4",
+  "prompts": {},
+  "sessions": {
+    "s_1a8df05fec3e36": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c69480f8-8076-45e6-b9aa-4596fe6c9479",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_ca1a1c159a5154": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c64bd97b-6a7c-4b0b-bb1b-b6b8e9b750a9",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
