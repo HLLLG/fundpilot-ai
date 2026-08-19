@@ -1,4 +1,5 @@
 import type { FundDiscoveryReport } from "@/lib/api";
+import { fetchDiscoveryReportDetail, listDiscoveryReports } from "@/lib/api";
 
 /** 流式扫描静默多久后就认为连接已经死了。 */
 export const DISCOVERY_STREAM_SILENCE_MS = 45_000;
@@ -40,6 +41,24 @@ export function detectCompletedScan<T extends ReportLike>({
     return null;
   }
   return latest.id === knownLatestId ? null : latest;
+}
+
+export async function recoverCompletedDiscoveryReport(
+  knownLatestId: string | null,
+): Promise<FundDiscoveryReport | null> {
+  try {
+    const reports = await listDiscoveryReports();
+    const recovered = detectCompletedScan({
+      reports: sortReportsByCreatedAtDesc(reports),
+      knownLatestId,
+    });
+    if (!recovered) {
+      return null;
+    }
+    return await fetchDiscoveryReportDetail(recovered.id);
+  } catch {
+    return null;
+  }
 }
 
 /** 流最近一次有动静距今是否已经超过静默阈值。 */

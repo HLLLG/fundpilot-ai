@@ -2481,10 +2481,15 @@ _DISCOVERY_SUMMARY_FIELDS: tuple[str, ...] = (
     "provider",
     "caveats",
 )
+DISCOVERY_SUMMARY_FIELDS = _DISCOVERY_SUMMARY_FIELDS
+
+
+def project_discovery_report_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: payload[key] for key in _DISCOVERY_SUMMARY_FIELDS if key in payload}
 
 
 def _project_discovery_report_summary(payload: dict[str, Any]) -> dict[str, Any]:
-    return {key: payload[key] for key in _DISCOVERY_SUMMARY_FIELDS if key in payload}
+    return project_discovery_report_summary(payload)
 
 
 def _project_discovery_report_diagnostics(payload: dict[str, Any]) -> dict[str, Any]:

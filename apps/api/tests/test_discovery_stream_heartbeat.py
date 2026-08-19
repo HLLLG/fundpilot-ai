@@ -46,6 +46,29 @@ def test_whole_discovery_pipeline_emits_heartbeat_during_unwrapped_work(
     assert events[-1]["type"] == "done"
 
 
+def test_discovery_done_event_is_a_summary_not_the_full_body() -> None:
+    from app.models import FundDiscoveryReport
+    from app.services.discovery_streaming import _done
+
+    report = FundDiscoveryReport(
+        id="r-compact",
+        title="压缩完成事件",
+        summary="摘要",
+        candidate_pool=[{"fund_code": "000001"}],
+        discovery_facts={"pipeline": {"provider": "deepseek"}},
+        decision_events=[{"id": "evt-1"}],
+        recommendations=[],
+    )
+    event = _done(report)
+    assert event["type"] == "done"
+    assert event["report_id"] == "r-compact"
+    assert event["report"]["title"] == "压缩完成事件"
+    assert "candidate_pool" not in event["report"]
+    assert "discovery_facts" not in event["report"]
+    assert "decision_events" not in event["report"]
+    assert "recommendations" not in event["report"]
+
+
 def test_discovery_stream_logs_cancellation_with_last_stage(
     monkeypatch,
     caplog,

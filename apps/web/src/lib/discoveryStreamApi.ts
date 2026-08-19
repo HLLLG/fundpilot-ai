@@ -1,12 +1,13 @@
-import type {
-  DiscoveryRecommendation,
-  DiscoveryScanMode,
-  DiscoveryStrategy,
-  FundDiscoveryReport,
-  FundTypePreference,
-  Holding,
-  InvestorProfile,
-  SelectionStrategy,
+import {
+  fetchDiscoveryReportDetail,
+  type DiscoveryRecommendation,
+  type DiscoveryScanMode,
+  type DiscoveryStrategy,
+  type FundDiscoveryReport,
+  type FundTypePreference,
+  type Holding,
+  type InvestorProfile,
+  type SelectionStrategy,
 } from "@/lib/api";
 import { apiFetch } from "@/lib/api/core";
 import { appendStreamTokenBuffer } from "@/lib/streamApi";
@@ -48,7 +49,7 @@ export interface StreamingDiscoveryEvents {
   onSkeleton?: (fundCodes: string[], fundNames: string[]) => void;
   onToken?: (content: string) => void;
   onPartial?: (field: DiscoveryPartialField, value: unknown) => void;
-  onDone?: (report: FundDiscoveryReport) => void;
+  onDone?: (report: FundDiscoveryReport) => void | Promise<void>;
   onError?: (message: string) => void;
 }
 
@@ -61,7 +62,11 @@ type StreamEvent =
       field: DiscoveryPartialField;
       value: unknown;
     }
-  | { type: "done"; report_id: string; report: FundDiscoveryReport }
+  | {
+      type: "done";
+      report_id: string;
+      report?: FundDiscoveryReport | Record<string, unknown>;
+    }
   | { type: "error"; message: string };
 
 const CONNECT_TIMEOUT_MS = 30_000;
@@ -126,6 +131,43 @@ function parseSseLine(line: string): StreamEvent | null {
   }
 }
 
+function looksLikeFullDiscoveryReport(
+  report: unknown,
+): report is FundDiscoveryReport {
+  if (!report || typeof report !== "object") {
+    return false;
+  }
+  const value = report as Record<string, unknown>;
+  return (
+    typeof value.id === "string" &&
+    (Array.isArray(value.recommendations) ||
+      Array.isArray(value.candidate_pool) ||
+      (value.discovery_facts != null && typeof value.discovery_facts === "object"))
+  );
+}
+
+async function resolveDoneDiscoveryReport(
+  event: Extract<StreamEvent, { type: "done" }>,
+): Promise<FundDiscoveryReport> {
+  const reportId = event.report_id;
+  if (reportId) {
+    try {
+      return await fetchDiscoveryReportDetail(reportId);
+    } catch (error) {
+      if (looksLikeFullDiscoveryReport(event.report)) {
+        return event.report;
+      }
+      throw error instanceof Error
+        ? error
+        : new Error("报告已生成，但加载正文失败，请从历史推荐打开。");
+    }
+  }
+  if (looksLikeFullDiscoveryReport(event.report)) {
+    return event.report;
+  }
+  throw new Error("流式扫描未返回报告编号");
+}
+
 function dispatchEvent(
   event: StreamEvent,
   events: StreamingDiscoveryEvents,
@@ -147,7 +189,6 @@ function dispatchEvent(
     return "continue";
   }
   if (event.type === "done") {
-    events.onDone?.(event.report);
     return "done";
   }
   if (event.type === "error") {
@@ -244,7 +285,7 @@ export async function streamDiscovery(
     }
   };
 
-  const dispatchFrame = (frame: string): "continue" | "done" => {
+  const dispatchFrame = async (frame: string): Promise<"continue" | "done"> => {
     for (const line of frame.split("\n")) {
       const event = parseSseLine(line.trim());
       if (!event) {
@@ -253,15 +294,32 @@ export async function streamDiscovery(
       sawEvent = true;
       window.clearTimeout(timeoutId);
       resetIdleTimeout();
-      const outcome = dispatchEvent(event, events);
-      if (outcome === "done") {
+      if (event.type === "done") {
+        const report = await resolveDoneDiscoveryReport(event);
+        await events.onDone?.(report);
         return "done";
       }
+      const outcome = dispatchEvent(event, events);
       if (outcome === "error") {
         throw new Error(event.type === "error" ? event.message : "stream error");
       }
     }
     return "continue";
+  };
+
+  const readChunk = async () => {
+    try {
+      return await reader.read();
+    } catch (error) {
+      throwIfCallerAborted();
+      if (idleTimedOut) {
+        throw new Error("荐基流长时间没有收到进度更新");
+      }
+      if (timeoutAbort.signal.aborted && !sawEvent) {
+        throw new Error("等待流式首包超时，请再点一次重新扫描");
+      }
+      throw error;
+    }
   };
 
   try {
@@ -273,14 +331,14 @@ export async function streamDiscovery(
       if (timeoutAbort.signal.aborted && !sawEvent) {
         throw new Error("等待流式首包超时，请再点一次重新扫描");
       }
-      const { done, value } = await reader.read();
+      const { done, value } = await readChunk();
       if (idleTimedOut) {
         throw new Error("荐基流长时间没有收到进度更新");
       }
       if (done) {
         throwIfCallerAborted();
         buffer += decoder.decode();
-        if (buffer.trim() && dispatchFrame(buffer) === "done") {
+        if (buffer.trim() && (await dispatchFrame(buffer)) === "done") {
           return;
         }
         break;
@@ -289,7 +347,7 @@ export async function streamDiscovery(
       const parts = buffer.split("\n\n");
       buffer = parts.pop() ?? "";
       for (const part of parts) {
-        if (dispatchFrame(part) === "done") {
+        if ((await dispatchFrame(part)) === "done") {
           return;
         }
       }

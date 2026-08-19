@@ -4,7 +4,9 @@ import threading
 import time
 
 from app.services.async_sse import (
+    SSE_DISCONNECT_CONFIRMATIONS,
     SSE_HTTP2_PADDING,
+    SSE_RESPONSE_HEADERS,
     format_sse_event,
     sse_connected_prelude,
     sse_from_sync_iterator,
@@ -19,6 +21,8 @@ def test_sse_connected_prelude_forces_an_early_flush() -> None:
     assert padding.startswith(": ")
     assert padding.endswith("\n\n")
     assert len(padding) > 2048
+    assert "Connection" not in SSE_RESPONSE_HEADERS
+    assert SSE_RESPONSE_HEADERS["X-Accel-Buffering"] == "no"
     assert format_sse_event({"type": "done"}) == 'data: {"type": "done"}\n\n'
 
 
@@ -58,7 +62,7 @@ def test_sse_disconnect_stops_sync_producer_promptly():
         async def is_disconnected() -> bool:
             nonlocal checks
             checks += 1
-            return checks >= 2
+            return checks >= SSE_DISCONNECT_CONFIRMATIONS
 
         chunks: list[str] = []
         async for chunk in sse_from_sync_iterator(

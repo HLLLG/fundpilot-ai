@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
-from app.database import save_discovery_report
+from app.database import DISCOVERY_SUMMARY_FIELDS, save_discovery_report
 from app.models import DiscoveryRequest, FundDiscoveryReport
 from app.request_context import reset_request_user_id, set_request_user_id
 from app.services.analysis_runtime import (
@@ -991,7 +991,14 @@ def _done(report: FundDiscoveryReport) -> dict[str, Any]:
     return {
         "type": "done",
         "report_id": report.id,
-        "report": report.model_dump(mode="json"),
+        # Production sits behind nginx HTTP/2. A 5–9 MB terminal event exceeds
+        # the 64 KiB flow-control window and the browser sees the connection
+        # vanish after a long analysis. The full body is already saved; the
+        # client hydrates via GET /reports/{id}.
+        "report": report.model_dump(
+            mode="json",
+            include=set(DISCOVERY_SUMMARY_FIELDS),
+        ),
     }
 
 

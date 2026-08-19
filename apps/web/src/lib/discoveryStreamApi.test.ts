@@ -1,8 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { fetchDiscoveryReportDetail } from "@/lib/api";
 import { streamDiscovery } from "@/lib/discoveryStreamApi";
 
 const API_BASE = "http://127.0.0.1:8000";
+
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    ...actual,
+    fetchDiscoveryReportDetail: vi.fn(),
+  };
+});
 
 function sseBody(events: object[]): ReadableStream<Uint8Array> {
   const text = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
@@ -12,6 +21,21 @@ function sseBody(events: object[]): ReadableStream<Uint8Array> {
       controller.close();
     },
   });
+}
+
+function hydratedReport(id = "r1") {
+  return {
+    id,
+    created_at: "2026-07-11T08:00:00Z",
+    title: "hydrated",
+    summary: "full body",
+    focus_sectors: [],
+    target_sectors: [],
+    recommendations: [],
+    caveats: [],
+    provider: "test",
+    discovery_facts: { pipeline: { provider: "deepseek" } },
+  };
 }
 
 describe("streamDiscovery", () => {
@@ -24,6 +48,7 @@ describe("streamDiscovery", () => {
     });
     vi.stubGlobal("window", { setTimeout, clearTimeout });
     vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", API_BASE);
+    vi.mocked(fetchDiscoveryReportDetail).mockResolvedValue(hydratedReport());
   });
 
   afterEach(() => {
@@ -42,7 +67,7 @@ describe("streamDiscovery", () => {
           {
             type: "done",
             report_id: "r1",
-            report: { id: "r1", title: "t", recommendations: [] },
+            report: { id: "r1", title: "t" },
           },
         ]),
         { status: 200, headers: { "Content-Type": "text/event-stream" } },
@@ -51,6 +76,7 @@ describe("streamDiscovery", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const stages: string[] = [];
+    const completed: unknown[] = [];
     await streamDiscovery(
       [{ fund_code: "519674", fund_name: "测试", holding_amount: 1000, return_percent: 1 }],
       {
@@ -62,12 +88,16 @@ describe("streamDiscovery", () => {
       },
       {
         onStage: (stage) => stages.push(stage),
-        onDone: () => undefined,
+        onDone: (report) => {
+          completed.push(report);
+        },
       },
     );
 
     expect(stages[0]).toBe("connected");
     expect(stages).toContain("sector_heat");
+    expect(fetchDiscoveryReportDetail).toHaveBeenCalledWith("r1");
+    expect(completed[0]).toEqual(hydratedReport());
     const requestBody = JSON.parse(
       String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
     );
@@ -145,5 +175,6 @@ describe("streamDiscovery", () => {
         {},
       ),
     ).rejects.toThrow("流式扫描异常结束，未收到完成状态。");
+    expect(fetchDiscoveryReportDetail).not.toHaveBeenCalled();
   });
 });

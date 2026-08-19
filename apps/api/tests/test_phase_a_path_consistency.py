@@ -691,10 +691,15 @@ def test_discovery_final_projection_matches_service_sse_and_background(
         for item in projection
     )
     assert all(len(item["final_projection"]) == 1 for item in projection)
-    assert projection == _discovery_projection(events[-1]["report"])
     assert projection == _discovery_projection(background)
 
     assert events[-1]["type"] == "done"
+    assert events[-1]["report_id"] == guarded_report.id
+    assert events[-1]["report"]["title"] == guarded_report.title
+    assert "recommendations" not in events[-1]["report"]
+    assert "decision_events" not in events[-1]["report"]
+    assert "discovery_facts" not in events[-1]["report"]
+    assert "candidate_pool" not in events[-1]["report"]
     assert not [event for event in events if event.get("type") == "report_partial"]
     pre_done_text = repr(events[:-1])
     assert RAW_DISCOVERY_ACTION not in pre_done_text

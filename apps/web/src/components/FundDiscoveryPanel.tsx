@@ -62,6 +62,7 @@ import { startVisibilityAwarePolling } from "@/lib/visibilityPolling";
 import {
   DISCOVERY_RECOVERY_POLL_MS,
   detectCompletedScan,
+  recoverCompletedDiscoveryReport,
   sortReportsByCreatedAtDesc,
   streamLooksDead,
 } from "@/lib/discoveryScanRecovery";
@@ -414,8 +415,7 @@ export function FundDiscoveryPanel({
       },
     };
 
-    const runStreamOnce = async () => {
-      const abortController = new AbortController();
+    const runStreamOnce = async (abortController: AbortController) => {
       discoveryStreamAbortRef.current = abortController;
       onStreamingDiscoveryChange({
         stage: "sector_heat",
@@ -443,13 +443,28 @@ export function FundDiscoveryPanel({
         if (attempt > 0) {
           await new Promise((resolve) => window.setTimeout(resolve, 300));
         }
+        const abortController = new AbortController();
         try {
-          await runStreamOnce();
+          await runStreamOnce(abortController);
           return;
         } catch (streamError) {
+          const userAborted = abortController.signal.aborted;
           discoveryStreamAbortRef.current = null;
-          if (streamError instanceof DOMException && streamError.name === "AbortError") {
+          if (
+            userAborted &&
+            streamError instanceof DOMException &&
+            streamError.name === "AbortError"
+          ) {
             onStreamingDiscoveryChange(null);
+            return;
+          }
+          const recovered = await recoverCompletedDiscoveryReport(
+            latestKnownReportIdRef.current,
+          );
+          if (recovered) {
+            onStreamingDiscoveryChange(null);
+            onDiscoveryStreamComplete(recovered);
+            void refreshReports();
             return;
           }
           lastError = streamError;

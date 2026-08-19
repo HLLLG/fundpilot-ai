@@ -1,11 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   DISCOVERY_STREAM_SILENCE_MS,
   detectCompletedScan,
+  recoverCompletedDiscoveryReport,
   sortReportsByCreatedAtDesc,
   streamLooksDead,
 } from "@/lib/discoveryScanRecovery";
+import type { FundDiscoveryReport } from "@/lib/api";
+import { fetchDiscoveryReportDetail, listDiscoveryReports } from "@/lib/api";
+
+vi.mock("@/lib/api", () => ({
+  listDiscoveryReports: vi.fn(),
+  fetchDiscoveryReportDetail: vi.fn(),
+}));
 
 // ---------------------------------------------------------------------------
 // 手机浏览器切到后台会挂起 fetch 的 reader：`streamDiscovery` 那个 promise 可能永远
@@ -90,5 +98,44 @@ describe("streamLooksDead", () => {
   it("accepts a custom silence window", () => {
     expect(streamLooksDead(0, 5_000, 4_000)).toBe(true);
     expect(streamLooksDead(0, 3_000, 4_000)).toBe(false);
+  });
+});
+
+describe("recoverCompletedDiscoveryReport", () => {
+  beforeEach(() => {
+    vi.mocked(listDiscoveryReports).mockReset();
+    vi.mocked(fetchDiscoveryReportDetail).mockReset();
+  });
+
+  it("hydrates the newest report when the latest id changed", async () => {
+    vi.mocked(listDiscoveryReports).mockResolvedValue([
+      report("new", "2026-08-08T06:00:00Z") as FundDiscoveryReport,
+      report("old", "2026-08-07T06:00:00Z") as FundDiscoveryReport,
+    ]);
+    vi.mocked(fetchDiscoveryReportDetail).mockResolvedValue({
+      id: "new",
+      created_at: "2026-08-08T06:00:00Z",
+      title: "detail:new",
+      summary: "",
+      focus_sectors: [],
+      target_sectors: [],
+      recommendations: [],
+      caveats: [],
+      provider: "test",
+    });
+
+    const recovered = await recoverCompletedDiscoveryReport("old");
+
+    expect(recovered?.id).toBe("new");
+    expect(fetchDiscoveryReportDetail).toHaveBeenCalledWith("new");
+  });
+
+  it("returns null when nothing new was saved", async () => {
+    vi.mocked(listDiscoveryReports).mockResolvedValue([
+      report("old", "2026-08-07T06:00:00Z") as FundDiscoveryReport,
+    ]);
+
+    await expect(recoverCompletedDiscoveryReport("old")).resolves.toBeNull();
+    expect(fetchDiscoveryReportDetail).not.toHaveBeenCalled();
   });
 });

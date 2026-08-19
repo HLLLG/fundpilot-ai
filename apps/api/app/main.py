@@ -79,6 +79,7 @@ from app.services.analyze_pipeline import run_analysis
 from app.services.analyze_streaming import stream_analysis
 from app.services.decision_data_evidence import resolve_portfolio_preflight
 from app.services.async_sse import (
+    SSE_RESPONSE_HEADERS,
     sse_connected_prelude,
     sse_from_sync_iterator,
 )
@@ -955,11 +956,7 @@ async def analyze_stream_endpoint(
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream; charset=utf-8",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers=SSE_RESPONSE_HEADERS,
     )
 
 
@@ -1131,11 +1128,7 @@ async def fund_discovery_stream_endpoint(
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream; charset=utf-8",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers=SSE_RESPONSE_HEADERS,
     )
 
 
@@ -1320,11 +1313,7 @@ async def fund_discovery_chat(
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers=SSE_RESPONSE_HEADERS,
     )
 
 
@@ -1562,11 +1551,7 @@ async def report_chat(
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers=SSE_RESPONSE_HEADERS,
     )
 
 

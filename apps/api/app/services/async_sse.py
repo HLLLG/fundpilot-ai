@@ -15,6 +15,15 @@ logger = logging.getLogger(__name__)
 # stream has enough bytes. A leading comment pad forces the first flush so
 # the browser can resolve fetch() instead of sitting on the connect timeout.
 SSE_HTTP2_PADDING = ": " + ("*" * 2048) + "\n\n"
+# Do not send Connection: keep-alive. HTTP/2 forbids hop-by-hop headers and
+# nginx may RST the stream when it tries to forward that header to the browser.
+SSE_RESPONSE_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",
+}
+# A single is_disconnected() true behind nginx/HTTP/2 can be a false positive.
+# Require a short run of confirmations before cancelling in-flight work.
+SSE_DISCONNECT_CONFIRMATIONS = 3
 
 
 def format_sse_event(payload: dict[str, Any]) -> str:
@@ -95,11 +104,16 @@ async def sse_from_sync_iterator(
     )
     producer_thread.start()
     poll_seconds = max(0.05, float(disconnect_poll_seconds))
+    disconnect_hits = 0
     try:
         while True:
             if is_disconnected is not None and await is_disconnected():
-                stop.set()
-                break
+                disconnect_hits += 1
+                if disconnect_hits >= SSE_DISCONNECT_CONFIRMATIONS:
+                    stop.set()
+                    break
+            else:
+                disconnect_hits = 0
             try:
                 payload = await asyncio.wait_for(queue.get(), timeout=poll_seconds)
             except TimeoutError:

@@ -432,6 +432,41 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.queryByText(/后台扫描/)).not.toBeInTheDocument();
   });
 
+  it("loads a report that was saved after the stream dropped", async () => {
+    vi.mocked(listDiscoveryReports).mockImplementation(async () => {
+      if (vi.mocked(streamDiscovery).mock.calls.length === 0) {
+        return [{ ...discoveryReport(), id: "old", created_at: "2026-08-01T00:00:00Z" }];
+      }
+      return [
+        { ...discoveryReport(), id: "fresh", created_at: "2026-08-19T00:00:00Z" },
+        { ...discoveryReport(), id: "old", created_at: "2026-08-01T00:00:00Z" },
+      ];
+    });
+    vi.mocked(fetchDiscoveryReportDetail).mockImplementation(async (reportId: string) => ({
+      ...discoveryReport(),
+      id: reportId,
+      title: `detail:${reportId}`,
+    }));
+    vi.mocked(streamDiscovery).mockRejectedValue(
+      new Error("流式扫描异常结束，未收到完成状态。"),
+    );
+    const onDiscoveryStreamComplete = vi.fn();
+    renderPanel({ userId: 701, onDiscoveryStreamComplete });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("detail:old"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "重新扫描" }));
+
+    await waitFor(() =>
+      expect(onDiscoveryStreamComplete).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "fresh", title: "detail:fresh" }),
+      ),
+    );
+    expect(streamDiscovery).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/没有转入后台任务/)).not.toBeInTheDocument();
+  });
+
   it("starts a discovery stream even when a daily report stream is already active", async () => {
     vi.mocked(streamDiscovery).mockResolvedValue(undefined);
     renderPanel();

@@ -2644,6 +2644,7 @@ export async function fetchDiscoveryReportDetail(reportId: string): Promise<Fund
   return dedupeConcurrentGet(discoveryReportDetailRequests, key, async () => {
     const response = await apiFetch(
       `${API_BASE}/api/fund-discovery/reports/${encodeURIComponent(reportId)}`,
+      { timeoutMs: 180_000 },
     );
     if (!response.ok) {
       throw new Error(await response.text());

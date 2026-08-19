@@ -53,6 +53,7 @@ def test_analyze_stream_endpoint_emits_sse(tmp_path, monkeypatch: pytest.MonkeyP
     with client.stream("POST", "/api/analyze/stream", json=payload) as response:
         assert response.status_code == 200
         assert "text/event-stream" in response.headers.get("content-type", "")
+        assert response.headers.get("x-accel-buffering") == "no"
         body = "".join(response.iter_text())
 
     events = _parse_sse_events(body)
