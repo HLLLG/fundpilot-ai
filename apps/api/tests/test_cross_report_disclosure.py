@@ -199,7 +199,7 @@ def test_holding_card_discloses_the_same_day_discovery_pick() -> None:
 
     notes = "；".join(rec.validation_notes)
     assert "更好的半导体基金" in notes
-    assert "各自独立" in notes
+    assert "停加" in notes and "卖掉方向" in notes
     # 披露不改变动作。
     assert rec.action == "观察"
 
@@ -240,7 +240,7 @@ def _discovery_facts_with_holding() -> dict:
 def test_buy_recommendation_names_the_held_same_sector_fund() -> None:
     note = _held_same_sector_note(_discovery_rec(), _discovery_facts_with_holding())
     assert note is not None
-    assert "银河创新成长" in note and "由日报负责" in note
+    assert "银河创新成长" in note and "由日报按这只载体处理" in note
 
 
 @pytest.mark.parametrize("action", ["建议关注", "等待回调"])

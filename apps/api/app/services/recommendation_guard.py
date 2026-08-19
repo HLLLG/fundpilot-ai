@@ -2197,8 +2197,9 @@ def _discovery_cross_reference_note(facts: dict | None, holding) -> str | None:
     extra = f" 等 {len(rows)} 只" if len(rows) > 1 else ""
     return (
         f"发现基金今日报告对「{label}」方向另推荐了新的候选载体（{name}{extra}，"
-        f"动作「{action}」）；该推荐面向新资金入场，与本卡片对已持仓的结论各自独立，"
-        "方向判断两侧共用同一套打分，不构成矛盾。"
+        f"动作「{action}」）。两侧共用同一套方向打分：方向仍成立时，本卡片只处理"
+        "已持有这只载体（落后则停加，不等于卖掉方向）；发现基金回答的是有没有"
+        "更好的新工具，不能理解成一边减仓一边开新仓。"
     )
 
 

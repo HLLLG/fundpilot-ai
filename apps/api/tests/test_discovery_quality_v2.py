@@ -1154,7 +1154,7 @@ def test_guard_blocks_gold_equity_buy_when_gold_already_held():
     assert guarded[0].action == "建议关注"
     assert guarded[0].suggested_amount_yuan is None
     assert any("已有「黄金」敞口" in point for point in guarded[0].points)
-    assert any("同属一笔黄金主题敞口" in item for item in caveats)
+    assert any("黄金回退载体" in item for item in caveats)
 
 
 def test_opportunity_first_keeps_quant_coverage_as_soft_risk_input():

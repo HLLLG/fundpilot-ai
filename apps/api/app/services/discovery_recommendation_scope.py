@@ -36,9 +36,8 @@ MAX_DISCOVERY_RECOMMENDATIONS = 4
 MAX_RECOMMENDATIONS_PER_SECTOR = 1
 # 方向身份保持独立（黄金 ≠ 黄金股），只在「可布局方向没有过门载体」时
 # 借用同主题可交易基金执行，并在白名单里写明回退来源。
-# 组合里已经有黄金或黄金股敞口时，不再用另一条腿开新仓：加减仓交给日报。
+# 组合里已经有黄金敞口时，不得再把黄金股回退说成「缺少过门载体」。
 THEME_VEHICLE_FALLBACKS: tuple[tuple[str, str], ...] = (("黄金", "黄金股"),)
-EXISTING_THEME_EXPOSURE_REASON = "existing_theme_exposure"
 
 _ENTRY_PATH_PRIORITY = {
     "confirmed_entry": 4,
@@ -173,13 +172,6 @@ def build_recommendation_candidate_scope(
         funnel=funnel,
         held_sector_labels=held_sector_labels,
     )
-    theme_exposure_blocks = _suppress_held_theme_pair_buys(
-        eligible_by_sector=eligible_by_sector,
-        candidate_decisions=candidate_decisions,
-        funnel=funnel,
-        held_sector_labels=held_sector_labels,
-        theme_vehicle_fallbacks=theme_vehicle_fallbacks,
-    )
     ranked_sectors = sorted(
         eligible_by_sector,
         key=lambda sector: _sector_rank_key(
@@ -252,14 +244,13 @@ def build_recommendation_candidate_scope(
         "conditional_wait_fund_codes": conditional_wait_codes,
         "watch_only_fund_codes": watch_only_codes,
         "theme_vehicle_fallbacks": theme_vehicle_fallbacks,
-        "theme_exposure_blocks": theme_exposure_blocks,
         "instruction": (
             "candidate_pool 仅保留通过方向动作边界、基金质量、载体质量与板块身份门槛的推荐白名单；"
             f"每个方向只推荐 {MAX_RECOMMENDATIONS_PER_SECTOR} 个综合质量最优的独立基金家族，"
             f"全局最多 {MAX_DISCOVERY_RECOMMENDATIONS} 只；"
             "等待/研究方向不得占用推荐名额，也不得跨方向补位；"
             "黄金等方向缺少过门载体时，可用同主题可交易基金回退，板块身份仍保持独立；"
-            "组合已有该主题敞口时不再开另一条腿，加减仓由日报处理。"
+            "组合已有黄金敞口时，不得再把黄金股当作黄金回退开仓。"
         ),
     }
 
@@ -671,71 +662,6 @@ def _apply_theme_vehicle_fallbacks(
             row["theme_vehicle_fallback_from"] = vehicle
             row["rejected_count"] = max(0, int(row.get("recalled_count") or 0) - len(attached))
     return fallbacks
-
-
-def _suppress_held_theme_pair_buys(
-    *,
-    eligible_by_sector: dict[str, list[tuple[Mapping[str, Any], str]]],
-    candidate_decisions: list[dict[str, Any]],
-    funnel: list[dict[str, Any]],
-    held_sector_labels: Sequence[str] | None,
-    theme_vehicle_fallbacks: dict[str, dict[str, str]],
-) -> list[dict[str, str]]:
-    blocks: list[dict[str, str]] = []
-    decisions_by_code = {
-        str(item.get("fund_code") or ""): item
-        for item in candidate_decisions
-        if item.get("fund_code")
-    }
-    for thesis, vehicle in THEME_VEHICLE_FALLBACKS:
-        if not _theme_pair_occupied(thesis, vehicle, held_sector_labels):
-            continue
-        held_label = theme_pair_conflict_label(
-            vehicle,
-            held_sector_labels,
-            fallback_thesis=thesis,
-        ) or thesis
-        for sector in (thesis, vehicle):
-            attached = list(eligible_by_sector.get(sector) or [])
-            if not attached:
-                continue
-            eligible_by_sector[sector] = []
-            for candidate, _entry_path in attached:
-                code = _fund_code(candidate)
-                if not code:
-                    continue
-                theme_vehicle_fallbacks.pop(code, None)
-                decision = decisions_by_code.get(code)
-                if decision is not None:
-                    reasons = [
-                        reason
-                        for reason in decision.get("reason_codes") or []
-                        if reason != "direction_entry_not_open"
-                    ]
-                    if EXISTING_THEME_EXPOSURE_REASON not in reasons:
-                        reasons.append(EXISTING_THEME_EXPOSURE_REASON)
-                    decision["status"] = "watch_only"
-                    decision["entry_path"] = None
-                    decision["direction_gate_passed"] = False
-                    decision["reason_codes"] = reasons
-                blocks.append(
-                    {
-                        "fund_code": code,
-                        "sector_label": sector,
-                        "held_sector_label": held_label,
-                        "reason": EXISTING_THEME_EXPOSURE_REASON,
-                    }
-                )
-            for row in funnel:
-                if row.get("sector_label") != sector:
-                    continue
-                row["eligible_count"] = 0
-                row["existing_theme_exposure"] = held_label
-                row["rejected_count"] = max(
-                    0,
-                    int(row.get("recalled_count") or 0),
-                )
-    return blocks
 
 
 def _candidate_entry_path(

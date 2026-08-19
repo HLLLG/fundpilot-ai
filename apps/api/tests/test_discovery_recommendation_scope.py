@@ -399,7 +399,7 @@ def test_held_gold_blocks_gold_equity_fallback() -> None:
     assert "黄金" in scope["unmatched_actionable_sector_labels"]
 
 
-def test_held_gold_blocks_independent_gold_equity_buy() -> None:
+def test_held_gold_does_not_block_independent_gold_equity_direction() -> None:
     gold_equity = _candidate("021958", "黄金股")
     scope = build_recommendation_candidate_scope(
         [gold_equity],
@@ -407,31 +407,8 @@ def test_held_gold_blocks_independent_gold_equity_buy() -> None:
         held_sector_labels=["黄金"],
     )
 
-    assert scope["ordered_eligible_fund_codes"] == []
-    assert scope["theme_exposure_blocks"] == [
-        {
-            "fund_code": "021958",
-            "sector_label": "黄金股",
-            "held_sector_label": "黄金",
-            "reason": "existing_theme_exposure",
-        }
-    ]
-    decisions = {item["fund_code"]: item for item in scope["candidate_decisions"]}
-    assert decisions["021958"]["status"] == "watch_only"
-    assert "existing_theme_exposure" in decisions["021958"]["reason_codes"]
-
-
-def test_held_gold_equity_blocks_new_gold_etf_buy() -> None:
-    gold = _candidate("002610", "黄金")
-    scope = build_recommendation_candidate_scope(
-        [gold],
-        [_opportunity("黄金", "ready_to_start", priority=90)],
-        held_sector_labels=["黄金股"],
-    )
-
-    assert scope["ordered_eligible_fund_codes"] == []
-    assert scope["theme_exposure_blocks"][0]["fund_code"] == "002610"
-    assert scope["theme_exposure_blocks"][0]["held_sector_label"] == "黄金股"
+    assert scope["ordered_eligible_fund_codes"] == ["021958"]
+    assert scope["theme_vehicle_fallbacks"] == {}
 
 
 def test_scope_keeps_candidates_without_direction_evidence_visible_and_fail_closed() -> None:

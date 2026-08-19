@@ -570,36 +570,35 @@ def apply_discovery_guards(
             ),
         )
         held_theme_labels = held_sector_labels_from_discovery_facts(discovery_facts)
-        occupied_theme = theme_pair_conflict_label(
-            str(copy.sector_name or ""),
-            held_theme_labels,
-            fallback_thesis=(
-                str(fallback_opportunity.get("thesis_sector_label") or "")
-                if fallback_opportunity is not None
-                else None
-            ),
+        occupied_theme = (
+            theme_pair_conflict_label(
+                str(copy.sector_name or ""),
+                held_theme_labels,
+                fallback_thesis=str(fallback_opportunity.get("thesis_sector_label") or ""),
+            )
+            if fallback_opportunity is not None
+            else None
         )
-        if occupied_theme:
+        if occupied_theme and fallback_opportunity is not None:
             fallback_opportunity = None
             if copy.action == "分批买入":
                 copy.action = "建议关注"
                 copy.suggested_amount_yuan = None
                 copy.amount_note = (
-                    f"组合已有{occupied_theme}敞口，不再开同主题新仓；加减仓由日报处理"
+                    f"组合已有{occupied_theme}敞口，不再用{copy.sector_name}回退开新仓"
                 )
                 occupied_note = (
-                    f"组合已有「{occupied_theme}」敞口，本次不把{copy.sector_name}"
-                    "当作新的同主题买入；已有仓位的加减仓由日报处理。"
+                    f"组合已有「{occupied_theme}」敞口，不能再说缺少过门载体；"
+                    f"本次不把{copy.sector_name}当作黄金回退买入。"
                 )
                 if occupied_note not in copy.points:
                     copy.points = [occupied_note, *copy.points]
                 copy.validation_notes = [
                     *copy.validation_notes,
-                    "同主题已有持仓时，发现扫描不再用黄金股回退或第二只黄金基金加仓。",
+                    "已有黄金持仓时，黄金股回退不再作为新买入；方向仍成立则由日报停加或换载体。",
                 ]
                 caveats.append(
-                    f"{code} 与已持仓方向「{occupied_theme}」同属一笔黄金主题敞口，"
-                    "已阻断新买入。"
+                    f"{code} 是黄金回退载体，但组合已有「{occupied_theme}」敞口，已阻断回退买入。"
                 )
         elif fallback_opportunity is not None:
             opportunity = fallback_opportunity
@@ -1664,8 +1663,9 @@ def _held_same_sector_note(
     name = str(first.get("fund_name") or "").strip() or str(first.get("fund_code") or "").strip()
     extra = f" 等 {len(held_same_sector)} 只" if len(held_same_sector) > 1 else ""
     return (
-        f"你已持有同方向的 {name}{extra}；该持仓的加/减/退由日报负责，"
-        "本推荐只回答新资金选哪只载体，两者结论各自独立、不构成矛盾。"
+        f"你已持有同方向的 {name}{extra}。方向两侧共用同一套打分；"
+        "已有仓位的停加或减仓由日报按这只载体处理，本推荐只回答有没有更好的新工具，"
+        "不能理解成否定方向，也不能理解成一边减仓一边开新仓。"
     )
 
 

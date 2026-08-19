@@ -349,8 +349,8 @@ def resolve_escalation_floor(
 
     `nav_trend` 是该持仓自己的净值走势摘要（2026-08 新增第三源）。加它是因为前两个来源
     的主语都是**板块**：一只基金若持续跑输自己所属的板块，只要板块方向还在线上，整条
-    减仓链路对它没有任何信号。见 `_resolve_fund_lag_floor`：浅落后停加，深落后或
-    长短窗同时确认则减仓。
+    减仓链路对它没有任何信号。见 `_resolve_fund_lag_floor`：浅落后停加；深落后
+    也只在方向自己退出时才减仓，避免把还成立的方向卖掉。
 
     各来源独立判定，最后取**更保守**的那一档（bucket 数值更小者胜），理由合并。
     这样既不放松既有的风险升级，也让方向失效能真正落成动作。
@@ -363,7 +363,11 @@ def resolve_escalation_floor(
         has_unrealized_gain=has_unrealized_gain,
     )
     direction = _resolve_direction_exit_floor(direction_exit)
-    fund_lag = _resolve_fund_lag_floor(nav_trend, sector_opportunity)
+    fund_lag = _resolve_fund_lag_floor(
+        nav_trend,
+        sector_opportunity,
+        direction_exit=direction_exit,
+    )
     return _merge_escalation_floors(
         _merge_escalation_floors(risk, direction),
         fund_lag,
@@ -386,8 +390,10 @@ FUND_SECTOR_LAG_THRESHOLD_5D = 4.0
 def _resolve_fund_lag_floor(
     nav_trend: dict | None,
     sector_opportunity: dict | None,
+    *,
+    direction_exit: dict | None = None,
 ) -> dict[str, object]:
-    """基金自身相对所属板块显著跑输时，停加；掉队够深或长短窗同时确认则减仓。
+    """基金自身相对所属板块显著跑输时停加；只有方向也在退出时，掉队才能升到减仓。
 
     对比口径：基金 `nav_trend.return_20d_percent`（官方日增长率优先重建的 20 交易日总
     收益）vs 板块 `mainline_regime.features.return_20d_percent`（同窗口板块指数/BK 收益）。
@@ -397,7 +403,9 @@ def _resolve_fund_lag_floor(
     分两档，避免把一次跟踪差直接当成卖出：
 
     * 20 日落后 ≥8pp → 暂停追涨（换载体，不要求卖出方向）；
-    * 20 日落后 ≥12pp，或 20 日 ≥8pp 且 5 日也落后 ≥4pp → 减仓评估 −25%。
+    * 20 日落后 ≥12pp，或 20 日 ≥8pp 且 5 日也落后 ≥4pp → **仅当方向自己也在退出**
+      时才升到减仓评估 −25%。方向仍是 hold / 可布局时，再深的跟踪差也只停加：
+      主语是载体，不能把还成立的方向卖掉。
 
     5 日腿取基金 `recent_5d_change_percent` vs 板块 `features.return_5d_percent`
     （缺席时退回 `change_5d_percent`）。任一端缺失则不做「持续」升级，只保留 20 日深
@@ -436,7 +444,10 @@ def _resolve_fund_lag_floor(
         lag_5d is not None and lag_5d <= -FUND_SECTOR_LAG_THRESHOLD_5D
     )
     deep = lag_20d <= -FUND_SECTOR_LAG_DEEP_THRESHOLD_20D
-    reduce = deep or persistent
+    reduce = (deep or persistent) and _lag_may_sell_the_direction(
+        direction_exit,
+        sector_opportunity,
+    )
     gap_text = (
         f"该基金近20日收益 {fund_20d:+.2f}% 落后所属板块 {sector_20d:+.2f}% 达 "
         f"{abs(lag_20d):.1f} 个百分点，载体未跟上方向"
@@ -459,8 +470,13 @@ def _resolve_fund_lag_floor(
             "suggested_position_change_percent": -25.0,
             "basis": "；".join(reasons),
         }
+    hold_note = (
+        "；方向仍成立，载体落后只停加、不减仓"
+        if (deep or persistent) and not reduce
+        else ""
+    )
     reasons = [
-        f"{gap_text}；本轮暂停加仓，并建议评估同方向是否有更合适的载体"
+        f"{gap_text}；本轮暂停加仓，并建议评估同方向是否有更合适的载体{hold_note}"
     ]
     return {
         "min_bucket": ACTION_BUCKET_PAUSE,
@@ -469,6 +485,37 @@ def _resolve_fund_lag_floor(
         "suggested_position_change_percent": None,
         "basis": "；".join(reasons),
     }
+
+
+def _lag_may_sell_the_direction(
+    direction_exit: dict | None,
+    sector_opportunity: dict | None,
+) -> bool:
+    """载体落后能不能升级成卖出，必须先看方向自己有没有在退出。
+
+    黄金 2026-08-19 线上就是反例：方向分 87、exit_state=hold、持仓还微盈，基金只是
+    20 日没跟上板块。把掉队单独升到 −25%，等于卖掉一个还成立的方向，再和荐基的
+    「黄金仍可布局」打架。
+    """
+
+    if isinstance(direction_exit, dict):
+        state = str(direction_exit.get("exit_state") or "").strip()
+        if state in {"reduce", "deep_reduce", "exit"}:
+            return True
+        bucket = direction_exit.get("min_bucket")
+        if bucket is not None:
+            try:
+                if int(bucket) <= ACTION_BUCKET_REDUCE:
+                    return True
+            except (TypeError, ValueError):
+                pass
+        if state in {"hold", "pause_add", "unavailable"}:
+            return False
+    if isinstance(sector_opportunity, dict):
+        entry = str(sector_opportunity.get("entry_state") or "")
+        if entry == "ready_to_start":
+            return False
+    return False
 
 
 def _resolve_direction_exit_floor(direction_exit: dict | None) -> dict[str, object]:

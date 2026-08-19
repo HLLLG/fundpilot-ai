@@ -5,8 +5,8 @@
 自己板块的基金，只要板块方向还在线上，永远收不到任何信号。
 
 口径：基金 `nav_trend.return_20d_percent` vs 板块
-`mainline_regime.features.return_20d_percent`。20 日落后 ≥8pp 暂停追涨；≥12pp，或
-≥8pp 且 5 日也落后 ≥4pp，升到减仓评估 −25%。
+`mainline_regime.features.return_20d_percent`。20 日落后 ≥8pp 暂停追涨。深落后或
+长短窗同时确认，也只有方向自己在退出时才升到减仓评估 −25%；方向 hold 时只停加。
 
 另一半兜底：板块方向证据缺失的持仓在整条退出链路上是盲区（退出的主语全是板块），
 必须披露"方向退出与减仓信号对该仓不可用"，否则"系统没让我卖"会被读成"系统认为不用卖"。
@@ -102,10 +102,30 @@ def test_moderate_lag_pauses_the_add_without_a_reduction() -> None:
     assert "减仓" not in basis
 
 
-def test_deep_20d_lag_escalates_to_a_reduction() -> None:
+def test_deep_20d_lag_pauses_when_direction_still_holds() -> None:
     result = _floor(
         nav_trend=_nav_trend(-2.0),
         sector_opportunity=_sector_opportunity(12.0),  # 落后 14 ≥ 12
+        direction_exit={"exit_state": "hold", "min_bucket": None, "reasons": []},
+    )
+
+    assert result["min_bucket"] == ACTION_BUCKET_PAUSE
+    assert result["suggested_position_change_percent"] is None
+    basis = str(result["basis"])
+    assert "14.0" in basis and "停加" in basis
+    assert "减仓评估" not in basis
+
+
+def test_deep_20d_lag_reduces_only_when_direction_is_exiting() -> None:
+    result = _floor(
+        nav_trend=_nav_trend(-2.0),
+        sector_opportunity=_sector_opportunity(12.0),
+        direction_exit={
+            "exit_state": "reduce",
+            "min_bucket": ACTION_BUCKET_REDUCE,
+            "reasons": ["方向「半导体」趋势强度 41.0 已跌破退出线 52"],
+            "suggested_position_change_percent": -25.0,
+        },
     )
 
     assert result["min_bucket"] == ACTION_BUCKET_REDUCE
@@ -114,15 +134,16 @@ def test_deep_20d_lag_escalates_to_a_reduction() -> None:
     assert "14.0" in basis and "减仓评估" in basis
 
 
-def test_persistent_lag_across_both_windows_escalates() -> None:
+def test_persistent_lag_pauses_when_direction_still_holds() -> None:
     result = _floor(
         nav_trend=_nav_trend(3.5, recent_5d=-1.0),
         sector_opportunity=_sector_opportunity(12.0, sector_return_5d=4.0),
+        direction_exit={"exit_state": "hold", "min_bucket": None, "reasons": []},
     )
 
-    assert result["min_bucket"] == ACTION_BUCKET_REDUCE
-    assert result["suggested_position_change_percent"] == pytest.approx(-25.0)
-    assert "掉队持续" in str(result["basis"])
+    assert result["min_bucket"] == ACTION_BUCKET_PAUSE
+    assert result["suggested_position_change_percent"] is None
+    assert "方向仍成立" in str(result["basis"])
 
 
 def test_moderate_lag_without_a_5d_leg_does_not_invent_persistence() -> None:
@@ -151,13 +172,14 @@ def test_threshold_is_exclusive_at_the_boundary() -> None:
     assert result["min_bucket"] == ACTION_BUCKET_PAUSE
 
 
-def test_deep_threshold_escalates_at_the_boundary() -> None:
+def test_deep_threshold_stays_a_pause_while_direction_holds() -> None:
     result = _floor(
         nav_trend=_nav_trend(0.0),
         sector_opportunity=_sector_opportunity(FUND_SECTOR_LAG_DEEP_THRESHOLD_20D),
+        direction_exit={"exit_state": "hold", "min_bucket": None, "reasons": []},
     )
-    assert result["min_bucket"] == ACTION_BUCKET_REDUCE
-    assert result["suggested_position_change_percent"] == pytest.approx(-25.0)
+    assert result["min_bucket"] == ACTION_BUCKET_PAUSE
+    assert result["suggested_position_change_percent"] is None
 
 
 @pytest.mark.parametrize(
@@ -280,13 +302,18 @@ def _guard(facts, *, llm_action: str) -> FundRecommendation:
     return guarded[0]
 
 
-def test_guard_reduces_an_llm_add_on_a_deeply_lagging_fund() -> None:
+def test_guard_pauses_an_llm_add_on_a_deeply_lagging_fund_when_direction_holds() -> None:
     facts = {
         "holdings": [
             {
                 "fund_code": "519674",
                 "sector_opportunity": _sector_opportunity(12.0),
                 "nav_trend": _nav_trend(-2.0),
+                "direction_exit": {
+                    "exit_state": "hold",
+                    "min_bucket": None,
+                    "reasons": [],
+                },
                 "evidence": {
                     "composite": {"level": "高", "score": 3.0},
                     "components": [
@@ -300,8 +327,8 @@ def test_guard_reduces_an_llm_add_on_a_deeply_lagging_fund() -> None:
 
     rec = _guard(facts, llm_action="分批加仓")
 
-    assert rec.action == "减仓评估"
-    assert rec.suggested_position_change_percent == pytest.approx(-25.0)
+    assert rec.action == "暂停追涨"
+    assert rec.suggested_position_change_percent is None
     assert any("载体未跟上方向" in point for point in rec.points)
 
 
