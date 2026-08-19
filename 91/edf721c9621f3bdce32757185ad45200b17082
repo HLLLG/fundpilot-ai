@@ -1,0 +1,46 @@
+apps/api/tests/test_report_fund_lag_pause.py
+  s_ca1a1c159a5154::t_e768f0c456bfd9 175,179,181-182
+  s_ca1a1c159a5154::t_8fbfb472df1ea2 305,312-316,330-331
+  s_ca1a1c159a5154::t_1655b5b6f42d46 105,109-128,137,141,144-146
+  s_ca1a1c159a5154::t_cb33833717d6b5 8-9
+apps/api/app/services/discovery_guard.py
+  s_ca1a1c159a5154::t_16b99ce5c0b645 1666-1668
+  s_ca1a1c159a5154::t_80916310102b77 573-580,582,588,591-592,598,601
+apps/api/tests/test_cross_report_disclosure.py
+  s_ca1a1c159a5154::t_0031c946033712 243
+  s_ca1a1c159a5154::t_17a35f6c6ae338 202
+apps/api/tests/test_discovery_recommendation_scope.py
+  s_ca1a1c159a5154::t_a66c411183cca8 402,410-411
+apps/api/app/services/discovery_recommendation_scope.py
+  s_ca1a1c159a5154::t_a475b9668fe287 39
+  s_ca1a1c159a5154::t_22cc4bc69d1591 253
+apps/api/app/services/recommendation_guard.py
+  s_ca1a1c159a5154::t_4383717068bde0 2200-2202
+apps/api/tests/test_discovery_quality_v2.py
+  s_ca1a1c159a5154::t_8ef95f50474593 1157
+apps/api/app/services/decision_guard_shared.py
+  s_ca1a1c159a5154::t_c775ef9c84afb1 393-394
+  s_ca1a1c159a5154::t_c3a953792094e5 406-408
+  s_ca1a1c159a5154::t_c1d86e0fbadcd3 366-370
+  s_ca1a1c159a5154::t_7f273528c9a72d 447-450
+  s_ca1a1c159a5154::t_fa91ab47dab62a 473-477,479
+  s_ca1a1c159a5154::t_983e6ad64f80b5 490-520
+  s_ca1a1c159a5154::t_8accd81c8323ef 396
+  s_ca1a1c159a5154::t_700ffb5480890f 352-353
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "91edf721c9621f3bdce32757185ad45200b17082",
+  "prompts": {},
+  "sessions": {
+    "s_ca1a1c159a5154": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c64bd97b-6a7c-4b0b-bb1b-b6b8e9b750a9",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
