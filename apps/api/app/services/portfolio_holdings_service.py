@@ -240,19 +240,10 @@ def _fast_serialize_holding_for_client(
         if holding.daily_return_percent is not None
         else sector_return
     )
-    settled_return = (
-        holding.holding_return_percent
-        if holding.holding_return_percent is not None
-        else holding.return_percent
-    )
     daily_profit = _fast_daily_profit(holding)
-    estimated_holding_return = settled_return
-    if (
-        holding.daily_return_percent_source not in {"official_nav", "pending_accrual"}
-        and settled_return is not None
-        and daily_rate is not None
-    ):
-        estimated_holding_return = _fast_round2(settled_return + daily_rate)
+    from app.services.holding_estimates import build_holding_display_metrics
+
+    display = build_holding_display_metrics(holding, profile=profile)
     payload["settled_holding_amount"] = settled
     payload["display_holding_amount"] = settled
     payload["holding_amount"] = settled
@@ -266,12 +257,9 @@ def _fast_serialize_holding_for_client(
         holding.daily_return_percent_source not in {"official_nav", "pending_accrual"}
         and daily_rate is not None
     )
-    payload["estimated_holding_return_percent"] = estimated_holding_return
-    payload["estimated_holding_profit"] = holding.holding_profit
-    payload["holding_return_is_estimated"] = (
-        holding.daily_return_percent_source not in {"official_nav", "pending_accrual"}
-        and daily_rate is not None
-    )
+    payload["estimated_holding_return_percent"] = display["estimated_holding_return_percent"]
+    payload["estimated_holding_profit"] = display["estimated_holding_profit"]
+    payload["holding_return_is_estimated"] = display["holding_return_is_estimated"]
     payload["profit_accrual_deferred"] = holding.daily_return_percent_source == "pending_accrual"
     from app.services.holding_detail_service import resolve_holding_list_metrics
 

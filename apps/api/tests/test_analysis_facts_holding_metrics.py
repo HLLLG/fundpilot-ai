@@ -4,9 +4,8 @@
 无 profile 的展示指标简化实现，并且只在 `budget_enhancements=True` 时使用——而两条
 LLM 路径（同步 `run_analysis` 与流式 `stream_analysis`）都是 `budget_enhancements=True`，
 所以线上一直走的是那份简化版。`resolve_matched_profiles` 引入批量读之后性能理由已经
-消失，但简化版仍然丢掉三个真实行为，其中「支付宝 OCR 持有收益已含当日」会让日报把
-当日涨跌重复加一次，直接污染 prompt 反复强调的 `estimated_holding_return_percent`
-（浮亏线、over_drawdown_limit、escalation 的 has_unrealized_gain 都读它）。
+消失，但简化版仍然丢掉真实行为。盘中支付宝 OCR 仍是上一交易日官方净值，持有收益
+必须叠加上当日板块估算；仅当官方净值已公布时才把 OCR 当作已含当日，避免重复加。
 """
 
 import pytest
@@ -108,10 +107,10 @@ def _facts_row(
     return facts["holdings"][0]
 
 
-def _ocr_cumulative_holding() -> Holding:
-    """支付宝 OCR 行：持有收益与持有收益率互相自洽，已是含当日的累计值。
+def _ocr_settled_holding() -> Holding:
+    """支付宝 OCR 行：金额/收益额/收益率自洽，但是上一交易日官方净值结算。
 
-    10000 × 10 / 110 = 909.09，落在 `_ocr_holding_profit_is_cumulative` 的判定带内。
+    10000 × 10 / 110 = 909.09。盘中仍须叠加板块涨跌，不能把自洽当成已含今日。
     """
     return Holding(
         fund_code="519674",
@@ -125,14 +124,32 @@ def _ocr_cumulative_holding() -> Holding:
     )
 
 
-def test_ocr_cumulative_holding_return_is_not_double_counted() -> None:
+def test_ocr_during_trading_adds_sector_estimate(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.services.trading_session.build_trading_session",
+        lambda when=None: {"session_kind": "trading_day_intraday"},
+    )
     row = _facts_row(
-        _ocr_cumulative_holding(),
+        _ocr_settled_holding(),
         fund_profile=None,
         budget_enhancements=True,
     )
 
-    # 持有收益率已含当日，不能再叠加 sector_return_percent=3（旧简化版会给 13.0）。
+    assert row["estimated_holding_return_percent"] == pytest.approx(13.0)
+    assert row["estimated_holding_profit"] == pytest.approx(1209.09)
+    assert row["holding_return_is_estimated"] is True
+
+
+def test_ocr_after_official_nav_is_not_double_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.services.trading_session.build_trading_session",
+        lambda when=None: {"session_kind": "trading_day_after_close"},
+    )
+    holding = _ocr_settled_holding().model_copy(
+        update={"daily_return_percent_source": "official_nav", "daily_return_percent": 3.0}
+    )
+    row = _facts_row(holding, fund_profile=None, budget_enhancements=True)
+
     assert row["estimated_holding_return_percent"] == pytest.approx(10.0)
     assert row["estimated_holding_profit"] == pytest.approx(909.09)
     assert row["holding_return_is_estimated"] is False
@@ -169,7 +186,7 @@ def test_deferred_profit_accrual_does_not_add_sector_estimate() -> None:
 @pytest.mark.parametrize(
     "holding",
     [
-        pytest.param(_ocr_cumulative_holding(), id="ocr_cumulative"),
+        pytest.param(_ocr_settled_holding(), id="ocr_settled_intraday"),
         pytest.param(
             Holding(
                 fund_code="161725",

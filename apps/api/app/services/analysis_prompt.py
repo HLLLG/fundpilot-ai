@@ -80,7 +80,7 @@ DEFAULT_ROLE_PROMPT = f"""## 角色定位
 |------|------|
 | `sector_return_percent` | 关联板块涨跌，**当日实时值** |
 | `holding_return_percent` | 持有收益率，**昨日结算值**（不含今日盘中） |
-| `estimated_holding_return_percent` | **与界面「持有」列一致**的累计持有收益率；盘中=昨日结算+板块估算 |
+| `estimated_holding_return_percent` | **与界面「持有」列一致**的累计持有收益率；盘中/净值未公布=昨日结算+板块估算；官方净值已公布则不再加估算 |
 | `daily_return_percent` | 当日基金涨跌（官方净值或板块估算） |
 
 **浮亏/风控判断**须使用 `estimated_holding_return_percent`（单只）与 `analysis_facts.portfolio.weighted_return_percent`（组合），**禁止**用 `holding_return_percent` 判断盘中是否触发浮亏线。

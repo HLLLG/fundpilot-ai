@@ -4,6 +4,13 @@
  * 展示请优先用 holdingDisplay.ts 的 getter。
  */
 import type { Holding } from "@/lib/api";
+import { readTradingSessionCache } from "@/lib/holdingDetailCache";
+
+const HOLDING_RETURN_ESTIMATE_SESSIONS = new Set([
+  "trading_day_intraday",
+  "trading_day_pre_close",
+  "trading_day_after_close",
+]);
 
 const TEST_FUND_CODES = new Set(["000001"]);
 const TEST_NAME_PREFIXES = ["测试", "新基金"];
@@ -316,17 +323,47 @@ function resolveIntradayReturnPercent(holding: Holding): number | null {
   return null;
 }
 
+function resolveHoldingReturnSessionKind(sessionKind?: string | null): string | null {
+  if (sessionKind) {
+    return sessionKind;
+  }
+  return readTradingSessionCache()?.session_kind ?? null;
+}
+
+/** 盘中/收盘净值未出：持有收益应叠加上当日板块估算。开盘前/非交易日不加。 */
+export function holdingReturnNeedsSessionEstimate(
+  holding: Holding,
+  sessionKind?: string | null,
+): boolean {
+  if (
+    holding.daily_return_percent_source === "official_nav" ||
+    holding.daily_return_percent_source === "pending_accrual" ||
+    holding.profit_accrual_deferred
+  ) {
+    return false;
+  }
+  const kind = resolveHoldingReturnSessionKind(sessionKind);
+  if (kind == null) {
+    return (
+      holding.daily_return_percent_source === "sector_estimate" ||
+      holding.sector_return_percent != null
+    );
+  }
+  return HOLDING_RETURN_ESTIMATE_SESSIONS.has(kind);
+}
+
 /**
  * 持有收益率展示：
  * - 官方净值已公布：OCR/档案中的持有收益率已是含当日的总值
  * - 盘中/净值未公布：昨日结算 + 板块涨跌估算
+ * 支付宝 OCR 金额自洽只代表截图内部一致，盘中仍是上一交易日结算，不能当作已含今日。
  */
-export function computeEstimatedHoldingReturnPercent(holding: Holding): number | null {
+export function computeEstimatedHoldingReturnPercent(
+  holding: Holding,
+  sessionKind?: string | null,
+): number | null {
   const repaired = repairCorruptedSettledProfit(holding);
   const settled = resolveHoldingReturnPercent(repaired);
-  if (ocrHoldingProfitIsCumulative(repaired)) {
-    return settled != null ? round2(settled) : null;
-  }
   if (holding.daily_return_percent_source === "official_nav") {
     if (settled != null) {
       return round2(settled);
@@ -335,6 +372,9 @@ export function computeEstimatedHoldingReturnPercent(holding: Holding): number |
       return round2(holding.daily_return_percent);
     }
     return null;
+  }
+  if (!holdingReturnNeedsSessionEstimate(repaired, sessionKind)) {
+    return settled != null ? round2(settled) : null;
   }
   const intraday = resolveIntradayReturnPercent(repaired);
   if (settled == null) {
@@ -353,7 +393,7 @@ function expectedSettledProfit(holding: Holding, returnPercent: number): number 
   return round2((holding.holding_amount * returnPercent) / (100 + returnPercent));
 }
 
-/** 支付宝 OCR：持有收益与收益率相对当前金额自洽，已是含当日的累计值。 */
+/** 支付宝 OCR 三元组自洽：只用于修复误写收益，不代表已含今日涨跌。 */
 function ocrHoldingProfitIsCumulative(holding: Holding): boolean {
   if (holding.holding_profit == null) {
     return false;
@@ -415,20 +455,23 @@ function resolveSettledHoldingProfit(holding: Holding): number | null {
  * - 官方净值已公布：OCR/档案中的持有收益已是含当日的总值
  * - 盘中/净值未公布：昨日结算持有收益 + 当日收益（板块估算）
  */
-export function computeHoldingProfit(holding: Holding): number | null {
+export function computeHoldingProfit(
+  holding: Holding,
+  sessionKind?: string | null,
+): number | null {
   const repaired = repairCorruptedSettledProfit(holding);
-  if (ocrHoldingProfitIsCumulative(repaired)) {
-    return repaired.holding_profit ?? null;
-  }
   if (repaired.daily_return_percent_source === "official_nav") {
     if (repaired.holding_profit != null) {
       return repaired.holding_profit;
     }
-    const totalReturn = computeEstimatedHoldingReturnPercent(repaired);
+    const totalReturn = computeEstimatedHoldingReturnPercent(repaired, sessionKind);
     if (totalReturn != null && repaired.holding_amount > 0) {
       return round2((repaired.holding_amount * totalReturn) / (100 + totalReturn));
     }
     return null;
+  }
+  if (!holdingReturnNeedsSessionEstimate(repaired, sessionKind)) {
+    return resolveSettledHoldingProfit(repaired);
   }
   const settledProfit = resolveSettledHoldingProfit(repaired);
   const dailyProfit = computeDailyProfit(repaired);
@@ -438,7 +481,7 @@ export function computeHoldingProfit(holding: Holding): number | null {
   if (settledProfit != null) {
     return settledProfit;
   }
-  const estimatedReturn = computeEstimatedHoldingReturnPercent(repaired);
+  const estimatedReturn = computeEstimatedHoldingReturnPercent(repaired, sessionKind);
   if (estimatedReturn == null || repaired.holding_amount <= 0) {
     return null;
   }
@@ -600,23 +643,26 @@ export function dailyProfitIsEstimated(holding: Holding): boolean {
   return holding.sector_return_percent != null && holding.holding_amount > 0;
 }
 
-export function holdingProfitIsEstimated(holding: Holding): boolean {
+export function holdingProfitIsEstimated(
+  holding: Holding,
+  sessionKind?: string | null,
+): boolean {
   if (
     holding.daily_return_percent_source === "pending_accrual" ||
     holding.profit_accrual_deferred
   ) {
     return false;
   }
-  if (ocrHoldingProfitIsCumulative(holding)) {
-    return false;
-  }
   if (holding.daily_return_percent_source === "official_nav") {
     return holding.holding_profit == null;
+  }
+  if (!holdingReturnNeedsSessionEstimate(holding, sessionKind)) {
+    return false;
   }
   if (resolveIntradayReturnPercent(holding) != null) {
     return true;
   }
-  return holding.holding_profit == null && computeHoldingProfit(holding) != null;
+  return holding.holding_profit == null && computeHoldingProfit(holding, sessionKind) != null;
 }
 
 export function sumDailyProfit(holdings: Holding[]): number {

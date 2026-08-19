@@ -660,7 +660,7 @@ def build_analysis_facts(
         # 无 profile 的简化重写版，用于避开每只持仓一次的 profile 单点查询；
         # `resolve_matched_profiles` 引入批量读之后该开销已不存在，而简化版会丢掉
         # 三个真实行为：收益计提递延（新买入份额待确认时不应叠加当日板块估算）、
-        # 支付宝 OCR 持有收益已含当日（简化版会把当日涨跌重复加一次）、以及份额
+        # 盘中 OCR 仍是上一交易日结算须叠加板块估算（净值公布后才不再加）、以及份额
         # 同步误写持有收益的档案修复。
         display = build_holding_display_metrics(holding, profile=holding_profile)
         effective_return = float(display["estimated_holding_return_percent"] or 0)

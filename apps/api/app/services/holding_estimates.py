@@ -78,7 +78,12 @@ def _round2(value: float) -> float:
 
 
 def _ocr_holding_profit_is_cumulative(holding: Holding) -> bool:
-    """支付宝 OCR：持有收益与持有收益率均相对当前持有金额，已是含当日的累计值。"""
+    """支付宝 OCR 三元组（金额/收益额/收益率）是否自洽。
+
+    这只说明截图内部算术一致，**不能**推断已含今日涨跌：盘中支付宝仍是
+    上一交易日官方净值结算，三元组同样自洽。仅用于修复误写收益，不作为
+    「跳过板块估算」的信号。
+    """
     if holding.holding_profit is None:
         return False
     return_percent = resolve_holding_return_percent(holding)
@@ -89,6 +94,41 @@ def _ocr_holding_profit_is_cumulative(holding: Holding) -> bool:
     if expected == 0:
         return False
     return abs(holding.holding_profit - expected) <= max(1.0, abs(expected) * 0.02)
+
+
+HOLDING_RETURN_ESTIMATE_SESSIONS = frozenset(
+    {
+        "trading_day_intraday",
+        "trading_day_pre_close",
+        "trading_day_after_close",
+    }
+)
+
+
+def holding_return_needs_session_estimate(
+    holding: Holding,
+    *,
+    profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+    session_kind: str | None = None,
+) -> bool:
+    """持有收益是否应叠加上当日板块/净值估算。
+
+    盘中、收盘前、以及收盘后净值尚未写入时：支付宝截图仍是上一交易日结算，
+    必须加上关联板块涨跌。官方净值已公布（或份额待确认）则不再估算。
+    开盘前/非交易日板块还是上一交易日收盘，叠加会把昨日涨跌算两遍。
+    """
+    if holding.daily_return_percent_source in {"official_nav", "pending_accrual"}:
+        return False
+    from app.services.profit_accrual_defer import is_profit_accrual_deferred
+
+    if is_profit_accrual_deferred(_profile_for_holding(holding, profile)):
+        return False
+    kind = session_kind
+    if kind is None:
+        from app.services.trading_session import build_trading_session
+
+        kind = str(build_trading_session().get("session_kind") or "")
+    return kind in HOLDING_RETURN_ESTIMATE_SESSIONS
 
 
 def resolve_holding_return_percent(holding: Holding) -> float | None:
@@ -114,9 +154,14 @@ def resolve_effective_holding_return_percent(
     holding: Holding,
     *,
     profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+    session_kind: str | None = None,
 ) -> float:
     """与前端 computeEstimatedHoldingReturnPercent 一致，供风控/分析/LLM 使用。"""
-    estimated = compute_estimated_holding_return_percent(holding, profile=profile)
+    estimated = compute_estimated_holding_return_percent(
+        holding,
+        profile=profile,
+        session_kind=session_kind,
+    )
     if estimated is not None:
         return float(estimated)
     settled = resolve_holding_return_percent(holding)
@@ -129,6 +174,7 @@ def build_holding_display_metrics(
     holding: Holding,
     *,
     profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+    session_kind: str | None = None,
 ) -> dict[str, float | bool | None]:
     """界面「持有」列与 analysis_facts 共用口径。"""
     profile = _profile_for_holding(holding, profile)
@@ -138,11 +184,17 @@ def build_holding_display_metrics(
         "estimated_holding_return_percent": resolve_effective_holding_return_percent(
             holding,
             profile=profile,
+            session_kind=session_kind,
         ),
-        "estimated_holding_profit": compute_holding_profit(holding, profile=profile),
+        "estimated_holding_profit": compute_holding_profit(
+            holding,
+            profile=profile,
+            session_kind=session_kind,
+        ),
         "holding_return_is_estimated": holding_profit_is_estimated(
             holding,
             profile=profile,
+            session_kind=session_kind,
         ),
     }
 
@@ -151,8 +203,9 @@ def compute_estimated_holding_return_percent(
     holding: Holding,
     *,
     profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+    session_kind: str | None = None,
 ) -> float | None:
-    """持有收益率：净值公布后 OCR 值为含当日总值；盘中为昨日结算 + 板块涨跌。"""
+    """持有收益率：净值公布后用含当日的结算值；盘中/净值未出为昨日结算 + 板块涨跌。"""
     from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
     profile = _profile_for_holding(holding, profile)
@@ -161,11 +214,6 @@ def compute_estimated_holding_return_percent(
         return round(settled, 4) if settled is not None else 0.0
 
     holding = _repair_corrupted_settled_profit(holding, profile=profile)
-    if _ocr_holding_profit_is_cumulative(holding):
-        settled = resolve_holding_return_percent(holding)
-        if settled is not None:
-            return round(settled, 4)
-        return None
     settled = resolve_holding_return_percent(holding)
     if holding.daily_return_percent_source == "official_nav":
         if settled is not None:
@@ -173,6 +221,12 @@ def compute_estimated_holding_return_percent(
         if holding.daily_return_percent is not None:
             return round(holding.daily_return_percent, 4)
         return None
+    if not holding_return_needs_session_estimate(
+        holding,
+        profile=profile,
+        session_kind=session_kind,
+    ):
+        return round(settled, 4) if settled is not None else None
     intraday = resolve_intraday_return_percent(holding)
     if settled is None:
         return None
@@ -265,6 +319,7 @@ def compute_holding_profit(
     holding: Holding,
     *,
     profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+    session_kind: str | None = None,
 ) -> float | None:
     from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
@@ -274,23 +329,34 @@ def compute_holding_profit(
         return settled_profit if settled_profit is not None else 0.0
 
     holding = _repair_corrupted_settled_profit(holding, profile=profile)
-    if _ocr_holding_profit_is_cumulative(holding):
-        if holding.holding_profit is not None:
-            return holding.holding_profit
     if holding.daily_return_percent_source == "official_nav":
         if holding.holding_profit is not None:
             return holding.holding_profit
-        estimated_return = compute_estimated_holding_return_percent(holding, profile=profile)
+        estimated_return = compute_estimated_holding_return_percent(
+            holding,
+            profile=profile,
+            session_kind=session_kind,
+        )
         if estimated_return is None or holding.holding_amount <= 0:
             return None
         return _round2((holding.holding_amount * estimated_return) / (100 + estimated_return))
+    if not holding_return_needs_session_estimate(
+        holding,
+        profile=profile,
+        session_kind=session_kind,
+    ):
+        return resolve_settled_holding_profit(holding, profile=profile)
     settled_profit = resolve_settled_holding_profit(holding, profile=profile)
     daily_profit = compute_daily_profit(holding)
     if settled_profit is not None and daily_profit is not None:
         return _round2(settled_profit + daily_profit)
     if settled_profit is not None:
         return settled_profit
-    estimated_return = compute_estimated_holding_return_percent(holding, profile=profile)
+    estimated_return = compute_estimated_holding_return_percent(
+        holding,
+        profile=profile,
+        session_kind=session_kind,
+    )
     if estimated_return is None or holding.holding_amount <= 0:
         return None
     return _round2((holding.holding_amount * estimated_return) / (100 + estimated_return))
@@ -300,21 +366,26 @@ def holding_profit_is_estimated(
     holding: Holding,
     *,
     profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+    session_kind: str | None = None,
 ) -> bool:
     from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
     profile = _profile_for_holding(holding, profile)
     if is_profit_accrual_deferred(profile):
         return False
-    if _ocr_holding_profit_is_cumulative(holding):
-        return False
     if holding.daily_return_percent_source == "official_nav":
         return holding.holding_profit is None
+    if not holding_return_needs_session_estimate(
+        holding,
+        profile=profile,
+        session_kind=session_kind,
+    ):
+        return False
     if resolve_intraday_return_percent(holding) is not None:
         return True
     return (
         holding.holding_profit is None
-        and compute_holding_profit(holding, profile=profile) is not None
+        and compute_holding_profit(holding, profile=profile, session_kind=session_kind) is not None
     )
 
 

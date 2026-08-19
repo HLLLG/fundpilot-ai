@@ -3,12 +3,15 @@ import type { Holding } from "@/lib/api";
 import {
   applySectorDailyEstimate,
   computeDailyProfit,
+  computeEstimatedHoldingReturnPercent,
+  computeHoldingProfit,
   computeHoldingWeight,
   displayableHoldings,
   findHoldingIndex,
   formatHoldingDays,
   formatHoldingUnitCost,
   getHoldingUnitCost,
+  holdingProfitIsEstimated,
   mergeHoldingsAppend,
   mergeSectorIntradayClose,
   mergeHoldingsPreserveQuoteFields,
@@ -386,5 +389,41 @@ describe("sumPortfolioTotalAssets", () => {
     ];
     expect(portfolioOfficialNavSettled(holdings)).toBe(true);
     expect(sumPortfolioTotalAssets(holdings)).toBe(18108.92);
+  });
+});
+
+describe("OCR holding return session estimate", () => {
+  const ocrHolding: Holding = {
+    fund_code: "519674",
+    fund_name: "银河创新成长",
+    holding_amount: 10000,
+    holding_return_percent: 10,
+    holding_profit: 909.09,
+    return_percent: 10,
+    sector_return_percent: 3,
+    daily_return_percent_source: "sector_estimate",
+  };
+
+  it("adds sector estimate during the trading session", () => {
+    expect(computeEstimatedHoldingReturnPercent(ocrHolding, "trading_day_intraday")).toBe(13);
+    expect(computeHoldingProfit(ocrHolding, "trading_day_intraday")).toBe(1209.09);
+    expect(holdingProfitIsEstimated(ocrHolding, "trading_day_intraday")).toBe(true);
+  });
+
+  it("keeps last settlement after official NAV is published", () => {
+    const settled = {
+      ...ocrHolding,
+      daily_return_percent: 3,
+      daily_return_percent_source: "official_nav" as const,
+    };
+    expect(computeEstimatedHoldingReturnPercent(settled, "trading_day_after_close")).toBe(10);
+    expect(computeHoldingProfit(settled, "trading_day_after_close")).toBe(909.09);
+    expect(holdingProfitIsEstimated(settled, "trading_day_after_close")).toBe(false);
+  });
+
+  it("does not add the previous close before the open", () => {
+    expect(computeEstimatedHoldingReturnPercent(ocrHolding, "trading_day_pre_open")).toBe(10);
+    expect(computeHoldingProfit(ocrHolding, "trading_day_pre_open")).toBe(909.09);
+    expect(holdingProfitIsEstimated(ocrHolding, "trading_day_pre_open")).toBe(false);
   });
 });
