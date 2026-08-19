@@ -1,0 +1,72 @@
+apps/api/tests/test_async_sse.py
+  s_87d41fafe3675c::t_187715a450dc39 7,9
+  s_87d41fafe3675c::t_d39025d5a54107 24-25
+  s_87d41fafe3675c::t_ed8732f1c5f6a9 65
+apps/api/tests/test_discovery_stream_heartbeat.py
+  s_87d41fafe3675c::t_91d6ef5aa2e4b0 49-71
+apps/web/src/lib/discoveryScanRecovery.ts
+  s_87d41fafe3675c::t_81d15b2bce0a79 46-62
+  s_87d41fafe3675c::t_1057b62d30d62e 2
+apps/api/app/database.py
+  s_87d41fafe3675c::t_e8f3b39e509640 2487,2491-2492
+  s_87d41fafe3675c::t_af621369baefe5 2484
+apps/api/tests/test_discovery_stream_endpoint.py
+  s_87d41fafe3675c::t_e4e95fe619ab21 57
+apps/api/tests/test_phase_a_path_consistency.py
+  s_87d41fafe3675c::t_8122111c0867ca 697-702
+apps/web/src/components/FundDiscoveryPanel.stream-lifecycle.test.tsx
+  s_87d41fafe3675c::t_f541cf844eaf44 436-440,442-443,445-449,456-459
+  s_87d41fafe3675c::t_68b462c32a1cd1 435,441,444,450-454,461-468
+apps/web/src/lib/discoveryStreamApi.ts
+  s_87d41fafe3675c::t_f0f1490b6991c8 52
+  s_87d41fafe3675c::t_b94feadcaddc24 1-10
+  s_87d41fafe3675c::t_6c116bd318b5d7 65-69
+  s_87d41fafe3675c::t_6d292b29963945 135-147,149-169
+  s_87d41fafe3675c::t_fb6973781373c8 298-299,311-323
+deploy/nginx/fundpilot.conf
+  s_87d41fafe3675c::t_0faa7d67f720f4 159-179
+  s_87d41fafe3675c::t_c1467e8ea3f793 88-89
+  s_87d41fafe3675c::t_ade190304e9e60 104-106,127-129,150-152
+apps/api/tests/test_analyze_stream_endpoint.py
+  s_87d41fafe3675c::t_0bdd88cc644204 56
+apps/web/src/lib/discoveryStreamApi.test.ts
+  s_87d41fafe3675c::t_4ce3a065fcbf35 3,8-15,26-40,51,70,79,99-100,178
+  s_87d41fafe3675c::t_9bc0a28bcdf47d 91-93
+apps/web/src/components/FundDiscoveryPanel.tsx
+  s_87d41fafe3675c::t_b11417f6208422 446,448,454-457,461-468
+apps/api/app/main.py
+  s_87d41fafe3675c::t_47203130f0ab14 1316
+  s_87d41fafe3675c::t_b66c38a1afb822 1131
+  s_87d41fafe3675c::t_bac4c95d52efb0 1554
+  s_87d41fafe3675c::t_97d98432e5d099 82
+apps/api/app/services/discovery_streaming.py
+  s_87d41fafe3675c::t_d8ecdd35094f4d 16
+  s_87d41fafe3675c::t_b09095133e706e 994-997
+  s_87d41fafe3675c::t_5f9da9535ae3a7 998-1001
+apps/api/app/services/async_sse.py
+  s_87d41fafe3675c::t_f9891268dcd112 107,111-116
+  s_87d41fafe3675c::t_a1c2f2f734029b 18-26
+apps/web/src/lib/discoveryScanRecovery.test.ts
+  s_87d41fafe3675c::t_b5fae49c59f731 10
+  s_87d41fafe3675c::t_ced3daa6b400dd 1
+  s_87d41fafe3675c::t_5566deb1039c1a 104-111,114-134,136-141
+  s_87d41fafe3675c::t_ed6c56e859afb4 135
+  s_87d41fafe3675c::t_982cf9e30ab514 112-113
+  s_87d41fafe3675c::t_7b513f1f122ca2 6,11-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "67507f15521b81ffbaff475a9c8a0217bd853c7d",
+  "prompts": {},
+  "sessions": {
+    "s_87d41fafe3675c": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "cc585b81-e569-44b4-b7b3-3f440c4efa8a",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
