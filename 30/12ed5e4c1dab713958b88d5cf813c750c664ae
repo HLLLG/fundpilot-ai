@@ -1,0 +1,122 @@
+apps/api/tests/test_holding_adjust_service.py
+  s_c59bff6888678f::t_9332954262a77e 260-263
+  s_c59bff6888678f::t_df1608eb1cf1c2 109,122
+  s_c59bff6888678f::t_e61c54ebb3398b 72-77
+apps/api/app/services/deepseek_client.py
+  s_4e92989f539170::t_76c9865084a8de 545-551
+apps/api/app/services/analysis_facts.py
+  s_4e92989f539170::t_97c6e66be251c8 892
+apps/api/tests/test_holding_share_lock_settle_date.py
+  s_c59bff6888678f::t_7799f83d24679f 146-183
+  s_c59bff6888678f::t_1373d7ae62dd85 1-145,184-412
+apps/api/app/services/sector_opportunity_scoring.py
+  s_4e92989f539170::t_9ab652656ff798 1935-1971,1979,1982-1983
+apps/api/tests/test_daily_trend_entry_policy.py
+  s_4e92989f539170::t_c70a3db12f8d42 1-2,5-118,120-159,161-166,168-175,177-191,194-205,207-208,210-234
+apps/web/src/components/RiskControls.tsx
+  s_4e92989f539170::t_45eb817856150f 28
+  s_4e92989f539170::t_a96a627659fbdc 5
+apps/api/app/db_migrations.py
+  s_4e92989f539170::t_e0e93d60b5dc3a 741-742,744
+apps/api/app/models.py
+  s_c59bff6888678f::t_870932f0724513 187-190
+  s_4e92989f539170::t_6980ea88eb5256 51-52
+apps/api/app/services/holding_amount_sync.py
+  s_c59bff6888678f::t_aa8003721c440a 289,298-299
+  s_c59bff6888678f::t_85b9f945ff03d9 558-560
+  s_c59bff6888678f::t_f39bf19ab870df 677-716
+  s_c59bff6888678f::t_51a592667c4545 722-733,735,738-745,754-756,765
+  s_c59bff6888678f::t_b40599bd2c7f63 300-309
+  s_c59bff6888678f::t_1773111346bdf4 793-795,814-821,830,848,860-862
+  s_c59bff6888678f::t_a006496bce9682 613-637
+  s_c59bff6888678f::t_5b45bdbebb9aed 12-17
+  s_c59bff6888678f::t_ea8ec53b2378a7 340-341,356-377,379-387,394-395,414,417,419-424,426,428-432
+  s_c59bff6888678f::t_44cd9ff4a9d50b 46,48-52,55,60-84
+  s_c59bff6888678f::t_d02e100b9ec989 250-251,256,264,272-274
+apps/api/app/services/holding_adjust_service.py
+  s_c59bff6888678f::t_d20919353c8c9a 169-180,184-188
+  s_c59bff6888678f::t_c4578a86492a32 13,19
+apps/api/app/services/fund_nav_service.py
+  s_c59bff6888678f::t_795e21d1e593d5 95
+  s_c59bff6888678f::t_917dec0fc6fb9f 17-20
+  s_c59bff6888678f::t_bc6817bdc388b3 314
+  s_c59bff6888678f::t_24d32db5563560 385-390,396-400,422-423
+apps/api/tests/test_daily_add_policy.py
+  s_dc01f1a513238b::t_d0b12a0748477c 1
+apps/api/tests/test_report_direction_maturity.py
+  s_dc01f1a513238b::t_d0b12a0748477c 447-448,453
+apps/api/app/mysql_bootstrap.py
+  s_4e92989f539170::t_b94d0be04dabf2 1884
+apps/api/app/services/transaction_ledger.py
+  s_c59bff6888678f::t_bd7127efb83200 285,288-290
+docs/PROJECT_CONTEXT.md
+  s_4e92989f539170::t_18e6af844e68d2 853
+  s_4e92989f539170::t_14253a0fe668a0 941
+  s_4e92989f539170::t_fb11372eb1c684 503
+  s_4e92989f539170::t_ed1bc596537e7f 1146
+  s_4e92989f539170::t_68a42587cbc2c4 18-19
+  s_4e92989f539170::t_ab1266be1e9a98 628
+  s_4e92989f539170::t_d91df490ebdc3c 321
+  s_4e92989f539170::t_d48677242fec32 335
+  s_4e92989f539170::t_f5ae30c683c752 1088,1090
+  s_4e92989f539170::t_ac1db47e12571b 1105
+  s_4e92989f539170::t_898cba2f0ebc5f 1361
+  s_4e92989f539170::t_f8a13c246c5c70 1378-1380
+  s_4e92989f539170::t_376e2707d6b57a 308
+  s_4e92989f539170::t_b04ab715c04789 398-399
+  s_4e92989f539170::t_78f2e5066cd6b0 406-407
+  s_4e92989f539170::t_67942fd037d945 475
+  s_4e92989f539170::t_9d052c353899ff 7
+apps/api/app/services/analysis_prompt.py
+  s_4e92989f539170::t_b009377a074ad0 38
+apps/api/app/services/recommendations.py
+  s_4e92989f539170::t_b9db3d7cd03be8 220
+  s_4e92989f539170::t_c7d2bd73fed883 201-204
+apps/api/app/services/discovery_guard.py
+  s_4e92989f539170::t_d5d30bf55a2b7d 856-858
+apps/web/src/lib/storage.ts
+  s_4e92989f539170::t_c1755120f8fef3 100
+apps/api/app/services/recommendation_guard.py
+  s_4e92989f539170::t_94638adb6dd74c 369,372,388-394
+  s_4e92989f539170::t_ae6a7cb8813066 2053-2054
+  s_4e92989f539170::t_eb123abbeb88bb 1938
+  s_4e92989f539170::t_65c62f5e25b8b3 1183-1185,1188
+  s_4e92989f539170::t_ba80700b646e21 1313,1320
+  s_4e92989f539170::t_747a9e96808698 233
+  s_4e92989f539170::t_ed96a54542f245 481
+  s_4e92989f539170::t_b002cfba042094 52
+  s_4e92989f539170::t_feabc87c6c098c 955-956
+  s_4e92989f539170::t_fc89b77162ac58 1321
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "3012ed5e4c1dab713958b88d5cf813c750c664ae",
+  "prompts": {},
+  "sessions": {
+    "s_4e92989f539170": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "1ffdb278-3f5d-4ac7-9da6-e4769ab74737",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_c59bff6888678f": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "e75be9c1-1d18-47bb-b71b-4a49c521cd07",
+        "model": "claude-fable-5"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    },
+    "s_dc01f1a513238b": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "cefad5fa-2ca9-4922-9688-1f8bac1b1e30",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
