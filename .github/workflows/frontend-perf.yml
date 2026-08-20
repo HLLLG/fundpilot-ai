@@ -101,6 +101,7 @@ jobs:
 
   web-vitals:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: apps/web
@@ -116,7 +117,9 @@ jobs:
         env:
           NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
       - name: Install Playwright chromium
-        run: npx playwright install --with-deps chromium
+        uses: ./.github/actions/install-playwright-chromium
+        with:
+          working-directory: apps/web
       - name: Production static export
         run: npm run build
         env:

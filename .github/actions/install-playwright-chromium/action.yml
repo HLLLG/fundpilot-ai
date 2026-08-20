@@ -1,0 +1,57 @@
+name: Install Playwright Chromium
+description: Install Chromium and OS deps without hanging on Azure apt mirrors.
+
+inputs:
+  working-directory:
+    description: Directory that already ran npm ci and has Playwright on PATH.
+    default: apps/web
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve Playwright version
+      working-directory: ${{ inputs.working-directory }}
+      shell: bash
+      run: |
+        version=$(node -p "require('playwright-core/package.json').version")
+        echo "PLAYWRIGHT_VERSION=$version" >> "$GITHUB_ENV"
+        echo "Playwright $version"
+
+    - name: Cache Playwright browsers
+      uses: actions/cache@v4
+      id: playwright-cache
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}-chromium
+
+    - name: Keep apt from stalling on Azure mirrors
+      shell: bash
+      run: |
+        printf '%s\n' \
+          'Acquire::http::Timeout "30";' \
+          'Acquire::https::Timeout "30";' \
+          'Acquire::Retries "3";' \
+          | sudo tee /etc/apt/apt.conf.d/99ci-timeout >/dev/null
+        sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) \
+          -exec sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' {} +
+
+    - name: Install Playwright OS dependencies
+      working-directory: ${{ inputs.working-directory }}
+      shell: bash
+      run: timeout 7m npx playwright install-deps chromium
+
+    - name: Install Playwright Chromium
+      if: steps.playwright-cache.outputs.cache-hit != 'true'
+      working-directory: ${{ inputs.working-directory }}
+      shell: bash
+      env:
+        PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: "120000"
+      run: |
+        for attempt in 1 2 3; do
+          if timeout 7m npx playwright install chromium; then
+            exit 0
+          fi
+          echo "Playwright Chromium download failed on attempt $attempt"
+          sleep 8
+        done
+        exit 1
