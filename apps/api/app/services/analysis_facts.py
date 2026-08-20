@@ -16,7 +16,6 @@ from app.models import (
     TopicBrief,
 )
 from app.request_context import try_get_request_user_id
-from app.services.investment_presets import take_profit_threshold_percent
 from app.services.holding_estimates import build_holding_display_metrics
 from app.services.holding_metrics import (
     compute_estimated_daily_return_percent,
@@ -890,11 +889,8 @@ def build_analysis_facts(
             "concentration_limit_percent": profile.concentration_limit_percent,
             # Freeze the user's transaction-cost assumption for point-in-time
             # outcome evaluation. It is never presented as an actual platform fee.
+            # Take-profit sliders are no longer a live sell trigger.
             "round_trip_fee_percent": profile.round_trip_fee_percent,
-            # 止盈线常驻披露（2026-08 决策风格收敛）：手续费+净赚目标是用户偏好数字，
-            # 数据推不出来，因此始终喂给模型与守卫，不再只在激进模式下出现。
-            "min_net_profit_percent": profile.min_net_profit_percent,
-            "take_profit_threshold_percent": take_profit_threshold_percent(profile),
             "hold_days_target": profile.hold_days_target,
         },
         "alerts": [alert.model_dump() for alert in risk.alerts],

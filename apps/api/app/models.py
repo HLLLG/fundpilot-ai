@@ -14,8 +14,6 @@ TransactionSharesSource = Literal["user_confirmed", "derived_amount_nav"]
 
 Action = Literal["watch", "pause_add", "staggered_add", "risk_review"]
 RiskLevel = Literal["low", "medium", "high"]
-SwingMonitorScope = Literal["holdings", "full_market", "both"]
-SwingAlertType = Literal["take_profit", "dip_buy", "pullback", "sector_dip"]
 
 
 class Holding(BaseModel):
@@ -50,7 +48,8 @@ class InvestorProfile(BaseModel):
 
     原 `style`/`horizon` 自由文本、`decision_style` 三选一与 `investment_preset` 预设
     已删除：信号强度由确定性打分层（趋势/资金/方向退出）决定，这里只保留数据推不出的
-    偏好数字——浮亏线、集中度、止盈线（手续费+净赚）与预计持有天数（费用档位用）。
+    偏好数字——浮亏线、集中度、手续费假设与预计持有天数（费用档位用）。
+    止盈线不再作为减仓触发条件，存量字段仅供复盘费用口径兼容。
     Pydantic 默认忽略未知字段，历史存量 payload 里的旧字段可直接解析。
     """
 
@@ -62,8 +61,6 @@ class InvestorProfile(BaseModel):
     round_trip_fee_percent: float = 1.5
     min_net_profit_percent: float = 1.0
     hold_days_target: int = 7
-    swing_alerts_enabled: bool = False
-    swing_monitor_scope: SwingMonitorScope = "both"
 
 
 class RiskAlert(BaseModel):
@@ -187,6 +184,10 @@ class FundProfile(BaseModel):
     profit_accrual_deferred_until: str | None = None
     shares_baseline_date: str | None = None
     profit_settled_trade_date: str | None = None
+    # 当前 settled_holding_amount 对应的净值日期（该金额=该交易日收盘结算值）。
+    # 份额=金额÷净值 必须用同一天的净值；同步/结算写金额时一并记录，
+    # 便于净值稍后才公布时仍能用正确日期补锁份额。None=历史数据未知。
+    settled_amount_trade_date: str | None = None
     sector_name: str | None = None
     sector_return_percent: float | None = None
     intraday_index_name: str | None = None
@@ -594,32 +595,6 @@ class RefreshSectorQuotesRequest(BaseModel):
     holdings: list[Holding] = Field(min_length=1)
     force_refresh: bool = False
     budget: Literal["fast", "accurate"] = "fast"
-
-
-class SwingAlertItem(BaseModel):
-    alert_key: str
-    alert_type: SwingAlertType
-    title: str
-    message: str
-    priority: Literal["high", "medium"] = "medium"
-    fund_code: str | None = None
-    fund_name: str | None = None
-    sector_label: str | None = None
-    is_new: bool = False
-
-
-class SwingAlertEvaluateRequest(BaseModel):
-    holdings: list[Holding] = Field(default_factory=list)
-    profile: InvestorProfile = Field(default_factory=InvestorProfile)
-    monitor_scope: SwingMonitorScope | None = None
-
-
-class SwingAlertEvaluateResponse(BaseModel):
-    trade_date: str
-    session_kind: str
-    alerts_enabled: bool
-    items: list[SwingAlertItem] = Field(default_factory=list)
-    new_count: int = 0
 
 
 class SaveSectorMappingRequest(BaseModel):

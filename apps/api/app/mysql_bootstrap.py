@@ -1193,17 +1193,6 @@ def _ensure_mysql_schema_locked(
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
-        CREATE TABLE IF NOT EXISTS swing_alert_fired (
-            userId BIGINT NOT NULL,
-            trade_date VARCHAR(16) NOT NULL,
-            alert_key VARCHAR(255) NOT NULL,
-            payload LONGTEXT NOT NULL,
-            fired_at VARCHAR(64) NOT NULL,
-            PRIMARY KEY (userId, trade_date, alert_key),
-            INDEX idx_swing_alert_user_date (userId, trade_date, fired_at)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """,
-        """
         CREATE TABLE IF NOT EXISTS sector_direction_states (
             trade_date VARCHAR(16) NOT NULL,
             sector_label VARCHAR(255) NOT NULL,
@@ -1892,6 +1881,7 @@ def _ensure_mysql_schema_locked(
             f"MySQL schema v{stored_schema_version} is newer than this application "
             f"(v{MYSQL_SCHEMA_VERSION})"
         )
+    cursor.execute("DROP TABLE IF EXISTS swing_alert_fired")
     if callable(fetchone):
         user_columns = {
             "authVersion": "INT NOT NULL DEFAULT 1",

@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 
 TTL_HIT = 86400   # 24h — nav published, won't change
 TTL_MISS = 300    # 5min — nav not yet published, retry soon
+# 日期键（某基金某交易日的净值/涨跌幅）一旦写入就不可变。持久层读它们用更长的
+# TTL：24h 会让「昨晚 20:00 写入、今晚 21:00 要用」的确定日期净值凭空过期，
+# cache-only 路径（OCR 确认锁份额等）就会拿不到本该存在的数据。
+TTL_DATED_PERSIST = 14 * 86400
 _OFFICIAL_NAV_CACHE_VERSION = "v1"
 _NAV_CACHE_MAX_ENTRIES = 4096
 _UNIT_NAV_CACHE_MAX_ENTRIES = 4096
@@ -88,7 +92,7 @@ def _cache_nav_return(fund_code: str, trade_date: str, value: float | None, ttl:
 def _cached_persisted_nav_return(fund_code: str, trade_date: str) -> float | None:
     payload = get_spot_snapshot(
         _official_nav_cache_key(fund_code, trade_date),
-        ttl_seconds=TTL_HIT,
+        ttl_seconds=TTL_DATED_PERSIST,
     )
     if not payload or payload.get("value") is None:
         return None
@@ -307,7 +311,7 @@ def _persisted_unit_nav(fund_code: str) -> float | None:
 def _persisted_dated_unit_nav(fund_code: str, trade_date: str) -> float | None:
     payload = get_spot_snapshot(
         _dated_unit_nav_persist_key(fund_code, trade_date),
-        ttl_seconds=TTL_HIT,
+        ttl_seconds=TTL_DATED_PERSIST,
     )
     if not payload or payload.get("value") is None:
         return None
@@ -378,12 +382,22 @@ def get_latest_unit_nav(fund_code: str, *, allow_fetch: bool = True) -> float | 
         return None
 
 
-def get_unit_nav_on_date(fund_code: str, trade_date: str) -> float | None:
+def get_unit_nav_on_date(
+    fund_code: str,
+    trade_date: str,
+    *,
+    allow_fetch: bool = True,
+) -> float | None:
     """返回该交易日的官方单位净值（精确匹配净值日期），未发布/不存在返回 None。
 
     持仓「已更新」走东财最新净值表的日涨跌；进行中交易入账必须用同一天的单位净值。
     历史净值接口常晚于这张表，所以官方日涨跌已缓存时优先用同表单位净值，避免
     「净值已更新、交易还停在进行中」。
+
+    ``allow_fetch=False``：仅读内存/持久缓存，不触发 AkShare 子进程（OCR 快速确认
+    等对延迟敏感的路径）。宁可返回 None 让调用方延迟处理，也不能退回「最近一条
+    净值」这种无日期保证的数据——份额=金额÷净值时，用错一天的净值会把误差永久
+    锁进份额。
     """
     if not fund_code or fund_code == "000000" or not trade_date:
         return None
@@ -404,6 +418,9 @@ def get_unit_nav_on_date(fund_code: str, trade_date: str) -> float | None:
     if companion is not None:
         _cache_unit_nav(fund_code, companion, as_of=trade_date)
         return companion
+
+    if not allow_fetch:
+        return None
 
     if found and value is None:
         return None

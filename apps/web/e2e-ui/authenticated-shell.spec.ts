@@ -259,8 +259,6 @@ async function installStableApiStubs(
         round_trip_fee_percent: 1.5,
         min_net_profit_percent: 1,
         hold_days_target: 7,
-        swing_alerts_enabled: false,
-        swing_monitor_scope: "both",
       });
       return;
     }

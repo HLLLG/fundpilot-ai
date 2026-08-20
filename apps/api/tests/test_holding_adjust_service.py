@@ -69,7 +69,12 @@ def test_amount_edit_rebases_estimated_shares_and_survives_next_refresh(
         "get_effective_trade_date",
         lambda: "2026-07-16",
     )
-    monkeypatch.setattr(holding_adjust_service, "get_latest_unit_nav", lambda _code: 2.0)
+    # 份额换算必须用与金额同一净值日期（当日已公布 → D=当日）的单位净值。
+    monkeypatch.setattr(
+        holding_adjust_service,
+        "get_unit_nav_on_date",
+        lambda _code, date, **_kwargs: 2.0 if date == "2026-07-16" else None,
+    )
     monkeypatch.setattr(holding_adjust_service, "save_fund_profile", save_profile)
     monkeypatch.setattr(holding_adjust_service, "enrich_holdings_estimates", lambda rows: rows)
     monkeypatch.setattr(holding_adjust_service, "get_portfolio_summary", lambda: None)
@@ -101,6 +106,7 @@ def test_amount_edit_rebases_estimated_shares_and_survives_next_refresh(
     assert current_profile.holding_shares == 625.0
     assert current_profile.shares_baseline_date == "2026-07-16"
     assert current_profile.profit_settled_trade_date == "2026-07-16"
+    assert current_profile.settled_amount_trade_date == "2026-07-16"
     assert current_profile.holding_cost == pytest.approx(1.92)
     assert saved_snapshot["rows"]
 
@@ -113,7 +119,7 @@ def test_amount_edit_rebases_estimated_shares_and_survives_next_refresh(
     )
     monkeypatch.setattr(
         holding_amount_sync,
-        "get_latest_unit_nav",
+        "get_unit_nav_on_date",
         lambda *_args, **_kwargs: 2.0,
     )
     refreshed, _ = holding_amount_sync._sync_one_holding(
@@ -248,6 +254,11 @@ def test_confirmed_addon_updates_existing_amount_without_live_nav(
     monkeypatch.setattr(
         holding_amount_sync,
         "get_latest_unit_nav",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        holding_amount_sync,
+        "get_unit_nav_on_date",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(

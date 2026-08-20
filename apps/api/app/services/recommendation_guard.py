@@ -49,6 +49,7 @@ from app.services.sector_opportunity_scoring import (
     _SECTOR_GROUPS,
     _direction_identity,
     _sector_group,
+    true_overheat_add_block_reason,
 )
 from app.services.signal_guard_policy import resolve_signal_guard_policy
 from app.services.recommendations import build_offline_fund_recommendation
@@ -229,6 +230,7 @@ def apply_recommendation_guards(
                 facts_row,
                 sector_opportunity,
                 facts=facts,
+                avoid_chasing=request.profile.avoid_chasing,
             ),
         )
         proposal_enforced = settings.daily_action_proposal_mode == "enforced"
@@ -364,9 +366,10 @@ def apply_recommendation_guards(
                     f"当前采用模型草案「{llm_action}」。"
                 )
 
-        # 提升之后再拦：载体不合格 / 加仓间隔不能被「门都开着」抬回去。
+        # 提升之后再拦：载体不合格 / 加仓间隔 / 结构化过热不能被「门都开着」抬回去。
         vehicle_note = None
         interval_note = None
+        overheat_note = None
         if _execution_direction(normalized) == "add" and _vehicle_quality_blocks_add(
             vehicle_quality
         ):
@@ -381,6 +384,14 @@ def apply_recommendation_guards(
         if _execution_direction(normalized) == "add" and interval_block_reason:
             normalized = "暂停追涨"
             interval_note = interval_block_reason
+            proposal_note = None
+        overheat_block_reason = true_overheat_add_block_reason(
+            sector_opportunity,
+            strict=request.profile.avoid_chasing,
+        )
+        if _execution_direction(normalized) == "add" and overheat_block_reason:
+            normalized = "暂停追涨"
+            overheat_note = overheat_block_reason
             proposal_note = None
 
         allowed_actions = {
@@ -467,6 +478,7 @@ def apply_recommendation_guards(
             or escalation_note
             or vehicle_note
             or interval_note
+            or overheat_note
             or position_note
             or snapshot_note
             or reversal_note
@@ -940,9 +952,9 @@ def _fund_evidence_is_usable(evidence: dict | None) -> bool:
 # ——此前荐基对一个过热方向只会按 40% 试仓，日报却给满档加仓，两个界面对同一天同一板块
 # 给出互相矛盾的仓位。
 _ENTRY_STATE_READY = "ready_to_start"
-#: 这些档位不构成"现在可以加"的方向依据。`forming` 是"条件形成中，暂不下单"，
+#: 这些档位默认不构成"现在可以加"的方向依据。`forming` 是"条件形成中"，
+#: 但 `probability_early_probe_eligible` 时视为潜伏/蓄势，允许按试仓系数小额提前布局。
 #: `invalid` 是"趋势或资金未通过"，`ready_on_pullback` 是"方向成立但当前位置不宜追"。
-#: 三者在荐基侧都不给执行资格，日报同样不应据此加仓。
 _ENTRY_STATES_BLOCKING_ADD = {
     "forming": "板块方向条件仍在形成中",
     "invalid": "板块趋势或资金未通过入场线",
@@ -1168,13 +1180,12 @@ def _entry_state_add_block_reason(sector_opportunity: dict | None) -> str | None
     held_raw_state = _hysteresis_held_raw_entry_state(sector_opportunity)
     if held_raw_state is None and state == _ENTRY_STATE_READY:
         return None
-    # 资金刚转强的试仓通道已经过门槛标定，日报继续开门，否则同一板块会和荐基打架。
-    # 放在滞回判定之前是刻意的：通道由当日原始档位开出，滞回不影响成立性
-    # （2026-08-13 数字经济参与度 29.24，今日资金转强，按 40% 试仓系数拿到小额加仓）。
-    #
-    # `probability_early_probe_eligible` 刻意**不再**给日报推门：趋势成形信号分未经校准，
-    # 不是收益概率。荐基仍可用它开第一笔试仓；日报只披露、不加现持仓。
+    # 资金刚转强、以及潜伏期提前试仓，两条通道都已经过门槛标定。日报继续开门，
+    # 否则同一板块会和荐基打架：荐基已经按 first_tranche_scale 试仓，日报却把现持仓
+    # 锁死在观察。放在滞回判定之前是刻意的：通道由当日原始档位开出。
     if sector_opportunity.get("flow_improving_probe_eligible") is True:
+        return None
+    if sector_opportunity.get("probability_early_probe_eligible") is True:
         return None
     if held_raw_state is not None:
         return _hysteresis_hold_add_block_reason(sector_opportunity)
@@ -1299,12 +1310,15 @@ def _additional_add_blocks(
     sector_opportunity: dict | None,
     *,
     facts: dict | None,
+    avoid_chasing: bool = False,
 ) -> tuple[str, ...]:
     blocks: list[str] = []
     if _vehicle_quality_blocks_add(vehicle_quality):
         blocks.append("vehicle_quality_not_eligible")
     if _recent_buy_add_block_reason(facts_row, sector_opportunity, facts=facts):
         blocks.append("add_interval_not_elapsed")
+    if true_overheat_add_block_reason(sector_opportunity, strict=avoid_chasing):
+        blocks.append("true_overheat")
     return tuple(blocks)
 
 
@@ -1921,7 +1935,7 @@ def _promote_to_proposed_add(
 def _offline_action_is_a_risk_veto(offline_action: str) -> bool:
     """离线规则引擎这次是否真的**触发**了一条风险意见。
 
-    离线构建器的 `action` 初值是「观察」，只有命中集中度超限、止盈线+回吐、追高、深亏
+    离线构建器的 `action` 初值是「观察」，只有命中集中度超限、深亏定投
     等具体条件时才改写成别的动作。所以「观察」是它的**无意见默认值**，不是一个结论：
     离线给出非默认动作时才参与封顶（风险否决权）；停在「观察」时不参与，把判断交给
     方向层、证据层与风险层这些真正看得见证据的门禁。
@@ -2036,8 +2050,8 @@ def _portfolio_drawdown_cap_reason(
 
 def _max_allowed_bucket(
     risk: RiskAssessment,
-    holding,
-    request: AnalysisRequest,
+    _holding,
+    _request: AnalysisRequest,
     *,
     portfolio_drawdown_capped: bool = False,
 ) -> int:
@@ -2048,10 +2062,6 @@ def _max_allowed_bucket(
     # 峰谷回撤封顶：它衡量的是这个组合实际回吐过多少，与「是否愿意追当日涨幅」无关。
     if portfolio_drawdown_capped:
         return 2
-    if holding is not None and request.profile.avoid_chasing:
-        sector = getattr(holding, "sector_return_percent", None)
-        if sector is not None and sector > 5:
-            return 2
     return 3
 
 

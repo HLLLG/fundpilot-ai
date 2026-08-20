@@ -138,9 +138,6 @@ export type Holding = {
   holding_days?: number | null;
 };
 
-export type SwingMonitorScope = "holdings" | "full_market" | "both";
-export type SwingAlertType = "take_profit" | "dip_buy" | "pullback" | "sector_dip";
-
 // 2026-08 决策风格收敛：style/horizon 自由文本、decision_style 三选一与
 // investment_preset 预设已删除，只保留数据推不出的偏好数字。
 export type InvestorProfile = {
@@ -152,28 +149,6 @@ export type InvestorProfile = {
   round_trip_fee_percent?: number;
   min_net_profit_percent?: number;
   hold_days_target?: number;
-  swing_alerts_enabled?: boolean;
-  swing_monitor_scope?: SwingMonitorScope;
-};
-
-export type SwingAlertItem = {
-  alert_key: string;
-  alert_type: SwingAlertType;
-  title: string;
-  message: string;
-  priority: "high" | "medium";
-  fund_code?: string | null;
-  fund_name?: string | null;
-  sector_label?: string | null;
-  is_new: boolean;
-};
-
-export type SwingAlertEvaluateResponse = {
-  trade_date: string;
-  session_kind: string;
-  alerts_enabled: boolean;
-  items: SwingAlertItem[];
-  new_count: number;
 };
 
 export type AnalysisMode = "fast" | "deep";
@@ -3617,25 +3592,6 @@ export async function saveInvestorProfileRemote(profile: InvestorProfile): Promi
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(profile),
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
-export async function evaluateSwingAlerts(
-  holdings: Holding[],
-  profile: InvestorProfile,
-): Promise<SwingAlertEvaluateResponse> {
-  const response = await apiFetch(`${API_BASE}/api/swing-alerts/evaluate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      holdings,
-      profile,
-      monitor_scope: profile.swing_monitor_scope ?? "both",
-    }),
   });
   if (!response.ok) {
     throw new Error(await response.text());

@@ -97,7 +97,7 @@ export function normalizeInvestorProfile(
       : fallback.expected_investment_amount ?? DEFAULT_EXPECTED_INVESTMENT_AMOUNT;
 
   // 2026-08 决策风格收敛：存量 localStorage 里的 style/horizon/decision_style/
-  // investment_preset 字段在这里被投影掉（不再出现在返回对象里），无需显式迁移。
+  // investment_preset 以及已删除的盯盘字段在这里被投影掉，无需显式迁移。
   return {
     max_drawdown_percent: Number(source.max_drawdown_percent ?? fallback.max_drawdown_percent),
     concentration_limit_percent: Number(
@@ -113,13 +113,6 @@ export function normalizeInvestorProfile(
       source.min_net_profit_percent ?? fallback.min_net_profit_percent ?? 1.0,
     ),
     hold_days_target: Number(source.hold_days_target ?? fallback.hold_days_target ?? 7),
-    swing_alerts_enabled: source.swing_alerts_enabled ?? fallback.swing_alerts_enabled ?? false,
-    swing_monitor_scope:
-      source.swing_monitor_scope === "holdings" ||
-      source.swing_monitor_scope === "full_market" ||
-      source.swing_monitor_scope === "both"
-        ? source.swing_monitor_scope
-        : fallback.swing_monitor_scope ?? "both",
   };
 }
 

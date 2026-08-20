@@ -282,9 +282,12 @@ def compute_effective_shares_map(
             continue
         code = profile.fund_code
         if code not in effective_by_code:
-            if profile.holding_shares is None:
+            if profile.holding_shares is None and not profile.settled_amount_trade_date:
                 effective_by_code[code] = 0.0
             else:
+                # settled_amount_trade_date 已记录但份额待补锁（同步时 D 日净值
+                # 未出）：OCR 金额已包含历史成交，不能从 0 份额叠流水，否则
+                # 覆盖表会把整笔持仓错算成最近几笔交易。
                 continue
         effective_by_code[code] += tx.shares_delta
 

@@ -198,62 +198,18 @@ def build_offline_fund_recommendation(
 ) -> FundRecommendation:
     """唯一的离线规则构建器（2026-08 起不再按决策风格分流）。
 
-    原战术/激进两个专用构建器已删除；其中真正数据驱动的一条规则并入这里：
-    浮盈已覆盖扣费止盈线 **且** 出现回吐信号（隔日回吐/盘中冲高回落）时给出止盈
-    评估——单独越线不触发，避免把长线赢家在阈值处机械卖飞。
+    离线层只处理不依赖板块成熟度快照的硬约束：集中度超限、深亏定投。
+    止盈线不再触发减仓；当日已涨也不再机械暂停——减仓看方向退出/载体质量，
+    加仓看潜伏试仓或趋势仍强且未结构化过热，由 guard 与动作提议消费 facts。
+    「观察」是无意见默认值，不是一个结论。
     """
-    from app.services.holding_estimates import compute_estimated_holding_return_percent
-    from app.services.investment_presets import take_profit_threshold_percent
-    from app.services.sector_intraday_summary import summarize_sector_intraday_for_holding
-    from app.services.sector_momentum import build_sector_momentum_context
-
     action = "观察"
     points: list[str] = []
-
-    take_profit_line = take_profit_threshold_percent(profile)
-    est_holding_return = compute_estimated_holding_return_percent(holding)
-    momentum = build_sector_momentum_context(holding, nav_trend)
-    # 只读缓存：离线构建器在守卫/兜底路径逐持仓执行，缓存 miss 时绝不打行情网络
-    # （facts 阶段已预热同一缓存；miss 即当作无分时信号，不触发止盈判定）。
-    intraday = summarize_sector_intraday_for_holding(holding, cache_only=True)
-    reversal_signal = bool(
-        (momentum and momentum.get("pattern_label") == "two_day_reversal_down")
-        or (intraday and intraday.get("pattern_label") == "intraday_pullback")
-    )
 
     if weight_percent > profile.concentration_limit_percent:
         action = "减仓评估"
         points.append(
             f"仓位 {weight_percent:.1f}% 超过集中度上限 {profile.concentration_limit_percent:.0f}%，优先降仓。"
-        )
-    elif (
-        est_holding_return is not None
-        and est_holding_return >= take_profit_line
-        and reversal_signal
-    ):
-        action = "减仓评估"
-        reversal_label = (momentum or {}).get("pattern_label") or (intraday or {}).get(
-            "pattern_label"
-        )
-        points.append(
-            f"持有收益约 {est_holding_return:+.2f}% 已覆盖扣费止盈线 {take_profit_line:.1f}%"
-            f"（手续费+净赚目标），且出现回吐信号（{reversal_label}），建议评估分批止盈。"
-        )
-    elif holding.sector_return_percent is not None and holding.sector_return_percent > 5:
-        action = "暂停追涨"
-        points.append(
-            f"关联板块当日 +{holding.sector_return_percent:.2f}%，避免追高，等待回落再考虑分批。"
-        )
-    estimated_daily = compute_estimated_daily_return_percent(holding)
-    if (
-        estimated_daily is not None
-        and holding.daily_return_percent is None
-        and estimated_daily > 5
-        and action == "观察"
-    ):
-        action = "暂停追涨"
-        points.append(
-            f"估算当日涨跌约 +{estimated_daily:.2f}%（板块+昨日持有收益率），避免追涨。"
         )
     elif (holding.holding_return_percent or holding.return_percent) < -5 and profile.prefer_dca:
         action = "分批加仓"
@@ -261,6 +217,7 @@ def build_offline_fund_recommendation(
     else:
         points.append("未触发硬性风控，维持观察，确认板块与净值后再动。")
 
+    estimated_daily = compute_estimated_daily_return_percent(holding)
     sector = holding.sector_name or "未知板块"
     daily = "-" if holding.daily_profit is None else f"{holding.daily_profit:.2f}"
     if holding.daily_return_percent is not None:

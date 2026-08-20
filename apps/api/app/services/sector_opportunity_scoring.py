@@ -1932,6 +1932,43 @@ def _entry_maturity_v3(
     }
 
 
+def true_overheat_add_block_reason(
+    sector_opportunity: dict | None,
+    *,
+    strict: bool = False,
+) -> str | None:
+    """真正过热才挡住加仓；趋势仍强的中途上涨本身不构成追高。
+
+    过热标记继续只缩小本次投入（`first_tranche_scale`）。这里只回答"还能不能加"：
+
+    * 默认：主线拥挤，或至少两条短期加速标记，才暂停加仓；
+    * `strict=True`（用户打开拒绝追高）：任意一条加速标记即可暂停；
+    * 单日偏强、浮盈已扩大、贴近高点但没有第二条加速腿——允许中途上车。
+    """
+    if not isinstance(sector_opportunity, dict):
+        return None
+    flags = [
+        str(item).strip()
+        for item in sector_opportunity.get("overheat_flags") or []
+        if str(item).strip()
+    ]
+    gates = sector_opportunity.get("entry_gate_inputs")
+    status = ""
+    if isinstance(gates, dict):
+        status = str(gates.get("mainline_status") or "")
+    if not status:
+        regime = sector_opportunity.get("mainline_regime")
+        if isinstance(regime, dict):
+            status = str(regime.get("status") or "")
+    crowded = status == "crowded" or any("拥挤" in flag for flag in flags)
+    if crowded or len(flags) >= 2:
+        detail = "、".join(flags[:2]) or "主线拥挤"
+        return f"方向已出现结构化过热（{detail}），本轮不追高加仓。"
+    if strict and flags:
+        return f"拒绝追高模式下命中短期加速（{flags[0]}），本轮等待回踩。"
+    return None
+
+
 def _overheat_flags(
     *,
     change_1d: float | None,
@@ -1939,11 +1976,11 @@ def _overheat_flags(
     status: str,
     distance_high: float | None,
 ) -> list[str]:
-    """短期加速/拥挤的**风险披露**，不参与打分也不参与门禁。
+    """短期加速/拥挤的**风险披露**，默认不单独否决加仓。
 
     阈值沿用 v2，刻意不按实测结果调整：实测显示这些条件在样本区间里是正向信号，但那
-    来自单一动量区间，反过来押注同样是未经验证的下注。这里只是把"拦截"改成"说明 +
-    本次投入更小"。
+    来自单一动量区间，反过来押注同样是未经验证的下注。单条标记只缩小本次投入；
+    是否暂停加仓见 `true_overheat_add_block_reason`（拥挤或至少两条标记）。
     """
     flags: list[str] = []
     if change_1d is not None and change_1d >= 4.0:

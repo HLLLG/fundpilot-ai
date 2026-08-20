@@ -9,8 +9,13 @@ from app.services.fund_nav_service import (
     get_cached_official_nav_return,
     get_latest_unit_nav,
     get_official_nav_return,
+    get_unit_nav_on_date,
 )
-from app.services.trading_session import get_effective_trade_date
+from app.services.trading_session import (
+    build_trading_session,
+    get_effective_trade_date,
+    get_previous_trade_date,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +43,45 @@ def _compute_rolled_settled_amount(
     official_return: float,
     shares: float | None,
     official_unit_nav: float | None,
+    allow_baseline_roll: bool = True,
 ) -> float | None:
-    """官方净值公布后滚入结算额：优先 shares×单位净值，否则用昨结算×(1+日涨跌%)。"""
+    """官方净值公布后滚入结算额：优先 shares×单位净值，否则用昨结算×(1+日涨跌%)。
+
+    ``allow_baseline_roll=False``：结算基线不是上一交易日的值（比如隔了多个
+    交易日才恢复），乘一次当日涨跌会漏掉中间几天，此时只接受 shares×当日净值。
+    """
     if shares and official_unit_nav and official_unit_nav > 0:
         return round(shares * official_unit_nav, 2)
-    if baseline > 0:
+    if allow_baseline_roll and baseline > 0:
         return round(baseline * (1 + official_return / 100), 2)
     return None
+
+
+def _amount_settle_date(holding: Holding, *, session: dict) -> str:
+    """同步进来的持有金额对应的净值日期 D（该金额=D 日收盘结算值）。
+
+    - 非交易日 / 开盘前：effective_trade_date 已回退到最近一个已收盘的交易日，
+      支付宝金额就是那天的结算值 → D = effective_trade_date；
+    - 交易日盘中/收盘后：支付宝金额默认仍是上一交易日结算值 → D = 上一交易日；
+      只有截图带「今日收益更新」（OCR 已写入官方日收益）或金额已标记含今日
+      （amount_includes_today）时，才是 D = 当日。
+    """
+    effective = str(session.get("effective_trade_date") or "") or get_effective_trade_date()
+    kind = str(session.get("session_kind") or "")
+    if kind not in {
+        "trading_day_intraday",
+        "trading_day_pre_close",
+        "trading_day_after_close",
+    }:
+        return effective
+    if holding.amount_includes_today:
+        return effective
+    if (
+        holding.daily_return_percent_source == "official_nav"
+        and holding.daily_profit is not None
+    ):
+        return effective
+    return get_previous_trade_date(effective) or effective
 
 
 def _imputed_market_unit_cost(holding: Holding, shares: float) -> float | None:
@@ -210,10 +247,13 @@ def bootstrap_holding_baselines(
         and holding.holding_amount > 0
     }
     profiles_by_code = _load_profiles_by_code(codes)
+    session = build_trading_session()
+    effective_trade_date = str(session.get("effective_trade_date") or "")
     updated: list[Holding] = []
     for holding in holdings:
         code = (holding.fund_code or "").strip()
         profile = profiles_by_code.get(code)
+        settle_date = _amount_settle_date(holding, session=session)
         latest_profile = _bootstrap_profile_baseline(
             holding,
             profile=profile,
@@ -221,6 +261,7 @@ def bootstrap_holding_baselines(
             persist_profile=persist_profiles,
             force_reset_shares=force_reset_shares,
             skip_network=skip_network,
+            settle_date=settle_date,
         )
         if latest_profile is not None:
             profiles_by_code[latest_profile.fund_code.strip()] = latest_profile
@@ -228,7 +269,9 @@ def bootstrap_holding_baselines(
             holding.model_copy(
                 update={
                     "settled_holding_amount": holding.holding_amount,
-                    "amount_includes_today": False,
+                    # 金额是否已含 effective 交易日的涨跌：决定当日收益用
+                    # r/100（昨结算基数）还是 r/(100+r)（已含今日基数）。
+                    "amount_includes_today": settle_date == effective_trade_date,
                 }
             )
         )
@@ -243,6 +286,7 @@ def _bootstrap_profile_baseline(
     persist_profile: bool,
     force_reset_shares: bool,
     skip_network: bool = False,
+    settle_date: str | None = None,
 ) -> FundProfile | None:
     code = (holding.fund_code or "").strip()
     if not code or code == "000000" or holding.holding_amount <= 0:
@@ -250,6 +294,19 @@ def _bootstrap_profile_baseline(
 
     if profile is None:
         return None
+
+    if settle_date is None:
+        settle_date = _amount_settle_date(holding, session=build_trading_session())
+    # 部分截图同步时，快照里"搭车"的旧持仓行金额未变，只是跟着走一遍 bootstrap。
+    # 它们身上的 amount_includes_today/官方日收益是上一次滚动留下的旧信号，按它
+    # 推日期会把 T-1 的金额标成 T、导致当晚结算被误跳过。金额与档案完全一致时，
+    # 保留档案里已记录的净值日期。
+    if (
+        profile.settled_amount_trade_date
+        and profile.settled_holding_amount is not None
+        and abs(profile.settled_holding_amount - holding.holding_amount) <= 0.005
+    ):
+        settle_date = profile.settled_amount_trade_date
 
     from app.services.profit_accrual_defer import is_profit_accrual_deferred, resolve_profile_defer_patch
 
@@ -280,6 +337,8 @@ def _bootstrap_profile_baseline(
         patch: dict = {
             "settled_holding_amount": holding.holding_amount,
             "holding_amount": holding.holding_amount,
+            "settled_amount_trade_date": settle_date,
+            "profit_settled_trade_date": settle_date,
         }
         if holding.holding_profit is not None:
             patch["holding_profit"] = holding.holding_profit
@@ -294,20 +353,46 @@ def _bootstrap_profile_baseline(
             return save_fund_profile(profile.model_copy(update=patch))
         return profile
 
-    unit_nav = _resolve_bootstrap_unit_nav(code, estimate_quote, skip_network=skip_network)
+    patch: dict = {
+        "settled_holding_amount": holding.holding_amount,
+        "holding_amount": holding.holding_amount,
+        # 记录金额对应的净值日期：D 日净值暂不可得时先延迟锁份额，等
+        # _sync_one_holding 的补锁逻辑用同一天的净值完成 份额=金额÷净值。
+        "settled_amount_trade_date": settle_date,
+        "profit_settled_trade_date": settle_date,
+    }
+    if holding.holding_profit is not None:
+        patch["holding_profit"] = holding.holding_profit
+    return_percent = holding.holding_return_percent
+    if return_percent is None:
+        return_percent = holding.return_percent
+    if return_percent is not None:
+        patch["holding_return_percent"] = return_percent
+
+    unit_nav = _resolve_bootstrap_unit_nav(
+        code,
+        estimate_quote,
+        settle_date=settle_date,
+        skip_network=skip_network,
+    )
     if unit_nav is None or unit_nav <= 0:
+        # 历史 bug（支付宝金额漂移根因）：这里曾退回「最近一条已公布净值」
+        # （peek/latest，无日期校验）。同步时支付宝金额已含 D 日结算，而缓存
+        # 里的"最新净值"可能还是 D-1 的；份额=金额÷错一天的净值 会把那天的
+        # 涨跌永久锁进份额，此后每天 份额×净值 都与支付宝差同一个百分比，
+        # 且后续全量同步修正的金额又会被下一次结算拉回错误轨道。宁可先不锁。
+        patch["holding_shares"] = None
+        patch["shares_baseline_date"] = settle_date
+        if persist_profile:
+            return save_fund_profile(profile.model_copy(update=patch))
         return profile
 
     shares = round(holding.holding_amount / unit_nav, 2)
     if shares <= 0:
         return profile
 
-    patch: dict = {
-        "holding_shares": shares,
-        "shares_baseline_date": get_effective_trade_date(),
-        "settled_holding_amount": holding.holding_amount,
-        "holding_amount": holding.holding_amount,
-    }
+    patch["holding_shares"] = shares
+    patch["shares_baseline_date"] = settle_date
     inferred_unit = _infer_purchase_unit_cost(holding, shares)
     if inferred_unit is not None and inferred_unit > 0:
         patch["holding_cost"] = inferred_unit
@@ -316,13 +401,6 @@ def _bootstrap_profile_baseline(
     elif cost_basis := _cost_basis(holding, profile):
         if cost_basis > 0:
             patch["holding_cost"] = round(cost_basis / shares, 4)
-    if holding.holding_profit is not None:
-        patch["holding_profit"] = holding.holding_profit
-    return_percent = holding.holding_return_percent
-    if return_percent is None:
-        return_percent = holding.return_percent
-    if return_percent is not None:
-        patch["holding_return_percent"] = return_percent
 
     if persist_profile:
         return save_fund_profile(profile.model_copy(update=patch))
@@ -333,24 +411,26 @@ def _resolve_bootstrap_unit_nav(
     fund_code: str,
     estimate_quote: dict | None,
     *,
+    settle_date: str,
     skip_network: bool = False,
 ) -> float | None:
-    """OCR 锁定份额时用最近已公布官方净值，不用盘中估值（避免份额漂移）。"""
-    from app.services.fund_nav_service import peek_cached_unit_nav
+    """OCR 锁定份额：只用与金额同一净值日期（D 日）的官方净值，宁缺毋滥。
 
-    if skip_network:
-        official = peek_cached_unit_nav(fund_code)
-    else:
-        official = get_latest_unit_nav(fund_code)
-    if official is not None and official > 0:
-        return official
+    估值接口的 previous_nav 带 nav_date，日期与 D 一致时可作兜底；
+    盘中估值（estimated_nav）与「最近一条净值」都没有日期保证，一律不用。
+    """
+    nav = get_unit_nav_on_date(fund_code, settle_date, allow_fetch=not skip_network)
+    if nav is not None and nav > 0:
+        return nav
     if estimate_quote:
+        quote_date = str(estimate_quote.get("nav_date") or "").strip()[:10]
         previous = estimate_quote.get("previous_nav")
-        if previous is not None and float(previous) > 0:
+        if (
+            quote_date == settle_date
+            and previous is not None
+            and float(previous) > 0
+        ):
             return round(float(previous), 4)
-        estimated = estimate_quote.get("estimated_nav")
-        if estimated is not None and float(estimated) > 0:
-            return round(float(estimated), 4)
     return None
 
 
@@ -475,6 +555,9 @@ def _should_skip_official_nav_roll(
     """
     if profile is not None and profile.profit_settled_trade_date == trade_date:
         return True
+    if profile is not None and profile.settled_amount_trade_date == trade_date:
+        # 结算额已经是本交易日收盘口径（同步/滚动时记录），再滚会重复计一天。
+        return True
     if shares and official_unit_nav and official_unit_nav > 0 and settled > 0:
         nav_value = round(shares * official_unit_nav, 2)
         if abs(settled - nav_value) <= max(1.0, nav_value * 0.003):
@@ -527,6 +610,31 @@ def _unit_nav_for_share_override(
     return _latest_confirmed_nav(fund_code)
 
 
+def _ledger_shares_differ(override_value: float, profile: FundProfile | None) -> bool:
+    """账本有效份额是否与档案基线不同（即基线日后真的有已确认加减仓）。"""
+    if profile is None or profile.holding_shares is None:
+        return True
+    return abs(override_value - float(profile.holding_shares)) > 1e-6
+
+
+def _dated_unit_nav_for_override(
+    fund_code: str,
+    trade_date: str,
+    *,
+    allow_nav_fetch: bool,
+) -> tuple[float | None, str | None]:
+    """加减仓重算市值：优先取有日期保证的单位净值（当日，其次上一交易日）。"""
+    nav = get_unit_nav_on_date(fund_code, trade_date, allow_fetch=allow_nav_fetch)
+    if nav and nav > 0:
+        return nav, trade_date
+    previous = get_previous_trade_date(trade_date)
+    if previous:
+        nav = get_unit_nav_on_date(fund_code, previous, allow_fetch=allow_nav_fetch)
+        if nav and nav > 0:
+            return nav, previous
+    return None, None
+
+
 def _sync_one_holding(
     holding: Holding,
     *,
@@ -566,38 +674,75 @@ def _sync_one_holding(
         from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
         if not is_profit_accrual_deferred(profile):
-            unit_nav = _resolve_unit_nav(
-                code,
-                trade_date,
-                estimate_quote,
-                allow_fetch=allow_nav_fetch,
-            )
-            if unit_nav and unit_nav > 0 and holding.holding_amount > 0:
-                shares = round(holding.holding_amount / unit_nav, 2)
-                if persist_profile:
-                    profile = save_fund_profile(
-                        profile.model_copy(
-                            update={
-                                "holding_shares": shares,
-                                # 份额由当前金额重新推算时，它就是新的绝对基线。
-                                # 若继续保留旧日期，历史交易会在下一次刷新时被重复叠加。
-                                "shares_baseline_date": trade_date,
-                            }
+            pending_settle_date = (profile.settled_amount_trade_date or "").strip()
+            if pending_settle_date:
+                # 同步时 D 日净值尚未可读而延迟锁定的份额：金额与净值日期都已
+                # 记录，此处用同一天的净值补锁，保证 份额=金额÷同日净值。
+                base_amount = _resolve_settled_amount(holding, profile)
+                unit_nav = get_unit_nav_on_date(
+                    code,
+                    pending_settle_date,
+                    allow_fetch=allow_nav_fetch,
+                )
+                if unit_nav and unit_nav > 0 and base_amount > 0:
+                    shares = round(base_amount / unit_nav, 2)
+                    if persist_profile:
+                        profile = save_fund_profile(
+                            profile.model_copy(
+                                update={
+                                    "holding_shares": shares,
+                                    "shares_baseline_date": pending_settle_date,
+                                }
+                            )
                         )
-                    )
+            else:
+                unit_nav = _resolve_unit_nav(
+                    code,
+                    trade_date,
+                    estimate_quote,
+                    allow_fetch=allow_nav_fetch,
+                )
+                if unit_nav and unit_nav > 0 and holding.holding_amount > 0:
+                    shares = round(holding.holding_amount / unit_nav, 2)
+                    if persist_profile:
+                        profile = save_fund_profile(
+                            profile.model_copy(
+                                update={
+                                    "holding_shares": shares,
+                                    # 份额由当前金额重新推算时，它就是新的绝对基线。
+                                    # 若继续保留旧日期，历史交易会在下一次刷新时被重复叠加。
+                                    "shares_baseline_date": trade_date,
+                                }
+                            )
+                        )
 
     settled = _resolve_settled_amount(holding, profile)
 
     # 已确认加减仓是仓位真值，必须先于收益递延冻结：否则加仓第二天金额仍停在旧市值。
-    if override_value is not None and shares and shares > 0:
-        official_unit_nav = get_latest_unit_nav(code, allow_fetch=allow_nav_fetch)
-        unit_nav = _unit_nav_for_share_override(
+    # 仅当账本有效份额与档案基线份额真的不同（发生过加减仓）才走这条快速重算；
+    # 否则交给下面的官方净值滚动结算——那里才有幂等跳过与持有收益/成本的推进。
+    # 历史 bug：此前只要传了 shares_override（读路径/结算路径恒传）就无条件走
+    # 这条分支提前返回，持有收益与 profit_settled_trade_date 从不更新，
+    # 界面上的持有收益长期停留在最后一次截图同步的旧值。
+    if (
+        override_value is not None
+        and shares
+        and shares > 0
+        and _ledger_shares_differ(override_value, profile)
+    ):
+        unit_nav, nav_as_of = _dated_unit_nav_for_override(
             code,
-            profile=profile,
-            settled=settled,
+            trade_date,
             allow_nav_fetch=allow_nav_fetch,
-            official_unit_nav=official_unit_nav,
         )
+        if unit_nav is None:
+            unit_nav = _unit_nav_for_share_override(
+                code,
+                profile=profile,
+                settled=settled,
+                allow_nav_fetch=allow_nav_fetch,
+                official_unit_nav=None,
+            )
         if unit_nav and unit_nav > 0:
             new_settled = round(shares * unit_nav, 2)
             if persist_profile and profile is not None:
@@ -606,6 +751,9 @@ def _sync_one_holding(
                         update={
                             "settled_holding_amount": new_settled,
                             "holding_amount": new_settled,
+                            # 无日期保证的兜底单价（旧份额隐含价/确认日净值）
+                            # 写 None，后续滚动只信 shares×当日净值。
+                            "settled_amount_trade_date": nav_as_of,
                         }
                     )
                 )
@@ -614,7 +762,7 @@ def _sync_one_holding(
                     update={
                         "holding_amount": new_settled,
                         "settled_holding_amount": new_settled,
-                        "amount_includes_today": False,
+                        "amount_includes_today": nav_as_of == trade_date,
                     }
                 ),
                 profile,
@@ -642,7 +790,9 @@ def _sync_one_holding(
         if allow_nav_fetch
         else get_cached_official_nav_return(code, trade_date)
     )
-    official_unit_nav = get_latest_unit_nav(code, allow_fetch=allow_nav_fetch)
+    # 只用「当日」的单位净值：净值披露窗口内各数据面更新有先后，
+    # 「最近一条净值」可能还是上一交易日的，shares×它 会把结算额滚错一天。
+    official_unit_nav = get_unit_nav_on_date(code, trade_date, allow_fetch=allow_nav_fetch)
 
     if official_return is not None:
         pre_roll = _pre_roll_settled(
@@ -661,6 +811,14 @@ def _sync_one_holding(
             profile=profile,
             trade_date=trade_date,
         )
+        # 结算基线是上一交易日的值才能乘 (1+当日涨跌%)；基线更旧（隔了多个
+        # 交易日）时中间几天会漏算，只能等 shares×当日净值。日期未知的历史
+        # 数据维持旧行为。
+        settled_as_of = ((profile.settled_amount_trade_date if profile else None) or "").strip()
+        allow_baseline_roll = (
+            not settled_as_of
+            or settled_as_of == (get_previous_trade_date(trade_date) or "")
+        )
         new_settled = (
             settled
             if skip_roll
@@ -669,6 +827,7 @@ def _sync_one_holding(
                 official_return=official_return,
                 shares=shares,
                 official_unit_nav=official_unit_nav,
+                allow_baseline_roll=allow_baseline_roll,
             )
         )
         if new_settled is not None:
@@ -686,6 +845,7 @@ def _sync_one_holding(
                 "settled_holding_amount": new_settled,
                 "holding_amount": new_settled,
                 "profit_settled_trade_date": trade_date,
+                "settled_amount_trade_date": trade_date,
                 **profit_patch,
             }
             if unit_cost is not None:
@@ -697,7 +857,9 @@ def _sync_one_holding(
                     update={
                         "holding_amount": new_settled,
                         "settled_holding_amount": new_settled,
-                        "amount_includes_today": holding.amount_includes_today,
+                        # 官方净值滚动后的结算额已含当日涨跌；当日收益要用
+                        # r/(100+r) 的口径，和支付宝「已更新」一致。
+                        "amount_includes_today": True,
                         **profit_patch,
                     }
                 ),

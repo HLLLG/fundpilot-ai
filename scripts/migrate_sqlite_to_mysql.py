@@ -120,7 +120,6 @@ TABLES = [
         ],
     ),
     ("discovery_chat_messages", ["id", "discovery_report_id", "role", "content", "created_at"]),
-    ("swing_alert_fired", ["userId", "trade_date", "alert_key", "payload", "fired_at"]),
     (
         "sector_direction_states",
         [

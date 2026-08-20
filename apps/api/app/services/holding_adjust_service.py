@@ -10,13 +10,13 @@ from app.database import (
     save_portfolio_summary,
 )
 from app.models import AdjustHoldingRequest, Holding, PortfolioSummary
-from app.services.fund_nav_service import get_latest_unit_nav
+from app.services.fund_nav_service import get_unit_nav_on_date
 from app.services.holding_estimates import enrich_holdings_estimates, sum_daily_profit
 from app.services.holding_filters import without_placeholder_holdings, without_test_holdings
 from app.services.portfolio_ledger_service import has_user_confirmed_position_shares
 from app.services.portfolio_holdings_service import build_portfolio_holdings_response
 from app.services.portfolio_snapshot import save_daily_snapshot
-from app.services.trading_session import get_effective_trade_date
+from app.services.trading_session import get_effective_trade_date, get_previous_trade_date
 
 
 class ConfirmedSharesAmountConflict(ValueError):
@@ -166,19 +166,26 @@ def _adjust_holding_in_portfolio_unlocked(
         shares = profile.holding_shares
         if amount_changed:
             trade_date = get_effective_trade_date()
-            latest_nav = get_latest_unit_nav(code)
-            shares = (
-                round(amount / latest_nav, 6)
-                if latest_nav is not None and latest_nav > 0
-                else None
-            )
+            # 用户抄的是支付宝当前显示金额：当日净值已公布则金额已含当日
+            # （D=当日），否则还是上一交易日结算（D=上一交易日）。份额必须用
+            # 与金额同一天的净值换算——用「最近一条净值」而金额日期对不上时，
+            # 那一天的涨跌会被永久锁进份额，之后每天都和支付宝差同一个百分比。
+            settle_date = trade_date
+            nav = get_unit_nav_on_date(code, settle_date)
+            if nav is None or nav <= 0:
+                previous = get_previous_trade_date(trade_date)
+                if previous:
+                    settle_date = previous
+                    nav = get_unit_nav_on_date(code, settle_date)
+            shares = round(amount / nav, 6) if nav is not None and nav > 0 else None
             profile_patch.update(
                 {
                     "holding_shares": shares,
-                    "shares_baseline_date": trade_date,
-                    # The manually entered amount is the settled truth for this
-                    # trade date. A same-day refresh must not roll it a second time.
-                    "profit_settled_trade_date": trade_date,
+                    "shares_baseline_date": settle_date,
+                    # 手动录入的金额是 D 日的结算真值：同日刷新不得再滚一次；
+                    # D 为上一交易日时，今晚官方净值公布后照常向前滚。
+                    "settled_amount_trade_date": settle_date,
+                    "profit_settled_trade_date": settle_date,
                 }
             )
         if shares and shares > 0 and cost_basis is not None:

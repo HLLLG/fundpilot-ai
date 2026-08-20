@@ -18,7 +18,6 @@ from app.models import (
     RiskAssessment,
     TopicBrief,
 )
-from app.services.investment_presets import take_profit_threshold_percent
 from app.services.analysis_facts import build_analysis_facts
 from app.services.holding_metrics import HOLDING_RETURN_SEMANTICS
 from app.services.analysis_runtime import AnalysisMode
@@ -675,8 +674,6 @@ def slim_profile_for_llm(profile: InvestorProfile) -> dict[str, Any]:
         "concentration_limit_percent": profile.concentration_limit_percent,
         "expected_investment_amount": profile.expected_investment_amount,
         "round_trip_fee_percent": profile.round_trip_fee_percent,
-        "min_net_profit_percent": profile.min_net_profit_percent,
-        "take_profit_threshold_percent": take_profit_threshold_percent(profile),
         "hold_days_target": profile.hold_days_target,
     }
 

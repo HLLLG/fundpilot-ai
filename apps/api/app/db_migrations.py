@@ -738,26 +738,10 @@ def _migrate_discovery_prompt_state(connection: sqlite3.Connection) -> None:
 
 
 def _migrate_swing_alert_fired(connection: sqlite3.Connection) -> None:
-    if _table_exists(connection, "swing_alert_fired"):
+    """盘中波段盯盘已删除；存量表直接丢掉。"""
+    if not _table_exists(connection, "swing_alert_fired"):
         return
-    connection.execute(
-        """
-        CREATE TABLE swing_alert_fired (
-            userId INTEGER NOT NULL,
-            trade_date TEXT NOT NULL,
-            alert_key TEXT NOT NULL,
-            payload TEXT NOT NULL,
-            fired_at TEXT NOT NULL,
-            PRIMARY KEY (userId, trade_date, alert_key)
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_swing_alert_fired_user_date
-        ON swing_alert_fired (userId, trade_date, fired_at DESC)
-        """
-    )
+    connection.execute("DROP TABLE swing_alert_fired")
 
 
 def _migrate_sector_direction_states(connection: sqlite3.Connection) -> None:

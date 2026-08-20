@@ -93,8 +93,6 @@ import {
 } from "@/lib/ocrBatchUpload";
 import { clearCachedPortfolioHoldings } from "@/lib/portfolioHoldingsCache";
 import { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
-import { useSwingAlerts } from "@/lib/useSwingAlerts";
-import { SwingAlertsPanel } from "@/components/SwingAlertsPanel";
 import { buildWorkflowBlockers, hasBlockingErrors } from "@/lib/workflowBlockers";
 import { TradingSessionBar } from "@/components/TradingSessionBar";
 import { StreamingAnalysisFloat } from "@/components/StreamingAnalysisFloat";
@@ -240,8 +238,6 @@ const defaultProfile: InvestorProfile = {
   round_trip_fee_percent: 1.5,
   min_net_profit_percent: 1.0,
   hold_days_target: 7,
-  swing_alerts_enabled: false,
-  swing_monitor_scope: "both",
 };
 
 type TabId = DashboardTabId;
@@ -420,18 +416,6 @@ export function Dashboard() {
     onChange: setHoldings,
     warnings: holdingWarnings,
     onWarningsChange: setHoldingWarnings,
-  });
-
-  const swingAlerts = useSwingAlerts({
-    holdings,
-    profile,
-    onBeforeEvaluate: async () => {
-      if (holdings.length === 0) {
-        return undefined;
-      }
-      const result = await enqueuePortfolioMutation(() => sectorRefresh.refresh(false, "fast"));
-      return result?.holdings;
-    },
   });
 
   useEffect(() => {
@@ -1763,15 +1747,6 @@ export function Dashboard() {
         <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 pb-6">
           {deferredActiveTab === "holdings" ? (
             <div className="w-full">
-              {swingAlerts.alertsActive ? (
-                <SwingAlertsPanel
-                  items={swingAlerts.items}
-                  sessionKind={swingAlerts.sessionKind}
-                  isEvaluating={swingAlerts.isEvaluating}
-                  error={swingAlerts.error}
-                  onRefresh={() => void swingAlerts.evaluate()}
-                />
-              ) : null}
               <YangjibaoHoldingsBoard
                 holdings={holdings}
                 portfolioSummary={portfolioSummary}

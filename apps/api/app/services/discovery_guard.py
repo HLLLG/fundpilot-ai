@@ -853,8 +853,9 @@ def apply_discovery_guards(
                             "短线涨幅已经偏快且5日资金没有继续确认，先等回调或资金重新转强。"
                         ]
             else:
-                # 与日报侧拒绝追高门（板块日涨 >5%）取同一个数：追高是同一个概念，
-                # 两条路径不该各用一个阈值（2026-08 决策风格收敛前为 4%/6% 按风格分叉）。
+                # 旧机会分路径没有结构化 overheat_flags。日报现已改为「拥挤或至少两条
+                # 加速标记才停加」；这里仍用 5% 作为无成熟度层时的近似，避免两条路径
+                # 对同一天给出完全相反的追高结论。
                 chase_threshold = 5.0
                 if sector_move is not None and sector_move >= chase_threshold:
                     copy.action = "等待回调"

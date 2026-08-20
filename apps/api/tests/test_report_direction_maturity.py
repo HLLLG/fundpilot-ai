@@ -444,14 +444,13 @@ def test_flow_improving_probe_keeps_the_add_open() -> None:
     assert reason is None
 
 
-def test_probability_early_probe_no_longer_opens_daily_add() -> None:
-    """趋势成形信号分未经校准：日报只披露、不给现持仓加仓。"""
+def test_probability_early_probe_opens_daily_add() -> None:
+    """潜伏/蓄势通道与荐基对齐：日报按试仓系数给现持仓小额加仓。"""
     reason = _entry_state_add_block_reason(
         {"entry_state": "forming", "probability_early_probe_eligible": True}
     )
 
-    assert reason is not None
-    assert "条件仍在形成中" in reason
+    assert reason is None
 
 
 def test_weak_evidence_reasons_include_the_entry_state_block() -> None:

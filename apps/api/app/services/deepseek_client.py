@@ -542,10 +542,13 @@ def _system_prompt(
     # 趋势/资金/证据档位决定，不再按稳健/战术/激进预设倾向。
     base += (
         "决策凭已提供的结构化数据判断：加仓须有板块方向（sector_opportunity）、"
-        "资金流与基金证据支撑，不追涨当日大涨板块；"
-        "持有收益达扣费止盈线（analysis_facts.portfolio.take_profit_threshold_percent）"
-        "且出现走弱/回吐信号时，优先考虑分批止盈；"
-        "方向退出信号（direction_exit）出现时不得以长期逻辑掩盖减仓需求；不得承诺收益。"
+        "资金流与基金证据支撑；"
+        "forming 且 probability_early_probe_eligible 时，可按 first_tranche_scale 小额提前布局；"
+        "趋势仍强且未出现结构化过热（拥挤或至少两条 overheat_flags）时，允许中途上车，"
+        "不得仅因当日已涨或浮盈扩大而拒绝加仓；"
+        "减仓只看方向退出（direction_exit）、基金质量/载体掉队与风险升级，"
+        "不得用止盈线或固定涨幅作为减仓理由；"
+        "方向退出信号出现时不得以长期逻辑掩盖减仓需求；不得承诺收益。"
     )
     base += "最终回复必须是完整 JSON，不要 Markdown，控制篇幅避免截断。"
     return append_output_requirements_to_system(base)
