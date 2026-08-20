@@ -1,0 +1,26 @@
+.github/actions/install-playwright-chromium/action.yml
+  s_ca1a1c159a5154::t_60703ffe8910b4 1-29,35-57
+  s_ca1a1c159a5154::t_1613f1a35ca6c3 30-34
+.github/workflows/ci.yml
+  s_ca1a1c159a5154::t_5783941267c997 65
+  s_ca1a1c159a5154::t_4171c2e0af0d3e 91-93
+.github/workflows/frontend-perf.yml
+  s_ca1a1c159a5154::t_a4beea70e7b1e6 120-122
+  s_ca1a1c159a5154::t_46ca296eb7e4a0 104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "3ad76eace5f0a16ab1d1b0bf7e9a3712030f3d14",
+  "prompts": {},
+  "sessions": {
+    "s_ca1a1c159a5154": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "c64bd97b-6a7c-4b0b-bb1b-b6b8e9b750a9",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
