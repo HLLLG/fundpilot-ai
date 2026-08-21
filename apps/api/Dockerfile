@@ -15,6 +15,9 @@ COPY scripts/capture_sector_direction_states.py /app/scripts/capture_sector_dire
 # 板块身份运维脚本（与根目录生产 Dockerfile 保持一致）。
 COPY scripts/rescan_cpo_cxo_targets.py /app/scripts/rescan_cpo_cxo_targets.py
 COPY scripts/diagnose_sector_vehicles.py /app/scripts/diagnose_sector_vehicles.py
+COPY scripts/rerun_holdings_primary_sectors.py /app/scripts/rerun_holdings_primary_sectors.py
+COPY scripts/rerun_all_primary_sectors.py /app/scripts/rerun_all_primary_sectors.py
+COPY scripts/verify_holdings_primary_sectors.py /app/scripts/verify_holdings_primary_sectors.py
 
 # 2026-07-04（方案 B，见 apps/api/var/factor_ic/.gitkeep 注释）：因子 IC 离线回测
 # 产物（scripts/run_factor_ic.py 生成，供 factor_confidence.py::load_ic_summary 读取，

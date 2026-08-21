@@ -292,3 +292,141 @@ def test_grouped_layout_strips_metrics_glued_to_fund_name() -> None:
         "博时黄金ETF联接A": (2039.76, 39.76, 1.99),
         "嘉实中证稀土产业ETF联接C": (1816.10, 16.10, 0.89),
     }
+
+
+# 基金 Tab「我的持有」：不是收益明细「全部持有」。有的基金没有财富号、只有产品周报；
+# 长名会拆行。qwen-vl-ocr 常见两种读法都要过。
+ALIPAY_FUND_TAB_MIXED_WEALTH_OCR = """14:00
+基金
+我的持有
+更新时间排序
+全部 偏股 偏债 指数 黄金 全球
+名称 金额/昨日收益 持有收益/率
+南方黄金股指数C
+1,592.98
++76.54
++92.98
++6.20%
+产品周报
+通胀粘性仍存，金价高位震荡
+招商基金财富号
+招商医疗保健股票A
+4,637.97
++205.86
++137.97
++3.07%
+国泰基金财富号
+国泰国证房地产行业指数(LOF)A
+731.92
++7.46
+-18.08
+-2.41%
+更多产品，去市场看看
+基金市场
+排行
+自选
+持有
+"""
+
+ALIPAY_FUND_TAB_NO_WEALTH_WRAPPED_OCR = """14:00
+基金
+我的持有
+更新时间排序
+全部 偏股 偏债 指数 黄金 全球
+名称 金额/昨日收益 持有收益/率
+万家宏观择时多策略灵活
+配置混合C
+2,245.73
++6.95
++45.73
++2.08%
+华夏半导体材料设备
+ETF联接A
+1,882.06
+-11.41
+-117.94
+-5.90%
+南方黄金股指数C
+1,592.98
++76.54
++92.98
++6.20%
+产品周报
+通胀粘性仍存，金价高位震荡
+更多产品，去市场看看
+基金市场
+排行
+自选
+持有
+"""
+
+ALIPAY_FUND_TAB_ROW_MAJOR_OCR = """我的持有
+名称 金额/昨日收益 持有收益/率
+南方黄金股指数C 1,592.98 +92.98
++76.54 +6.20%
+产品周报 通胀粘性仍存，金价高位震荡
+招商基金财富号
+招商医疗保健股票A 4,637.97 +137.97
++205.86 +3.07%
+国泰基金财富号
+国泰国证房地产行业指数(LOF)A 731.92 -18.08
++7.46 -2.41%
+基金市场
+"""
+
+
+def _holding_tuple(holding) -> tuple[float, float | None, float | None, float | None]:
+    return (
+        holding.holding_amount,
+        holding.holding_profit,
+        holding.yesterday_profit,
+        holding.holding_return_percent,
+    )
+
+
+def test_fund_tab_keeps_preamble_fund_before_first_wealth_account() -> None:
+    """没有财富号、只有产品周报的基金必须留下，不能从第一个财富号才起算。"""
+    assert detect_ocr_source(ALIPAY_FUND_TAB_MIXED_WEALTH_OCR) == "alipay_holdings"
+    holdings = {item.fund_name: item for item in parse_holdings_from_text(ALIPAY_FUND_TAB_MIXED_WEALTH_OCR)}
+    assert set(holdings) == {
+        "南方黄金股指数C",
+        "招商医疗保健股票A",
+        "国泰国证房地产行业指数(LOF)A",
+    }
+    assert _holding_tuple(holdings["南方黄金股指数C"]) == (1592.98, 92.98, 76.54, 6.20)
+    assert _holding_tuple(holdings["招商医疗保健股票A"]) == (4637.97, 137.97, 205.86, 3.07)
+    assert _holding_tuple(holdings["国泰国证房地产行业指数(LOF)A"]) == (
+        731.92,
+        -18.08,
+        7.46,
+        -2.41,
+    )
+
+
+def test_fund_tab_parses_without_any_wealth_account() -> None:
+    """零财富号 + 长名拆行：万家 / 华夏半导体 不能被截成「配置混合C」「ETF联接A」。"""
+    holdings = {item.fund_name: item for item in parse_holdings_from_text(ALIPAY_FUND_TAB_NO_WEALTH_WRAPPED_OCR)}
+    assert _holding_tuple(holdings["万家宏观择时多策略灵活配置混合C"]) == (
+        2245.73,
+        45.73,
+        6.95,
+        2.08,
+    )
+    assert _holding_tuple(holdings["华夏半导体材料设备ETF联接A"]) == (
+        1882.06,
+        -117.94,
+        -11.41,
+        -5.90,
+    )
+    assert holdings["南方黄金股指数C"].holding_amount == 1592.98
+
+
+def test_fund_tab_survives_visual_row_major_ocr() -> None:
+    """OCR 按视觉行读出「金额+持有收益 / 昨日+收益率」两列时，收益列仍靠收益率认领。"""
+    holdings = {item.fund_name: item for item in parse_holdings_from_text(ALIPAY_FUND_TAB_ROW_MAJOR_OCR)}
+    assert holdings["南方黄金股指数C"].holding_profit == 92.98
+    assert holdings["南方黄金股指数C"].yesterday_profit == 76.54
+    assert holdings["招商医疗保健股票A"].holding_profit == 137.97
+    assert holdings["国泰国证房地产行业指数(LOF)A"].holding_profit == -18.08
+    assert "产品周报" not in "".join(holdings)
+    assert "通胀粘性" not in "".join(holdings)

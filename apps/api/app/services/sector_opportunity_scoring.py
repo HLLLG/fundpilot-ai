@@ -241,6 +241,12 @@ _CORRELATION_DEDUP_EXEMPT_PAIRS = frozenset(
         frozenset(("黄金", "黄金股")),
     }
 )
+# 贵金属是 BK0732 行业板，覆盖现货金和黄金股的共同上涨，但本身不是更干净的
+# 可交易方向。三者同时过线时若让它先占席，相关性去重会把黄金 / 黄金股一起挤掉。
+# 细方向过线则粗方向让路；只有细方向都没过线时，才保留贵金属这一席。
+_COARSE_DIRECTION_YIELDS_TO: dict[str, frozenset[str]] = {
+    "贵金属": frozenset(("黄金", "黄金股")),
+}
 
 
 def select_sector_opportunities(
@@ -525,6 +531,7 @@ def select_scored_sector_opportunities(
             if str(row.get("score_policy_version") or "") != ENTRY_POLICY_VERSION_V3
             or str(row.get("evidence_quality") or "") == "complete"
         ]
+        contested = _drop_coarse_directions_that_yield(contested, pinned_rows)
         # 入场状态优先于分数：证据完整且可布局的方向必须排在热门但不可执行的
         # 方向之前；缺少 mainline 证据的方向不能再因为跳过混合评分而占便宜。
         ordered = sorted(contested, key=_entry_sort_score, reverse=True)
@@ -534,6 +541,7 @@ def select_scored_sector_opportunities(
         )
         return sorted(selected, key=_entry_sort_score, reverse=True)[:max_total]
 
+    contested = _drop_coarse_directions_that_yield(contested, pinned_rows)
     momentum = sorted(
         [row for row in contested if row["track"] == MOMENTUM_TRACK],
         key=_research_sort_score,
@@ -563,6 +571,41 @@ def select_scored_sector_opportunities(
         )
         selected.extend(limiter.take(fallback, remaining, selected))
     return selected[:max_total]
+
+
+def _layout_ready_direction_labels(rows: Sequence[Mapping[str, Any]]) -> set[str]:
+    labels: set[str] = set()
+    for row in rows:
+        label = str(row.get("sector_label") or "").strip()
+        if not label or str(row.get("entry_state") or "") != ENTRY_READY_TO_START:
+            continue
+        if (
+            str(row.get("score_policy_version") or "") == ENTRY_POLICY_VERSION_V3
+            and str(row.get("evidence_quality") or "") != "complete"
+        ):
+            continue
+        labels.add(label)
+    return labels
+
+
+def _drop_coarse_directions_that_yield(
+    contested: list[dict[str, Any]],
+    pinned_rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """细方向已过线时，拿掉会与它们抢席的粗方向，避免相关性去重误杀细方向。"""
+    ready = _layout_ready_direction_labels([*contested, *pinned_rows])
+    drop = {
+        coarse
+        for coarse, replacements in _COARSE_DIRECTION_YIELDS_TO.items()
+        if ready & replacements
+    }
+    if not drop:
+        return contested
+    return [
+        row
+        for row in contested
+        if str(row.get("sector_label") or "").strip() not in drop
+    ]
 
 
 def _pinned_rows(

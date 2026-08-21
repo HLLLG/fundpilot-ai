@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 from app.config import get_settings
@@ -231,8 +233,14 @@ def backfill_primary_sectors_for_existing_holdings(*, force: bool = False) -> di
                     _is_missing_sector(holding)
                     or _record_should_override_holding_sector(holding, record)
                 ):
-                    if holding.sector_name != record.sector_name:
-                        holding = holding.model_copy(update={"sector_name": record.sector_name})
+                    patch = {"sector_name": record.sector_name}
+                    if record.intraday_index_name:
+                        patch["intraday_index_name"] = record.intraday_index_name
+                    if (
+                        holding.sector_name != patch["sector_name"]
+                        or holding.intraday_index_name != patch.get("intraday_index_name", holding.intraday_index_name)
+                    ):
+                        holding = holding.model_copy(update=patch)
                         changed = True
                         fixed_holdings += 1
                 # 轻量数据清理：不需要重新走完整规则链——已经落库的 sector_name 如果
@@ -310,3 +318,82 @@ def run_fund_primary_sector_backfill_once_at_startup() -> None:
         backfill_primary_sectors_for_existing_holdings()
     except Exception as exc:
         logger.info("primary sector backfill failed: %s", exc)
+
+
+_INFER_LOCK = threading.Lock()
+_INFER_BUSY: set[int] = set()
+
+
+def infer_missing_sectors_for_current_user() -> dict:
+    """对当前用户仍缺关联板块的持仓跑季报穿透，并写回快照。"""
+    holdings, source, snapshot_date, _ = load_persisted_holdings(fetch_benchmark=False)
+    if not holdings:
+        return {"ok": True, "skipped": True, "reason": "no_holdings"}
+    if not any(_is_missing_sector(holding) for holding in holdings):
+        return {"ok": True, "skipped": True, "reason": "none_missing"}
+
+    from app.services.holding_client import serialize_holdings_for_client
+    from app.services.portfolio_holdings_cache import save_cached_holdings_response
+    from app.services.portfolio_holdings_service import build_portfolio_holdings_response
+    from app.services.sector_quote_service import refresh_holdings_sector_quotes
+
+    result = refresh_holdings_sector_quotes(holdings, timeout_seconds=None)
+    if not result.get("ok") or not result.get("holdings"):
+        return {"ok": False, "skipped": False, "reason": "refresh_failed"}
+
+    refreshed = [Holding.model_validate(item) for item in result["holdings"]]
+    persist_holdings_after_sector_refresh(refreshed, with_official_nav=False)
+    raw_fetched = result.get("fetched_at")
+    fetched_at = (
+        raw_fetched
+        if isinstance(raw_fetched, datetime)
+        else datetime.fromisoformat(raw_fetched)
+        if isinstance(raw_fetched, str) and raw_fetched
+        else None
+    )
+    cache_payload = build_portfolio_holdings_response(
+        refreshed,
+        source=source,
+        snapshot_date=snapshot_date,
+        refreshed_at=fetched_at,
+        fetch_benchmark=False,
+    )
+    cache_payload["holdings"] = serialize_holdings_for_client(refreshed)
+    save_cached_holdings_response(cache_payload)
+    return {
+        "ok": True,
+        "skipped": False,
+        "reason": None,
+        "inferred": sum(1 for holding in refreshed if _is_valid_sector_label(holding.sector_name)),
+        "holdings": cache_payload["holdings"],
+    }
+
+
+def schedule_missing_sector_infer(*, user_id: int | None = None) -> None:
+    """确认持仓后后台补关联板块，不阻塞 OCR 返回。"""
+    from app.request_context import try_get_request_user_id
+
+    resolved = user_id if user_id is not None else try_get_request_user_id()
+    if resolved is None:
+        return
+    with _INFER_LOCK:
+        if resolved in _INFER_BUSY:
+            return
+        _INFER_BUSY.add(resolved)
+
+    def _run() -> None:
+        token = set_request_user_id(resolved)
+        try:
+            infer_missing_sectors_for_current_user()
+        except Exception:
+            logger.exception("background holdings sector infer failed for user_id=%s", resolved)
+        finally:
+            reset_request_user_id(token)
+            with _INFER_LOCK:
+                _INFER_BUSY.discard(resolved)
+
+    threading.Thread(
+        target=_run,
+        name=f"holdings-sector-infer-{resolved}",
+        daemon=True,
+    ).start()

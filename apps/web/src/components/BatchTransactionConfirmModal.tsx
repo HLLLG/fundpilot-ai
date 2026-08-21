@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronUp, Plus, Search, X } from "lucide-react";
+import { Check, ChevronUp, Plus, Search, X } from "lucide-react";
 import { InlineNotice } from "@/components/InlineNotice";
 import { FundCodeSearchButton, ReviewEditRow } from "@/components/ocrReviewFields";
 import { CLIPBOARD_IMAGE_PASTE_QUERY } from "@/components/ScreenshotIntakeExtras";
@@ -216,6 +216,8 @@ export function BatchTransactionConfirmModal({
   const [searchIndex, setSearchIndex] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [syncPlan, setSyncPlan] = useState<TransactionSyncPlan>("apply_position");
   const [recordedCounts, setRecordedCounts] = useState<Map<string, number>>(
     () => new Map(),
   );
@@ -678,7 +680,11 @@ export function BatchTransactionConfirmModal({
             type="button"
             disabled={locked || validCount === 0}
             onClick={() => {
-              onConfirm("markers_only");
+              if (applyCount === 0) {
+                onConfirm("markers_only");
+                return;
+              }
+              setPlanOpen(true);
             }}
             className="btn-primary w-full rounded-2xl disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -693,6 +699,128 @@ export function BatchTransactionConfirmModal({
                     : "确认写入（0）"}
           </button>
         </div>
+      </div>
+      {planOpen ? (
+        <TransactionSyncPlanDialog
+          value={syncPlan}
+          busy={Boolean(isBusy)}
+          onChange={setSyncPlan}
+          onCancel={() => setPlanOpen(false)}
+          onConfirm={() => {
+            setPlanOpen(false);
+            onConfirm(syncPlan);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+const SYNC_PLAN_OPTIONS: {
+  value: TransactionSyncPlan;
+  title: string;
+}[] = [
+  {
+    value: "apply_position",
+    title: "同步买卖点且进行加减仓操作",
+  },
+  {
+    value: "markers_only",
+    title: "仅同步买卖点，不进行加减仓",
+  },
+];
+
+function TransactionSyncPlanDialog({
+  value,
+  busy,
+  onChange,
+  onCancel,
+  onConfirm,
+}: {
+  value: TransactionSyncPlan;
+  busy: boolean;
+  onChange: (value: TransactionSyncPlan) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const confirmButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useDialogA11y<HTMLDivElement>({
+    open: true,
+    onClose: busy ? () => undefined : onCancel,
+    initialFocusRef: confirmButtonRef,
+  });
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 p-6"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) {
+          onCancel();
+        }
+      }}
+      role="presentation"
+    >
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="w-full max-w-sm overflow-hidden rounded-[24px] bg-white px-5 pb-5 pt-6 shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="transaction-sync-plan-title"
+      >
+        <h3
+          id="transaction-sync-plan-title"
+          className="text-center text-base font-black text-slate-950"
+        >
+          请选择同步方案
+        </h3>
+        <div
+          className="mt-5 space-y-3"
+          role="radiogroup"
+          aria-labelledby="transaction-sync-plan-title"
+        >
+          {SYNC_PLAN_OPTIONS.map((option) => {
+            const selected = value === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                disabled={busy}
+                onClick={() => onChange(option.value)}
+                className={`flex w-full items-center gap-3 rounded-2xl border px-3.5 py-3 text-left transition ${
+                  selected
+                    ? "border-[var(--success-border)] bg-[var(--success-bg)]/60"
+                    : "border-slate-200 bg-slate-50/80 hover:border-slate-300"
+                }`}
+              >
+                <span
+                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+                    selected
+                      ? "border-[var(--success-icon)] bg-[var(--success-icon)] text-white"
+                      : "border-slate-300 bg-white"
+                  }`}
+                  aria-hidden
+                >
+                  {selected ? <Check size={12} strokeWidth={3} /> : null}
+                </span>
+                <span className="block text-sm font-bold leading-5 text-slate-900">
+                  {option.title}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <button
+          ref={confirmButtonRef}
+          type="button"
+          disabled={busy}
+          onClick={onConfirm}
+          className="btn-primary mt-5 w-full rounded-2xl disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {busy ? "正在应用..." : "确定"}
+        </button>
       </div>
     </div>
   );

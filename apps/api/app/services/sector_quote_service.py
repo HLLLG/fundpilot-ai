@@ -92,7 +92,15 @@ def refresh_holdings_sector_quotes(
     from app.services.fund_primary_sector_service import refresh_benchmark_sectors_for_holdings
 
     fetch_missing_benchmark = not cache_only
-    fetch_holdings_infer = not cache_only and timeout_seconds is None
+    # 精确刷新全量穿透；快刷只补「还没有关联板块」的主动基金，对齐养基宝自动建档。
+    missing_sector = any(
+        holding.fund_code not in {"", "000000"}
+        and not _is_valid_sector_label(holding.sector_name)
+        for holding in holdings
+    )
+    accurate = timeout_seconds is None
+    fetch_holdings_infer = not cache_only and (accurate or missing_sector)
+    infer_missing_only = fetch_holdings_infer and not accurate
     profiles_snapshot = profile_service.list_profiles()
     initial_profiles = match_profiles_to_holdings(holdings, profiles_snapshot)
     active_profile_codes = {
@@ -111,6 +119,7 @@ def refresh_holdings_sector_quotes(
         holdings,
         fetch_missing_benchmark=fetch_missing_benchmark,
         fetch_holdings_infer=fetch_holdings_infer,
+        infer_missing_only=infer_missing_only,
         batch_context=batch_context,
     )
     holdings, profiles = profile_service.resolve_holdings_with_profiles(

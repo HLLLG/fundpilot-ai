@@ -281,6 +281,28 @@ export function keyReasonLines(item: FundRecommendation): string[] {
   return result;
 }
 
+function evidenceKey(value?: string | null): string {
+  return value ? translateEvidenceText(value.trim()).trim() : "";
+}
+
+/**
+ * 「为什么这样建议」里的因果句。
+ *
+ * 卡头已经占用主因、区块上方占用下一交易日预案。有第二条因果时去掉与卡头重复的那句；
+ * 瘦身后只剩 1 条因果时再抽走会让整个区块空白，这时把主因留在这里。
+ */
+export function whyReasonLines(item: FundRecommendation): string[] {
+  const newsKeys = new Set(
+    [...meaningfulNewsLines(item.news_bullish), ...meaningfulNewsLines(item.news_bearish)]
+      .map(evidenceKey)
+      .filter(Boolean),
+  );
+  const candidates = keyReasonLines(item).filter((reason) => !newsKeys.has(evidenceKey(reason)));
+  const primaryKey = evidenceKey(selectPrimaryReason(item));
+  const extras = candidates.filter((reason) => evidenceKey(reason) !== primaryKey);
+  return extras.length > 0 ? extras : candidates;
+}
+
 export function cardSpecificValidationNotes(values?: string[]): string[] {
   const result: string[] = [];
   for (const raw of values ?? []) {

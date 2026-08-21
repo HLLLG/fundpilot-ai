@@ -86,7 +86,7 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "只要持仓金额与市场方向证据新鲜可用，仍须从 allowed_actions 中给出加仓、减仓或观察。"
     "输出必须是完整 JSON（不要 Markdown），包含 title、summary、fund_recommendations、caveats。"
     "fund_recommendations 每只持仓基金恰好 1 条；必填字段：fund_code、fund_name、action、"
-    "points（1-2 条，每条≤60字）、confidence（高/中/低）、risks（1 条即可）。"
+    "points（2-3 条，每条≤60字：1-2 条持仓特有因果 + 1 条下一交易日条件化预案）、confidence（高/中/低）、risks（1 条即可）。"
     "amount_yuan 必须为 null；amount_note、hold_horizon、news_bullish、news_bearish 可省略。"
     "不要输出 decision_path、sector_evidence、fund_evidence、validation_notes；"
     "这些由服务端从 analysis_facts 补全，写了也只增加篇幅、不改变动作。"
@@ -102,7 +102,7 @@ OUTPUT_REQUIREMENTS_SYSTEM = (
     "action 的唯一合法集合是 analysis_facts.allowed_actions；必须逐字从该数组选择，不得依赖固定数量或另造动作。"
     "服务端另有一套确定性动作提议（方向成熟度 + 量化证据 + 风险升级 + 集中度/交易门禁），"
     "它可能用系统提议替换你给出的 action，并在校验备注中说明分歧。"
-    "因此你的职责重心是用 1-2 条 points 讲清「为什么是这个方向」，"
+    "因此你的职责重心是用 2-3 条 points 讲清「为什么是这个方向」，"
     "而不是替系统决定动作，也不是复述板块机会卡里已有的数字；仍须按上述规则给出你的 action 判断，"
     "但不要在叙述里承诺「必须按我给的动作执行」，也不要因为担心被改写而刻意含糊或一律写观察。"
     "若 analysis_facts.portfolio.suggested_action 为 risk_review 或 risk_level 为 high，禁止加仓类 action。"
@@ -155,7 +155,7 @@ OUTPUT_REQUIREMENTS_USER = [
     "输出 title、summary、fund_recommendations、caveats；每只基金恰好 1 条 recommendation",
     "action 仅限 analysis_facts.allowed_actions；risk_review 或 high 禁止加仓类",
     "news_bullish/news_bearish 可省略或为空数组；若写须来自 news_titles，禁止占位句",
-    "每只基金 points 1-2 条：写该持仓特有因果，且其中 1 条写下一交易日条件化预案；禁止复述最终动作",
+    "每只基金 points 2-3 条：1-2 条该持仓特有因果，另 1 条写下一交易日条件化预案；禁止复述最终动作",
     "引用 sector_intraday.pattern_label、nav_trend、sector_fund_gap_percent、sector_fund_flow 时须用 analysis_facts 中的数字",
     "每只基金须含 confidence、risks（1条即可）；不要输出 decision_path/sector_evidence/fund_evidence/validation_notes",
 ]

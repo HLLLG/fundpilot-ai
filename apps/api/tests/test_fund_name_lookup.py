@@ -28,6 +28,17 @@ def test_gold_share_class_aliases_match_despite_optional_index_token() -> None:
     assert not is_fund_name_match("南方黄金股C", "博时黄金ETF联接A")
 
 
+def test_sanitize_strips_weekly_report_prefix() -> None:
+    assert (
+        sanitize_fund_name("产品周报通胀粘性仍存南方黄金股指数C")
+        == "南方黄金股指数C"
+    )
+    assert (
+        sanitize_fund_name("通胀粘性仍存，金价高位震荡万家宏观择时多策略灵活配置混合C")
+        == "万家宏观择时多策略灵活配置混合C"
+    )
+
+
 def test_sanitize_strips_alipay_metrics_glued_to_name() -> None:
     assert (
         sanitize_fund_name("鹏扬中证数字经济主题ETF联接C517.74+17.74+15.38+3.55%")

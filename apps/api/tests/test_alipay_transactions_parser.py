@@ -13,7 +13,7 @@ from app.services.alipay_transactions_parser import (
     is_alipay_transaction_page,
     parse_alipay_transactions,
 )
-from app.services.ocr_parser import detect_ocr_source
+from app.services.ocr_parser import detect_ocr_source, parse_holdings_from_text
 from tests.test_alipay_holdings_parser import ALIPAY_OVERVIEW_OCR
 
 ALIPAY_TRANSACTION_RECORDS_OCR = """交易记录
@@ -266,6 +266,110 @@ def test_transaction_analysis_20260817_page_parses_six_buys() -> None:
         ("buy", "南方黄金股指数C", 500.0, "2026-08-14 14:59:57", False),
         ("buy", "嘉实中证稀土产业ETF联接C", 300.0, "2026-08-14 14:57:23", False),
         ("buy", "博时黄金ETF联接A", 1000.0, "2026-08-14 14:56:15", False),
+    ]
+
+
+def test_transaction_analysis_time_then_amount_does_not_steal_previous_amount() -> None:
+    """交易分析现网版式：方向+名称 → 时间 → 金额。上一笔金额不能滑到下一笔。"""
+    text = """全部持有 收益分析 配置分析 交易分析
+全部交易汇总
+近一年
+74次买入
+共131,500.00元
+62次卖出
+共109,526.42元
+明细 基金
+卖出 基金 | 国泰国证房地产行业指数(LOF)A
+2026-08-19 14:37:26
+239.87元
+买入 基金 | 南方黄金股指数C
+2026-08-17 14:59:52
+1,000.00元
+买入 基金 | 招商医疗保健股票A
+2026-08-17 14:59:35
+1,000.00元
+买入 基金 | 华夏半导体材料设备ETF联接A
+2026-08-17 14:58:45
+2,000.00元
+买入 基金 | 南方黄金股指数C
+2026-08-14 14:59:57
+500.00元
+买入 基金 | 嘉实中证稀土产业ETF联接C
+2026-08-14 14:57:23
+300.00元
+"""
+    parsed = parse_alipay_transactions(text)
+    assert detect_ocr_source(text) == "alipay_transactions"
+    assert _compact(parsed) == [
+        ("sell", "国泰国证房地产行业指数(LOF)A", 239.87, "2026-08-19 14:37:26", False),
+        ("buy", "南方黄金股指数C", 1000.0, "2026-08-17 14:59:52", False),
+        ("buy", "招商医疗保健股票A", 1000.0, "2026-08-17 14:59:35", False),
+        ("buy", "华夏半导体材料设备ETF联接A", 2000.0, "2026-08-17 14:58:45", False),
+        ("buy", "南方黄金股指数C", 500.0, "2026-08-14 14:59:57", False),
+        ("buy", "嘉实中证稀土产业ETF联接C", 300.0, "2026-08-14 14:57:23", False),
+    ]
+
+
+def test_transaction_analysis_fund_pipe_layout_from_holdings_tab_neighbor() -> None:
+    """收益明细「交易分析」页：明细是「卖出 / 基金 | 名称 / 时间 / 金额元」。
+
+    同步持仓不该吃这张图；批量加减仓必须能解析。顶栏仍有「全部持有」Tab。
+    """
+    text = """14:00
+全部持有 收益分析 配置分析 交易分析
+全部交易汇总
+近一年
+74次 买入
+共131,500.00元
+62次 卖出
+共109,526.42元
+3次 定投/发车
+共30.00元
+0次 分红
+现金分红0.00元
+红利再投资0份
+0次 预约
+共0.00元
+清仓分析
+分析复盘历史持仓
+明细
+基金
+全部
+卖出
+基金 | 国泰国证房地产行业指数(LOF)A
+2026-08-19 14:37:26
+239.87元
+买入
+基金 | 南方黄金股指数C
+2026-08-17 14:59:52
+1,000.00元
+买入
+基金 | 招商医疗保健股票A
+2026-08-17 14:59:35
+1,000.00元
+买入
+基金 | 华夏半导体材料设备ETF联接A
+2026-08-17 14:58:45
+2,000.00元
+买入
+基金 | 南方黄金股指数C
+2026-08-14 14:59:57
+500.00元
+买入
+基金 | 嘉实中证稀土产业ETF联接C
+2026-08-14 14:57:23
+300.00元
+"""
+    assert detect_ocr_source(text) == "alipay_transactions"
+    assert parse_holdings_from_text(text) == []
+    parsed = parse_alipay_transactions(text)
+    assert _compact(parsed) == [
+        ("sell", "国泰国证房地产行业指数(LOF)A", 239.87, "2026-08-19 14:37:26", False),
+        ("buy", "南方黄金股指数C", 1000.0, "2026-08-17 14:59:52", False),
+        ("buy", "招商医疗保健股票A", 1000.0, "2026-08-17 14:59:35", False),
+        ("buy", "华夏半导体材料设备ETF联接A", 2000.0, "2026-08-17 14:58:45", False),
+        ("buy", "南方黄金股指数C", 500.0, "2026-08-14 14:59:57", False),
+        ("buy", "嘉实中证稀土产业ETF联接C", 300.0, "2026-08-14 14:57:23", False),
     ]
 
 

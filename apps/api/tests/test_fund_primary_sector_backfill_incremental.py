@@ -153,3 +153,53 @@ def test_force_reruns_every_pending_code(harness) -> None:
     backfill.backfill_primary_sectors_for_existing_holdings(force=True)
 
     assert state["resolve_calls"] == ["012200", "012200"]
+
+
+def test_infer_missing_sectors_skips_when_all_mapped(monkeypatch) -> None:
+    monkeypatch.setattr(
+        backfill,
+        "load_persisted_holdings",
+        lambda **_kwargs: (
+            [_holding("000960", "招商医疗保健股票A", "CXO")],
+            "snapshot",
+            None,
+            None,
+        ),
+    )
+    called = {"n": 0}
+    monkeypatch.setattr(
+        "app.services.sector_quote_service.refresh_holdings_sector_quotes",
+        lambda *_args, **_kwargs: called.__setitem__("n", called["n"] + 1),
+    )
+
+    result = backfill.infer_missing_sectors_for_current_user()
+
+    assert result == {"ok": True, "skipped": True, "reason": "none_missing"}
+    assert called["n"] == 0
+
+
+def test_schedule_missing_sector_infer_runs_once_per_user(monkeypatch) -> None:
+    import time
+
+    release = __import__("threading").Event()
+    calls = {"n": 0}
+
+    def fake_infer() -> dict:
+        calls["n"] += 1
+        release.wait(timeout=2.0)
+        return {"ok": True, "skipped": True, "reason": "none_missing"}
+
+    monkeypatch.setattr(backfill, "infer_missing_sectors_for_current_user", fake_infer)
+
+    backfill.schedule_missing_sector_infer(user_id=3)
+    backfill.schedule_missing_sector_infer(user_id=3)
+    release.set()
+
+    for _ in range(40):
+        if 3 not in backfill._INFER_BUSY:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("background sector infer did not finish")
+
+    assert calls["n"] == 1

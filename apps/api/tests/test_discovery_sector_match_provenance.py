@@ -14,6 +14,7 @@ from app.services.discovery_candidate_llm import slim_candidate_for_llm
 from app.services.discovery_candidate_pool import (
     _index_rank_rows_by_name_sectors,
     _is_execution_verified_primary_mapping,
+    _name_matches_direction,
     _name_matches_sector,
     _sector_keywords,
     _sector_fit_score,
@@ -223,10 +224,10 @@ def test_verified_gold_stock_mapping_is_not_consumed_by_gold_name_recall(
     assert built[0]["sector_match_kind"] == "primary"
 
 
-def test_precious_metals_direction_accepts_gold_identity_vehicles(
+def test_precious_metals_direction_keeps_gold_spot_but_not_gold_equity(
     monkeypatch,
 ) -> None:
-    """贵金属方向可用「黄金/黄金股」身份的载体，身份板块保留在候选行上。"""
+    """贵金属方向可召回现货黄金，黄金股必须留在自己的板块上。"""
 
     monkeypatch.setattr(
         "app.services.discovery_candidate_pool.list_fund_primary_sectors",
@@ -246,6 +247,16 @@ def test_precious_metals_direction_accepts_gold_identity_vehicles(
             {
                 "fund_code": "021673",
                 "fund_name": "国泰黄金股ETF联接A",
+                "sector_name": "黄金股",
+                "source": "precompute_benchmark",
+                "confidence": 0.9,
+                "detail": {
+                    "benchmark_text": "中证沪深港黄金产业股票指数收益率×95%+存款×5%",
+                },
+            },
+            {
+                "fund_code": "021074",
+                "fund_name": "华夏中证沪深港黄金产业股票ETF发起式联接A",
                 "sector_name": "黄金股",
                 "source": "precompute_benchmark",
                 "confidence": 0.9,
@@ -276,10 +287,28 @@ def test_precious_metals_direction_accepts_gold_identity_vehicles(
             "max_drawdown_1y_percent": -22.0,
             "established_date": "2024-05-01",
         },
+        {
+            "fund_code": "021074",
+            "fund_name": "华夏中证沪深港黄金产业股票ETF发起式联接A",
+            "fund_scale_yi": 8.0,
+            "return_3m_percent": 8.0,
+            "return_6m_percent": 16.0,
+            "return_1y_percent": 30.0,
+            "max_drawdown_1y_percent": -18.0,
+            "established_date": "2024-03-01",
+        },
     ]
 
-    built = build_candidate_pool(
+    precious = build_candidate_pool(
         ["贵金属"],
+        per_sector=1,
+        pool_cap=1,
+        fetch_rank=lambda limit: rank_rows,
+        fetch_new_funds=lambda limit: [],
+        decision_at=_DECISION_AT,
+    )
+    gold_equity = build_candidate_pool(
+        ["黄金股"],
         per_sector=2,
         pool_cap=2,
         fetch_rank=lambda limit: rank_rows,
@@ -287,14 +316,16 @@ def test_precious_metals_direction_accepts_gold_identity_vehicles(
         decision_at=_DECISION_AT,
     )
 
-    by_code = {row["fund_code"]: row for row in built}
-    assert set(by_code) == {"000217", "021673"}
-    for row in by_code.values():
-        assert row["sector_label"] == "贵金属"
-        assert row["sector_match_kind"] == "primary"
-        assert row["sector_mapping_verified"] is True
-    assert by_code["000217"]["identity_sector_label"] == "黄金"
-    assert by_code["021673"]["identity_sector_label"] == "黄金股"
+    precious_by_code = {row["fund_code"]: row for row in precious}
+    assert set(precious_by_code) == {"000217"}
+    assert precious_by_code["000217"]["sector_label"] == "贵金属"
+    assert precious_by_code["000217"]["identity_sector_label"] == "黄金"
+
+    gold_equity_by_code = {row["fund_code"]: row for row in gold_equity}
+    assert set(gold_equity_by_code) == {"021673", "021074"}
+    for row in gold_equity_by_code.values():
+        assert row["sector_label"] == "黄金股"
+        assert row["identity_sector_label"] == "黄金股"
 
 
 def test_gold_direction_still_rejects_gold_stock_identity(monkeypatch) -> None:
@@ -330,6 +361,25 @@ def test_gold_direction_still_rejects_gold_stock_identity(monkeypatch) -> None:
     )
 
     assert built == []
+
+
+def test_precious_metals_tracking_rejects_gold_equity_index() -> None:
+    """贵金属方向不得把黄金股跟踪指数核验成同义命中。"""
+
+    row = _with_exact_passive_tracking_match(
+        {
+            "fund_code": "021074",
+            "fund_name": "华夏中证沪深港黄金产业股票ETF发起式联接A",
+            "fund_type": "股票型",
+            "sector_label": "贵金属",
+            "sector_match_kind": "name",
+            "tracking_reference_text": "中证沪深港黄金产业股票指数（931238）",
+        }
+    )
+
+    assert row["sector_match_kind"] == "name"
+    assert row["sector_identity_mismatch"]["verified_sector_label"] == "黄金股"
+    assert row["sector_identity_mismatch"]["target_sector_label"] == "贵金属"
 
 
 def test_exact_tracking_accepts_direction_synonym_for_precious_metals() -> None:
@@ -371,7 +421,13 @@ def test_discovery_keywords_cover_target_directions_without_single_cloud_false_p
     cloud_keywords = _sector_keywords("云计算", None)
 
     assert _name_matches_sector("某某游戏传媒ETF联接A", media_keywords)
-    assert _name_matches_sector("某某黄金产业股票A", gold_keywords)
+    assert _name_matches_direction("华安黄金易ETF联接A", gold_keywords, "贵金属")
+    assert not _name_matches_direction("某某黄金产业股票A", gold_keywords, "贵金属")
+    assert not _name_matches_direction(
+        "华夏中证沪深港黄金产业股票ETF发起式联接A",
+        gold_keywords,
+        "贵金属",
+    )
     assert _name_matches_sector("某某云计算ETF联接A", cloud_keywords)
     assert not _name_matches_sector("彩云成长混合A", cloud_keywords)
 

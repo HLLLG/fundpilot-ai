@@ -50,8 +50,11 @@ class _PortfolioThemeRefinementRule:
     target_theme: str
     parent_industries: tuple[str, ...]
     board_codes: tuple[str, ...]
+    extra_member_codes: tuple[str, ...] = ()
+    required_member_codes: tuple[str, ...] = ()
     minimum_matched_stocks: int = 2
     minimum_matched_weight_ratio: float = 0.60
+    minimum_matched_portfolio_weight_percent: float = 0.0
 
 
 # CSI 931743 covers both semiconductor materials and semiconductor equipment.
@@ -95,6 +98,41 @@ _PORTFOLIO_THEME_REFINEMENT_RULES: tuple[_PortfolioThemeRefinementRule, ...] = (
         target_theme="算力租赁",
         parent_industries=("IT服务Ⅱ", "通信服务"),
         board_codes=("BK1134",),
+    ),
+    # PCB 龙头（沪电/深南/胜宏/鹏鼎…）的 f127 是「元件」，行业映射停在「电子」。
+    # BK0877 只给行情，不给身份：2026-08 实测 100 只成分不含这些被重仓的龙头，
+    # 却有不少蹭概念小票。身份只认核心制造名单，且至少命中一只龙头，同时
+    # PCB 合计权重要够进整组合，避免「元件簿里两只边缘票」改写灵活配置。
+    # 覆铜板（华正/南亚）算上游，不单独构成身份，但仍计入 PCB 权重。
+    _PortfolioThemeRefinementRule(
+        target_theme="PCB",
+        parent_industries=("元件",),
+        board_codes=(),
+        extra_member_codes=(
+            "002463",  # 沪电股份
+            "002916",  # 深南电路
+            "300476",  # 胜宏科技
+            "002938",  # 鹏鼎控股
+            "002384",  # 东山精密
+            "002436",  # 兴森科技
+            "600183",  # 生益科技
+            "603228",  # 景旺电子
+            "603920",  # 世运电路
+            "603328",  # 依顿电子
+            "002815",  # 崇达技术
+            "002913",  # 奥士康
+            "300739",  # 明阳电路
+            "688183",  # 生益电子
+            "603186",  # 华正新材（覆铜板）
+            "688519",  # 南亚新材（覆铜板）
+        ),
+        required_member_codes=(
+            "002463",  # 沪电股份
+            "002916",  # 深南电路
+            "300476",  # 胜宏科技
+            "002938",  # 鹏鼎控股
+        ),
+        minimum_matched_portfolio_weight_percent=15.0,
     ),
 )
 
@@ -471,6 +509,14 @@ def _refine_current_portfolio_themes(
         for code, value in broad_evidence.items()
         if str(code).strip()
     }
+    disclosed_mass = 0.0
+    for row in rows:
+        try:
+            weight = float(row.get("weight_percent"))
+        except (TypeError, ValueError):
+            continue
+        if weight > 0:
+            disclosed_mass += weight
     for rule in _PORTFOLIO_THEME_REFINEMENT_RULES:
         parent_labels = {
             normalized
@@ -480,7 +526,11 @@ def _refine_current_portfolio_themes(
         candidates: list[tuple[str, float]] = []
         for row in rows:
             code = str(row.get("security_code") or "").strip()
-            evidence = enriched.get(code)
+            if code.isdigit():
+                code = code.zfill(6)
+            evidence = enriched.get(code) or enriched.get(
+                str(row.get("security_code") or "").strip()
+            )
             if not isinstance(evidence, Mapping):
                 continue
             industry = normalize_sector_label(
@@ -497,29 +547,40 @@ def _refine_current_portfolio_themes(
         if len(candidates) < rule.minimum_matched_stocks:
             continue
 
-        board_evidence = fetch_current_board_constituent_evidence(
-            rule.board_codes,
-            force_refresh=force_refresh,
-        )
-        member_codes: set[str] = set()
+        extra_member_codes = {
+            str(code).strip().zfill(6)
+            for code in rule.extra_member_codes
+            if str(code).strip().isdigit()
+        }
+        member_codes = set(extra_member_codes)
         supporting_rows: list[dict[str, Any]] = []
-        for board_code in rule.board_codes:
-            raw = board_evidence.get(board_code)
-            if not isinstance(raw, Mapping):
-                continue
-            codes = {
-                str(code).strip()
-                for code in raw.get("codes") or []
-                if str(code).strip()
-            }
-            if not codes:
-                continue
-            member_codes.update(codes)
-            supporting_rows.append(dict(raw))
-        if not member_codes or not supporting_rows:
+        if rule.board_codes:
+            board_evidence = fetch_current_board_constituent_evidence(
+                rule.board_codes,
+                force_refresh=force_refresh,
+            )
+            for board_code in rule.board_codes:
+                raw = board_evidence.get(board_code)
+                if not isinstance(raw, Mapping):
+                    continue
+                codes = {
+                    str(code).strip()
+                    for code in raw.get("codes") or []
+                    if str(code).strip()
+                }
+                if not codes:
+                    continue
+                member_codes.update(codes)
+                supporting_rows.append(dict(raw))
+        if not member_codes:
             continue
 
         matched = [(code, weight) for code, weight in candidates if code in member_codes]
+        required_member_codes = {
+            str(code).strip().zfill(6)
+            for code in rule.required_member_codes
+            if str(code).strip().isdigit()
+        }
         candidate_mass = sum(weight for _code, weight in candidates)
         matched_mass = sum(weight for _code, weight in matched)
         matched_ratio = matched_mass / candidate_mass if candidate_mass > 0 else 0.0
@@ -528,15 +589,32 @@ def _refine_current_portfolio_themes(
             or matched_ratio < rule.minimum_matched_weight_ratio
         ):
             continue
+        if required_member_codes and not any(
+            code in required_member_codes for code, _weight in matched
+        ):
+            continue
+        if (
+            rule.minimum_matched_portfolio_weight_percent > 0
+            and matched_mass < rule.minimum_matched_portfolio_weight_percent
+        ):
+            continue
 
-        board_available = [
+        observation_times = [
             available
             for raw in supporting_rows
             if (available := _aware_decision(raw.get("available_at"))) is not None
         ]
-        if not board_available:
+        if not observation_times:
+            for code, _weight in matched:
+                value = enriched.get(code)
+                if not isinstance(value, Mapping):
+                    continue
+                available = _aware_decision(value.get("available_at"))
+                if available is not None:
+                    observation_times.append(available)
+        if not observation_times:
             continue
-        theme_available_at = max(board_available).isoformat()
+        theme_available_at = max(observation_times).isoformat()
         supporting_refs = sorted(
             str(raw.get("ref_id") or "").strip()
             for raw in supporting_rows
@@ -545,18 +623,29 @@ def _refine_current_portfolio_themes(
         boards_pit_qualified = bool(supporting_refs) and all(
             raw.get("pit_qualified") is True for raw in supporting_rows
         )
+        seed_only = bool(extra_member_codes) and not supporting_rows
         detail = {
-            "method": "portfolio_board_membership",
+            "method": (
+                "portfolio_seed_membership"
+                if seed_only
+                else "portfolio_board_membership"
+            ),
             "target_theme": rule.target_theme,
             "parent_industries": list(rule.parent_industries),
             "board_codes": list(rule.board_codes),
+            "extra_member_codes": sorted(extra_member_codes),
+            "required_member_codes": sorted(required_member_codes),
             "matched_stock_count": len(matched),
             "candidate_stock_count": len(candidates),
             "matched_weight_percent": round(matched_mass, 8),
             "candidate_weight_percent": round(candidate_mass, 8),
+            "disclosed_weight_percent": round(disclosed_mass, 8),
             "matched_weight_ratio": round(matched_ratio, 8),
             "minimum_matched_stocks": rule.minimum_matched_stocks,
             "minimum_matched_weight_ratio": rule.minimum_matched_weight_ratio,
+            "minimum_matched_portfolio_weight_percent": (
+                rule.minimum_matched_portfolio_weight_percent
+            ),
         }
         theme_ref_id = _classification_ref(
             {
@@ -565,6 +654,14 @@ def _refine_current_portfolio_themes(
                 "available_at": theme_available_at,
             }
         )
+        source_parts = []
+        if rule.board_codes:
+            source_parts.append(
+                "eastmoney_portfolio_board_membership:" + "+".join(rule.board_codes)
+            )
+        if extra_member_codes:
+            source_parts.append(f"seed_membership:{rule.target_theme}")
+        theme_source = "+".join(source_parts)
         matched_codes = {code for code, _weight in matched}
         for code in matched_codes:
             value = enriched.get(code)
@@ -572,19 +669,20 @@ def _refine_current_portfolio_themes(
                 continue
             industry_available = _aware_decision(value.get("available_at"))
             effective_available = max(
-                [*board_available, *([industry_available] if industry_available else [])]
+                [
+                    *observation_times,
+                    *([industry_available] if industry_available else []),
+                ]
             )
+            stock_pit_qualified = value.get("pit_qualified") is True
             enriched[code] = {
                 **dict(value),
                 "theme": rule.target_theme,
                 "theme_available_at": effective_available.isoformat(),
-                "theme_source": (
-                    "eastmoney_portfolio_board_membership:"
-                    + "+".join(rule.board_codes)
-                ),
+                "theme_source": theme_source,
                 "theme_ref_id": theme_ref_id,
                 "theme_pit_qualified": bool(
-                    boards_pit_qualified and value.get("pit_qualified") is True
+                    (boards_pit_qualified or seed_only) and stock_pit_qualified
                 ),
                 "theme_detail": detail,
             }

@@ -21,6 +21,9 @@ COPY apps/api/scripts/capture_sector_direction_states.py /app/scripts/capture_se
 # 以及排查"方向无合格载体"时逐门槛诊断候选。
 COPY apps/api/scripts/rescan_cpo_cxo_targets.py /app/scripts/rescan_cpo_cxo_targets.py
 COPY apps/api/scripts/diagnose_sector_vehicles.py /app/scripts/diagnose_sector_vehicles.py
+COPY apps/api/scripts/rerun_holdings_primary_sectors.py /app/scripts/rerun_holdings_primary_sectors.py
+COPY apps/api/scripts/rerun_all_primary_sectors.py /app/scripts/rerun_all_primary_sectors.py
+COPY apps/api/scripts/verify_holdings_primary_sectors.py /app/scripts/verify_holdings_primary_sectors.py
 
 # 因子 IC 离线回测产物由 scripts/run_factor_ic.py 生成，供
 # factor_confidence.py::load_ic_summary 读取。`.gitkeep` 保证干净 checkout 中目录存在；

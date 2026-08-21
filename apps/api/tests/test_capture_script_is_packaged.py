@@ -30,6 +30,11 @@ API_ROOT = Path(__file__).resolve().parents[1]
 #: 新增这类脚本时必须同时更新两份 Dockerfile 与两份 .dockerignore。
 SCHEDULED_SCRIPTS = (
     "capture_sector_direction_states.py",
+    "rescan_cpo_cxo_targets.py",
+    "diagnose_sector_vehicles.py",
+    "rerun_holdings_primary_sectors.py",
+    "rerun_all_primary_sectors.py",
+    "verify_holdings_primary_sectors.py",
 )
 
 

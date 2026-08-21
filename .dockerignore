@@ -33,6 +33,9 @@ apps/api/scripts/*
 !apps/api/scripts/capture_sector_direction_states.py
 !apps/api/scripts/rescan_cpo_cxo_targets.py
 !apps/api/scripts/diagnose_sector_vehicles.py
+!apps/api/scripts/rerun_holdings_primary_sectors.py
+!apps/api/scripts/rerun_all_primary_sectors.py
+!apps/api/scripts/verify_holdings_primary_sectors.py
 deploy
 scripts
 

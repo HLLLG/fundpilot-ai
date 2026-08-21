@@ -102,6 +102,7 @@ def _window_for_timestamp(
             AMOUNT_RE.search(previous)
             and not _is_summary_line(previous)
             and not _is_direction_anchor(previous)
+            and _leading_amount_belongs_to_current_card(lines, prev_time)
         ):
             start -= 1
     end = min(time_index + 4, next_time)
@@ -110,6 +111,80 @@ def _window_for_timestamp(
             end = index
             break
     return lines[start:end]
+
+
+def _has_amount_before_timestamp(lines: list[str], start: int, time_index: int) -> bool:
+    for index in range(start, time_index):
+        line = lines[index]
+        if _is_summary_line(line):
+            continue
+        if AMOUNT_RE.search(line):
+            return True
+    time_line = lines[time_index]
+    match = TIME_RE.search(time_line)
+    return bool(match and AMOUNT_RE.search(time_line[: match.start()]))
+
+
+def _is_attachable_amount_line(line: str) -> bool:
+    return bool(
+        AMOUNT_RE.search(line)
+        and not _is_summary_line(line)
+        and not _is_direction_anchor(line)
+    )
+
+
+def _direction_index_before(lines: list[str], time_index: int, stop_before: int) -> int:
+    start = time_index
+    for index in range(time_index, stop_before, -1):
+        start = index
+        if _is_direction_anchor(lines[index]):
+            return index
+    return start
+
+
+def _previous_timestamp_index(lines: list[str], time_index: int) -> int:
+    for index in range(time_index - 1, -1, -1):
+        if TIME_RE.search(lines[index]):
+            return index
+    return -1
+
+
+def _card_has_own_pre_time_amount(
+    lines: list[str],
+    direction_index: int,
+    time_index: int,
+    prev_time: int,
+) -> bool:
+    """本笔在时间戳之前是否已经有自己的金额（双列/同行），排除上一笔拖尾金额。"""
+    if _has_amount_before_timestamp(lines, direction_index, time_index):
+        return True
+    if direction_index <= 0:
+        return False
+    leading = lines[direction_index - 1]
+    if not _is_attachable_amount_line(leading):
+        return False
+    # 「先时间后金额」时，上一笔金额就贴在上一时间戳后面，不能当成双列前置金额。
+    if prev_time >= 0 and direction_index - 1 == prev_time + 1:
+        return False
+    return True
+
+
+def _previous_card_already_has_amount(lines: list[str], prev_time: int) -> bool:
+    if prev_time < 0:
+        return False
+    earlier_time = _previous_timestamp_index(lines, prev_time)
+    prev_direction = _direction_index_before(lines, prev_time, earlier_time)
+    return _card_has_own_pre_time_amount(lines, prev_direction, prev_time, earlier_time)
+
+
+def _leading_amount_belongs_to_current_card(lines: list[str], prev_time: int) -> bool:
+    """紧挨上一笔时间戳的金额属于上一笔的「先时间后金额」明细，不能再塞给下一笔。
+
+    双列版式则相反：上一笔已经在时间之前带了自己的金额，时间戳后那笔才是本笔。
+    """
+    if prev_time < 0:
+        return True
+    return _previous_card_already_has_amount(lines, prev_time)
 
 
 def _is_direction_anchor(line: str) -> bool:

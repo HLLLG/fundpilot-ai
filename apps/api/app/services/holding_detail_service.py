@@ -171,6 +171,9 @@ def build_holding_detail(
         holding,
         profile,
         fetch_benchmark=True,
+        # 主动基金（如 000960 招商医疗保健）的业绩基准不能当板块；详情页已经
+        # 有季报重仓，必须走持仓穿透才能得到 CXO / 国证CXO，否则关联板块一直空。
+        fetch_holdings_infer=True,
         batch_profiles_by_code=context.profiles_by_code,
         primary_sector_batch_context=context.primary_sector_context_for(
             holding,

@@ -1,7 +1,7 @@
-"""组合级主题细分规则（CPO / CXO）的行为契约。
+"""组合级主题细分规则（CPO / CXO / PCB）的行为契约。
 
-这些规则决定重仓光模块/医药外包的基金能否拿到 CPO / CXO 主板块身份，
-进而决定荐基候选池对这两个方向是否永远召回为空。
+这些规则决定重仓光模块/医药外包/PCB 的基金能否拿到对应主板块身份，
+进而决定荐基候选池对这些方向是否永远召回为空。
 """
 
 from __future__ import annotations
@@ -194,3 +194,153 @@ def test_refined_cxo_theme_wins_primary_sector_vote():
     assert assessment["sector_name"] == "CXO"
     assert assessment["scores"] == {"CXO": 50.0, "医疗": 10.0}
     assert assessment["qualification"]["sector_inference_eligible"] is True
+
+
+def test_pcb_rule_uses_seed_codes_when_board_omits_leaders(monkeypatch):
+    """身份不读 BK0877：沪电/深南在核心名单且合计够重，即可细分为 PCB。"""
+
+    rows = [
+        {"security_code": "002463", "weight_percent": 9.0},  # 沪电股份
+        {"security_code": "002916", "weight_percent": 7.0},  # 深南电路
+        {"security_code": "300408", "weight_percent": 3.0},  # 三环集团，MLCC
+    ]
+    broad = {
+        code: _industry_evidence("元件")
+        for code in ("002463", "002916", "300408")
+    }
+
+    enriched = _refine_current_portfolio_themes(rows, broad, force_refresh=False)
+
+    assert enriched["002463"]["theme"] == "PCB"
+    assert enriched["002916"]["theme"] == "PCB"
+    assert enriched["002463"]["theme_source"] == "seed_membership:PCB"
+    assert "theme" not in enriched["300408"]
+
+
+def test_pcb_rule_keeps_mlcc_components_in_electronics(monkeypatch):
+    """同为「元件」的 MLCC 不在 PCB 名单/概念板，不被改写。"""
+
+    rows = [
+        {"security_code": "300408", "weight_percent": 8.0},  # 三环集团
+        {"security_code": "000636", "weight_percent": 6.0},  # 风华高科
+        {"security_code": "002463", "weight_percent": 3.0},  # 沪电，未过 60%
+    ]
+    broad = {
+        code: _industry_evidence("元件")
+        for code in ("300408", "000636", "002463")
+    }
+    enriched = _refine_current_portfolio_themes(rows, broad, force_refresh=False)
+
+    assert all(
+        "theme" not in value
+        for value in enriched.values()
+        if isinstance(value, dict)
+    )
+
+
+def test_refined_pcb_theme_wins_primary_sector_vote():
+    """细分主题优先于「元件→电子」，可产出合格的 PCB 主板块。"""
+
+    coverage = {"portfolio_weight_coverage_percent": 60.0}
+    stocks = [
+        HoldingStockRow(
+            name="沪电股份",
+            weight=28.0,
+            industry="元件",
+            stock_code="002463",
+            coverage=coverage,
+            industry_pit_qualified=True,
+            theme="PCB",
+            theme_pit_qualified=True,
+            theme_available_at=_NOW,
+        ),
+        HoldingStockRow(
+            name="深南电路",
+            weight=18.0,
+            industry="元件",
+            stock_code="002916",
+            coverage=coverage,
+            industry_pit_qualified=True,
+            theme="PCB",
+            theme_pit_qualified=True,
+            theme_available_at=_NOW,
+        ),
+        HoldingStockRow(
+            name="三环集团",
+            weight=8.0,
+            industry="元件",
+            stock_code="300408",
+            coverage=coverage,
+            industry_pit_qualified=True,
+        ),
+    ]
+
+    assessment = assess_sector_from_portfolio_stocks(stocks)
+
+    assert assessment["sector_name"] == "PCB"
+    assert assessment["scores"] == {"PCB": 46.0, "电子": 8.0}
+    assert assessment["qualification"]["sector_inference_eligible"] is True
+
+
+def test_pcb_rule_requires_a_core_leader(monkeypatch):
+    """只有生益/东山、没有沪电深南胜宏鹏鼎时，不升成 PCB。"""
+
+    rows = [
+        {"security_code": "002384", "weight_percent": 9.0},  # 东山精密
+        {"security_code": "600183", "weight_percent": 8.0},  # 生益科技
+    ]
+    broad = {
+        code: _industry_evidence("元件") for code in ("002384", "600183")
+    }
+
+    enriched = _refine_current_portfolio_themes(rows, broad, force_refresh=False)
+
+    assert all(
+        "theme" not in value
+        for value in enriched.values()
+        if isinstance(value, dict)
+    )
+
+
+def test_pcb_rule_counts_ccl_upstream_with_a_leader(monkeypatch):
+    """覆铜板本身不够，但配上沪电后一起算进 PCB。"""
+
+    rows = [
+        {"security_code": "002463", "weight_percent": 8.0},
+        {"security_code": "603186", "weight_percent": 6.0},
+        {"security_code": "688519", "weight_percent": 5.0},
+        {"security_code": "300408", "weight_percent": 3.0},
+    ]
+    broad = {
+        code: _industry_evidence("元件")
+        for code in ("002463", "603186", "688519", "300408")
+    }
+
+    enriched = _refine_current_portfolio_themes(rows, broad, force_refresh=False)
+
+    assert enriched["002463"]["theme"] == "PCB"
+    assert enriched["603186"]["theme"] == "PCB"
+    assert enriched["688519"]["theme"] == "PCB"
+    assert "theme" not in enriched["300408"]
+
+
+def test_pcb_rule_requires_portfolio_weight(monkeypatch):
+    """有龙头但合计净值不够 15%，不升成 PCB。"""
+
+    rows = [
+        {"security_code": "002463", "weight_percent": 1.36},
+        {"security_code": "002916", "weight_percent": 1.32},
+        {"security_code": "300408", "weight_percent": 0.63},
+    ]
+    broad = {
+        code: _industry_evidence("元件")
+        for code in ("002463", "002916", "300408")
+    }
+
+    enriched = _refine_current_portfolio_themes(rows, broad, force_refresh=False)
+
+    assert all(
+        "theme" not in value
+        for value in enriched.values()
+        if isinstance(value, dict)
+    )

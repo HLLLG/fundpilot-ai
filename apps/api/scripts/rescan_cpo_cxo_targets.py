@@ -1,4 +1,4 @@
-"""一次性运维脚本：预筛可能命中 CPO/CXO/算力租赁 细分规则的基金并触发重算。
+"""一次性运维脚本：预筛可能命中 CPO/CXO/算力租赁/PCB 细分规则的基金并触发重算。
 
 通过 ``app.db_connect`` 的统一连接层访问数据库，本地 SQLite 与生产 MySQL
 都可直接运行。
@@ -27,6 +27,31 @@ _RULES = {
         "parent": ("IT服务Ⅱ", "通信服务"),
         "board": "BK1134",
     },
+    "PCB": {
+        "old_sectors": ("电子", "PCB"),
+        "parent": ("元件",),
+        "board": None,
+        "extra_codes": (
+            "002463",
+            "002916",
+            "300476",
+            "002938",
+            "002384",
+            "002436",
+            "600183",
+            "603228",
+            "603920",
+            "603328",
+            "002815",
+            "002913",
+            "300739",
+            "688183",
+            "603186",
+            "688519",
+        ),
+        "required_codes": ("002463", "002916", "300476", "002938"),
+        "min_portfolio_weight": 15.0,
+    },
 }
 _MIN_MATCHED_STOCKS = 2
 _MIN_MATCHED_WEIGHT_RATIO = 0.60
@@ -49,16 +74,32 @@ def _board_members() -> dict[str, set[str]]:
         fetch_current_board_constituent_evidence,
     )
 
-    evidence = fetch_current_board_constituent_evidence(
-        [rule["board"] for rule in _RULES.values()],
+    board_codes = [
+        str(rule["board"])
+        for rule in _RULES.values()
+        if rule.get("board")
+    ]
+    evidence = (
+        fetch_current_board_constituent_evidence(board_codes) if board_codes else {}
     )
     members: dict[str, set[str]] = {}
     for theme, rule in _RULES.items():
-        raw = evidence.get(rule["board"]) or {}
-        members[theme] = {
+        board = str(rule.get("board") or "")
+        raw = evidence.get(board) or {}
+        extra = {
+            str(code).strip().zfill(6)
+            for code in rule.get("extra_codes") or ()
+            if str(code).strip()
+        }
+        board_members = {
             str(code).strip() for code in raw.get("codes") or [] if str(code).strip()
         }
-        print(f"{theme} board {rule['board']}: {len(members[theme])} constituents")
+        members[theme] = extra if extra and not board else board_members | extra
+        print(
+            f"{theme} board {board or '-'}: "
+            f"{len(members[theme])} constituents "
+            f"(extra {len(extra)})"
+        )
     return members
 
 
@@ -93,7 +134,10 @@ def _screen(members: dict[str, set[str]]) -> dict[str, list[str]]:
             if str(row.get("sector_name") or "") not in rule["old_sectors"]:
                 continue
             candidates = [
-                (str(item.get("stock_code") or ""), float(item.get("weight") or 0.0))
+                (
+                    str(item.get("stock_code") or "").strip().zfill(6),
+                    float(item.get("weight") or 0.0),
+                )
                 for item in evidence
                 if isinstance(item, dict)
                 and str(item.get("industry") or "") in rule["parent"]
@@ -106,12 +150,20 @@ def _screen(members: dict[str, set[str]]) -> dict[str, list[str]]:
                 for code, weight in candidates
                 if code in members[theme]
             ]
+            required = {
+                str(code).strip().zfill(6)
+                for code in rule.get("required_codes") or ()
+                if str(code).strip()
+            }
             candidate_mass = sum(weight for _code, weight in candidates)
             matched_mass = sum(weight for _code, weight in matched)
+            min_portfolio = float(rule.get("min_portfolio_weight") or 0.0)
             if (
                 len(matched) >= _MIN_MATCHED_STOCKS
                 and candidate_mass > 0
                 and matched_mass / candidate_mass >= _MIN_MATCHED_WEIGHT_RATIO
+                and (not required or any(code in required for code, _weight in matched))
+                and (min_portfolio <= 0 or matched_mass >= min_portfolio)
             ):
                 themes = hits.setdefault(str(row.get("fund_code") or ""), [])
                 if theme not in themes:
@@ -144,6 +196,29 @@ def _expire_verified_rows(fund_codes: list[str]) -> int:
     return expired
 
 
+def _clear_pending_holdings_current(sector_names: tuple[str, ...]) -> int:
+    """Drop research-only current projections; snapshots stay in the log."""
+
+    if not sector_names:
+        return 0
+    from app.database import _connect
+
+    placeholders = ",".join("?" * len(sector_names))
+    with _connect() as connection:
+        cursor = connection.execute(
+            f"""
+            DELETE FROM fund_sector_current
+            WHERE source IN ('precompute_holdings', 'holdings_infer')
+              AND identity_status = 'pending'
+              AND sector_name IN ({placeholders})
+            """,
+            sector_names,
+        )
+        deleted = int(cursor.rowcount or 0)
+        connection.commit()
+    return deleted
+
+
 def main() -> None:
     action = sys.argv[1] if len(sys.argv) > 1 else "screen"
     members = _board_members()
@@ -152,6 +227,9 @@ def main() -> None:
         print(f"  {code} -> {'+'.join(themes)}")
     if action != "run":
         return
+
+    cleared = _clear_pending_holdings_current(("PCB",))
+    print(f"cleared {cleared} pending PCB current rows")
 
     codes = sorted(hits)
     expired = _expire_verified_rows(codes)

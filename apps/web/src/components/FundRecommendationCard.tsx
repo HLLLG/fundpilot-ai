@@ -14,11 +14,11 @@ import { translateEvidenceText } from "@/lib/decisionText";
 import {
   cardSpecificValidationNotes,
   confidenceDisplayLabel,
-  keyReasonLines,
   meaningfulNewsLines,
   safeDiagnosticMetrics,
   selectNextTradingPlan,
   selectPrimaryReason,
+  whyReasonLines,
 } from "@/lib/reportPresentation";
 import { DecisionEvidenceGrid } from "@/components/DecisionEvidenceGrid";
 import { MethodologyNote } from "@/components/MethodologyNote";
@@ -555,14 +555,10 @@ export function FundRecommendationCard({
     : nextPlanCandidate;
   const bullish = meaningfulNewsLines(item.news_bullish);
   const bearish = meaningfulNewsLines(item.news_bearish);
-  const newsKeys = new Set(
-    [...bullish, ...bearish].map(exactEvidenceKey).filter(Boolean),
-  );
-  const reasons = keyReasonLines(item).filter(
-    (reason) => {
-      const key = exactEvidenceKey(reason);
-      return key !== primaryReasonKey && !newsKeys.has(key);
-    },
+  const reasons = whyReasonLines(item);
+  const extraRisks = item.risks && item.risks.length > 1 ? item.risks.slice(1) : [];
+  const hasWhyContent = Boolean(
+    positionChangeBasis || reasons.length || bullish.length || bearish.length || extraRisks.length,
   );
   const diagnostic = safeDiagnosticMetrics(snapshot ?? {});
   const referenceLabel = confidenceDisplayLabel(item.confidence);
@@ -669,36 +665,40 @@ export function FundRecommendationCard({
               主要风险：{translateEvidenceText(item.risks[0])}
             </p>
           ) : null}
-          <Disclosure
-            id={`${stableIdentity}-why`}
-            title="为什么这样建议"
-            open={whyOpen}
-            onToggle={() => setWhyOpen((value) => !value)}
-          >
-            <ul className="space-y-2 text-sm leading-6 text-slate-700">
-              {/* 仓位比例的依据原本紧贴在金额下面，和上方的核心理由并列成第二段
-                  说明文字。它属于"为什么"，放到这里首位更合适。 */}
-              {positionChangeBasis ? (
-                <li className="break-words [overflow-wrap:anywhere]">
-                  {translateEvidenceText(positionChangeBasis)}
-                </li>
+          {hasWhyContent ? (
+            <Disclosure
+              id={`${stableIdentity}-why`}
+              title="为什么这样建议"
+              open={whyOpen}
+              onToggle={() => setWhyOpen((value) => !value)}
+            >
+              {positionChangeBasis || reasons.length ? (
+                <ul className="space-y-2 text-sm leading-6 text-slate-700">
+                  {/* 仓位比例的依据原本紧贴在金额下面，和上方的核心理由并列成第二段
+                      说明文字。它属于"为什么"，放到这里首位更合适。 */}
+                  {positionChangeBasis ? (
+                    <li className="break-words [overflow-wrap:anywhere]">
+                      {translateEvidenceText(positionChangeBasis)}
+                    </li>
+                  ) : null}
+                  {reasons.map((point) => (
+                    <li key={point} className="break-words [overflow-wrap:anywhere]">{point}</li>
+                  ))}
+                </ul>
               ) : null}
-              {reasons.map((point) => (
-                <li key={point} className="break-words [overflow-wrap:anywhere]">{point}</li>
-              ))}
-            </ul>
-            {bullish.length ? <NewsBlock title="有效利好" tone="positive" items={bullish} /> : null}
-            {bearish.length ? <NewsBlock title="有效利空 / 风险" tone="negative" items={bearish} /> : null}
-            {item.risks && item.risks.length > 1 ? (
-              <ul className="mt-3 space-y-1 text-xs text-[var(--danger-fg)]">
-                {item.risks.slice(1).map((risk) => (
-                  <li key={risk} className="break-words [overflow-wrap:anywhere]">
-                    {translateEvidenceText(risk)}
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </Disclosure>
+              {bullish.length ? <NewsBlock title="有效利好" tone="positive" items={bullish} /> : null}
+              {bearish.length ? <NewsBlock title="有效利空 / 风险" tone="negative" items={bearish} /> : null}
+              {extraRisks.length ? (
+                <ul className="mt-3 space-y-1 text-xs text-[var(--danger-fg)]">
+                  {extraRisks.map((risk) => (
+                    <li key={risk} className="break-words [overflow-wrap:anywhere]">
+                      {translateEvidenceText(risk)}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </Disclosure>
+          ) : null}
           <Disclosure
             id={`${stableIdentity}-professional`}
             title="专业依据"

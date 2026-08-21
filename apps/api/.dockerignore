@@ -7,6 +7,11 @@
 tests
 scripts/*
 !scripts/capture_sector_direction_states.py
+!scripts/rescan_cpo_cxo_targets.py
+!scripts/diagnose_sector_vehicles.py
+!scripts/rerun_holdings_primary_sectors.py
+!scripts/rerun_all_primary_sectors.py
+!scripts/verify_holdings_primary_sectors.py
 **/__pycache__
 **/*.py[cod]
 **/*.log

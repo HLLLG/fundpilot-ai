@@ -8,6 +8,7 @@ from app.database import (
     list_fund_primary_sectors_by_sector_names,
     list_fund_sector_exposure_snapshots,
     list_fund_sector_resolution_statuses,
+    replace_fund_sector_current,
     save_fund_sector_resolution_statuses,
 )
 from app.services.fund_primary_sector_types import PrimarySectorRecord
@@ -115,10 +116,98 @@ def test_research_only_holdings_are_persisted_but_never_executable() -> None:
 
     assert result is not None
     assert result["identity_status"] == "pending"
-    current = get_fund_sector_current("000712")
-    assert current[0]["identity_status"] == "pending"
+    assert result["current_replaced"] is False
+    assert get_fund_sector_current("000712") == []
     assert list_fund_primary_sectors_by_sector_names(["医药"]) == []
     assert len(list_fund_sector_exposure_snapshots("000712")) == 2
+
+
+def test_research_only_holdings_clear_stale_pending_current() -> None:
+    replace_fund_sector_current(
+        fund_code="000713",
+        rows=[
+            {
+                "fund_code": "000713",
+                "sector_name": "PCB",
+                "exposure_percent": 12.0,
+                "is_primary": True,
+                "identity_status": "pending",
+                "source": "precompute_holdings",
+                "confidence": 0.6,
+                "evidence_snapshot_id": "legacy-pending",
+                "source_ref": "legacy-pending",
+                "report_period": "2026Q2",
+                "as_of_date": "2026-06-30",
+                "available_at": "2026-07-21T09:00:00+08:00",
+                "resolved_at": "2026-08-05T00:00:00+00:00",
+                "expires_at": "2026-09-05T00:00:00+00:00",
+                "mapping_version": "fund_sector_identity.2026-08.v1",
+                "detail": {},
+            }
+        ],
+    )
+    assert get_fund_sector_current("000713")[0]["sector_name"] == "PCB"
+
+    cleared = materialize_holdings_sector_assessment(
+        fund_code="000713",
+        source="precompute_holdings",
+        evaluated_at=datetime(2026, 8, 5, 1, tzinfo=timezone.utc),
+        evidence_payload={
+            "snapshot_hash": "holdings-snapshot-pending-2",
+            "report_period": "2026Q2",
+            "as_of": "2026-06-30",
+            "available_at": "2026-07-21T09:00:00+08:00",
+        },
+        sector_clue={
+            "sector_name": "PCB",
+            "scores": {"PCB": 12.0, "电子": 8.0},
+            "evidence": [],
+            "coverage": {"dominant_theme_ratio": 12.0 / 20.0},
+            "qualification": {
+                "sector_inference_eligible": False,
+                "research_only": True,
+                "reason_codes": ["industry_theme_dominance_insufficient"],
+            },
+        },
+    )
+
+    assert cleared is not None
+    assert cleared["identity_status"] == "pending"
+    assert cleared["current_replaced"] is True
+    assert get_fund_sector_current("000713") == []
+
+
+def test_research_only_holdings_do_not_downgrade_verified_current() -> None:
+    materialize_primary_sector_record(
+        _verified_holdings_record(),
+        evaluated_at=datetime(2026, 8, 5, tzinfo=timezone.utc),
+    )
+    materialize_holdings_sector_assessment(
+        fund_code="000711",
+        source="precompute_holdings",
+        evaluated_at=datetime(2026, 8, 5, 1, tzinfo=timezone.utc),
+        evidence_payload={
+            "snapshot_hash": "holdings-snapshot-weaker",
+            "report_period": "2026Q2",
+            "as_of": "2026-06-30",
+            "available_at": "2026-07-21T09:00:00+08:00",
+        },
+        sector_clue={
+            "sector_name": "PCB",
+            "scores": {"PCB": 12.0},
+            "evidence": [],
+            "coverage": {"dominant_theme_ratio": 1.0},
+            "qualification": {
+                "sector_inference_eligible": False,
+                "research_only": True,
+                "reason_codes": ["industry_theme_dominance_insufficient"],
+            },
+        },
+    )
+
+    current = get_fund_sector_current("000711")
+    assert current[0]["sector_name"] == "医药"
+    assert current[0]["identity_status"] == "verified"
 
 
 def test_pending_name_or_llm_mapping_cannot_replace_verified_holdings() -> None:

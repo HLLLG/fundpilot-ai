@@ -5,6 +5,7 @@ import {
   displayFundRecommendations,
   groupFundRecommendations,
   keyReasonLines,
+  whyReasonLines,
   cardSpecificValidationNotes,
   meaningfulNewsLines,
   portfolioRecommendationLines,
@@ -98,6 +99,44 @@ describe("daily report presentation", () => {
         }),
       ),
     ).toEqual(["房地产趋势已跌破退出线"]);
+  });
+
+  it("keeps extra causal points in the why section after the card header takes the primary", () => {
+    expect(
+      whyReasonLines(
+        rec({
+          points: [
+            "煤炭当日估算+0.16%，盘中下探反弹但尾盘力度有限。",
+            "煤炭逆势偏强但盘中冲高回落，追涨胜率低。",
+            "下一交易日若跌破3.29元附近平台，短线转弱。",
+          ],
+        }),
+      ),
+    ).toEqual(["煤炭逆势偏强但盘中冲高回落，追涨胜率低。"]);
+  });
+
+  it("keeps the only causal point in the why section after slim 1-2 output", () => {
+    expect(
+      whyReasonLines(
+        rec({
+          points: [
+            "医疗当日估算-2.86%，盘中全天偏弱，短线追高风险较高。",
+            "下一交易日若不能收复0.86元前高区域，前期涨势或回吐。",
+          ],
+        }),
+      ),
+    ).toEqual(["医疗当日估算-2.86%，盘中全天偏弱，短线追高风险较高。"]);
+  });
+
+  it("does not repeat a news headline as a why-section reason", () => {
+    expect(
+      whyReasonLines(
+        rec({
+          points: ["煤炭开采板块短线走低，宝泰隆跌停"],
+          news_bearish: ["煤炭开采板块短线走低，宝泰隆跌停"],
+        }),
+      ),
+    ).toEqual([]);
   });
 
   it("keeps only card-specific validation notes", () => {

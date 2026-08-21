@@ -367,7 +367,7 @@ def test_daily_output_requirements_stop_asking_for_redundant_evidence_fields() -
     joined_user = "\n".join(OUTPUT_REQUIREMENTS_USER)
 
     assert "不要输出 decision_path" in joined_system
-    assert "points（1-2 条" in joined_system
+    assert "points（2-3 条" in joined_system
     assert "暂无明确利好" in joined_system
     assert "禁止写「暂无明确利好」" in joined_system
     assert "decision_path 为 1 句话" not in joined_system

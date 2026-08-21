@@ -193,6 +193,7 @@ class FundProfileService:
         profile: FundProfile | None,
         *,
         fetch_benchmark: bool,
+        fetch_holdings_infer: bool = False,
         batch_profiles_by_code: dict[str, FundProfile] | None = None,
         primary_sector_batch_context: "PrimarySectorBatchContext | None" = None,
     ) -> Holding:
@@ -210,12 +211,17 @@ class FundProfileService:
                 fund_name=fund_name,
                 allow_name_infer=False,
                 fetch_benchmark=fetch_benchmark,
+                fetch_holdings_infer=fetch_holdings_infer,
                 batch_context=primary_sector_batch_context,
             )
-            if record and record.source == "benchmark_index":
+            if record and _is_valid_sector_label(record.sector_name):
                 sector_name = record.sector_name
                 if record.intraday_index_name:
                     index_name = record.intraday_index_name
+                elif record.source in {"holdings_infer", "precompute_holdings"}:
+                    inferred_index = infer_intraday_index_from_sector(record.sector_name)
+                    if inferred_index:
+                        index_name = inferred_index
                 if profile is not None and (
                     profile.sector_name != sector_name
                     or (
@@ -246,6 +252,7 @@ class FundProfileService:
                 holding,
                 allow_name_infer=False,
                 fetch_benchmark=fetch_benchmark,
+                fetch_holdings_infer=fetch_holdings_infer,
                 batch_context=primary_sector_batch_context,
             )
             if fields:
@@ -267,6 +274,7 @@ class FundProfileService:
                 fallback_code=profile.fund_code,
                 allow_name_infer=False,
                 fetch_benchmark=fetch_benchmark,
+                fetch_holdings_infer=fetch_holdings_infer,
                 batch_context=primary_sector_batch_context,
             )
             if fields.get("sector_name"):
@@ -763,7 +771,11 @@ def _sanitize_profile_sector_fields(profile: FundProfile) -> FundProfile:
                     sector_name = board
     if intraday_index_name and infer_intraday_index_from_fund_name(profile.fund_name) is None:
         inferred_board_index = infer_intraday_index_from_sector(sector_name)
-        if inferred_board_index and intraday_index_name == inferred_board_index:
+        if (
+            inferred_board_index
+            and intraday_index_name == inferred_board_index
+            and (sector_name or "") not in _SECTOR_INTRADAY_INDEX_OVERRIDES
+        ):
             intraday_index_name = None
 
     if sector_name == profile.sector_name and intraday_index_name == profile.intraday_index_name:
@@ -817,15 +829,29 @@ def _looks_like_board_label(name: str) -> bool:
 
 
 def _looks_like_index_name(name: str) -> bool:
-    if name.startswith("中证") or name.startswith("上证") or name.startswith("深证"):
+    if name.startswith(("中证", "上证", "深证", "国证")):
+        return True
+    from app.services.sector_registry_data import TRACKING_INDEX_DISPLAY_NAMES
+
+    if name in TRACKING_INDEX_DISPLAY_NAMES:
         return True
     return name.endswith("指数") or "ETF" in name
+
+
+_SECTOR_INTRADAY_INDEX_OVERRIDES = {
+    # 养基宝主动基金详情的「场内指数」走国证CXO(980120)，不是行业板 BK1600。
+    # BK1600 仍用于重仓成分判定与资金流；分时图必须对上 980120。
+    "CXO": "国证CXO",
+}
 
 
 def infer_intraday_index_from_sector(sector_name: str | None) -> str | None:
     """关联板块短名 → registry 中可用于分时查询的指数标签。"""
     if not sector_name or not _is_valid_sector_label(sector_name):
         return None
+    override = _SECTOR_INTRADAY_INDEX_OVERRIDES.get(sector_name.strip())
+    if override:
+        return override
     from app.services.sector_canonical import get_intraday_canonical_sector
 
     canonical = get_intraday_canonical_sector(sector_name)

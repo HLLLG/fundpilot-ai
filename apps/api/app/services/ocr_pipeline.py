@@ -161,6 +161,11 @@ def run_ocr_upload_pipeline(
         ),
         **holding_review,
     }
+    if not holdings and ocr_source == "alipay_transactions":
+        result["error"] = (
+            "这张是支付宝「交易分析 / 交易记录」截图。"
+            "同步持仓请上传基金「我的持有」列表；导入买卖请用「批量加减仓」。"
+        )
 
     return result
 
@@ -271,6 +276,9 @@ def apply_confirmed_holdings(
     with portfolio_mutation_guard():
         result = _apply_confirmed_holdings_unlocked(holdings)
     schedule_official_nav_settlement()
+    from app.services.fund_primary_sector_backfill import schedule_missing_sector_infer
+
+    schedule_missing_sector_infer()
     return result
 
 

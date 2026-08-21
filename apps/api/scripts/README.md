@@ -228,6 +228,32 @@ TTL 天数等。
 
 ---
 
+## 板块身份运维（持仓 / 全市场 / 细分预筛）
+
+容器路径是 `/app/scripts/...`。生产用根目录 Dockerfile，漏拷贝会直接 `No such file`。
+
+```bash
+# 细分规则（CPO/CXO/算力租赁/PCB）预筛；run 会清 pending PCB 当前行并重算命中基金
+python scripts/rescan_cpo_cxo_targets.py screen
+python scripts/rescan_cpo_cxo_targets.py run
+
+# 只重算当前用户持仓（主动走季报穿透，被动只复核合同指数）
+python scripts/rerun_holdings_primary_sectors.py inspect
+python scripts/rerun_holdings_primary_sectors.py run
+python scripts/verify_holdings_primary_sectors.py
+
+# 全市场强制重算。默认只强制主动持仓穿透，不要加全表 reclassify
+python scripts/rerun_all_primary_sectors.py inspect
+python scripts/rerun_all_primary_sectors.py run --workers 2
+```
+
+PCB 预筛与身份规则对齐：不把 BK0877 成分当身份，必须命中核心龙头且合计净值 ≥15%。
+`rerun_all_primary_sectors.py` 的 `--mode holdings --force` 官方 CLI 会跳过已 verified
+（医疗升不成 CXO）；本脚本才覆盖同优先级 holdings。**不要**默认跑
+`reclassify_stored_profile_resolutions()`。
+
+---
+
 ## 加仓梯形对比（仓位路径模拟）
 
 `sector_direction_backtest` 评的是**信号质量**：每个观测都是「D+1 收盘买 1 单位、持有 h 天」，

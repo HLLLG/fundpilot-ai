@@ -67,6 +67,7 @@ PROMO_MARKERS = (
     "基金经理说",
     "市场解读",
     "财富号",
+    "产品周报",
 )
 # 允许 混合/股票/指数/联接 与份额字母间出现 (QDII)/（QDII）/(QDII-ETF) 等括注
 _QDII_INFIX = r"(?:[（(](?:QDII|LOF|FOF|QDII-ETF)[)）])?"
@@ -204,13 +205,16 @@ def _extract_fund_name_by_issuer(text: str) -> str | None:
     if not candidates:
         return None
 
-    if any(marker in text for marker in PROMO_MARKERS):
-        _, candidate = max(candidates, key=lambda item: item[0])
-        return candidate
+    _last_idx, last_candidate = max(candidates, key=lambda item: item[0])
+    first_idx, first_candidate = min(candidates, key=lambda item: item[0])
 
-    idx, candidate = min(candidates, key=lambda item: item[0])
-    if idx <= 2:
-        return candidate
+    if any(marker in text for marker in PROMO_MARKERS):
+        return last_candidate
+    if first_idx <= 2:
+        return first_candidate
+    # 产品周报、运营文案等前缀没有命中 PROMO_MARKERS 时，仍取最后一段完整产品名
+    if FUND_PRODUCT_SUFFIX_RE.search(last_candidate):
+        return last_candidate
     return None
 
 

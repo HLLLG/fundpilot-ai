@@ -17,7 +17,7 @@ const FUND_PRODUCT_LABEL_RE =
   /(?:混合|联接|链接|发起|精选|股票)[A-CEH]?$|(?:混合|联接|链接|发起|精选|ETF|LOF)/i;
 
 /** 与 apps/api sector_canonical 一致的英文/数字板块短名 */
-const CANONICAL_ASCII_SECTOR_LABELS = new Set(["CPO", "PCB", "5G"]);
+const CANONICAL_ASCII_SECTOR_LABELS = new Set(["CPO", "CXO", "PCB", "5G"]);
 
 /** 与 apps/api TRACKING_INDEX_DISPLAY 同步：合同跟踪指数的养基宝简称 */
 const TRACKING_INDEX_DISPLAY_NAMES = new Set([
@@ -30,9 +30,15 @@ const TRACKING_INDEX_DISPLAY_NAMES = new Set([
   "国证医药",
   "国证有色",
   "国证食品",
+  "国证CXO",
 ]);
 
 /** 与 apps/api GLOBAL_FUND_SECTOR_SEEDS 同步 */
+/** 与后端 `_SECTOR_INTRADAY_INDEX_OVERRIDES` 同步：CXO 分时走国证CXO，不是 BK1600 */
+const SECTOR_INTRADAY_INDEX_OVERRIDES: Record<string, string> = {
+  CXO: "国证CXO",
+};
+
 const FUND_CODE_SECTOR_SEEDS: Record<string, { sector_name: string; intraday_index_name?: string }> = {
   "018957": { sector_name: "CPO" },
   "010236": { sector_name: "传媒", intraday_index_name: "传媒" },
@@ -263,6 +269,12 @@ export function resolveIntradayQuery(
   const indexName = canonicalTrackingDisplayName(effectiveHolding.intraday_index_name);
   if (indexName && !isInvalidSectorLabel(indexName)) {
     return { source_type: "index", source_name: indexName };
+  }
+
+  const boardOverride =
+    SECTOR_INTRADAY_INDEX_OVERRIDES[effectiveHolding.sector_name?.trim() || ""];
+  if (boardOverride) {
+    return { source_type: "index", source_name: boardOverride };
   }
 
   const metaName = sectorMeta?.matched_name?.trim();

@@ -82,7 +82,7 @@ def test_schedule_official_nav_settlement_noop_without_user(monkeypatch) -> None
 
 
 def test_apply_confirmed_holdings_schedules_background_nav_settlement(monkeypatch) -> None:
-    scheduled = {"n": 0}
+    scheduled = {"nav": 0, "sector": 0}
     monkeypatch.setattr(
         ocr_pipeline,
         "_apply_confirmed_holdings_unlocked",
@@ -90,10 +90,15 @@ def test_apply_confirmed_holdings_schedules_background_nav_settlement(monkeypatc
     )
     monkeypatch.setattr(
         "app.services.official_nav_settlement.schedule_official_nav_settlement",
-        lambda **_kwargs: scheduled.__setitem__("n", scheduled["n"] + 1),
+        lambda **_kwargs: scheduled.__setitem__("nav", scheduled["nav"] + 1),
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_backfill.schedule_missing_sector_infer",
+        lambda **_kwargs: scheduled.__setitem__("sector", scheduled["sector"] + 1),
     )
 
     result = ocr_pipeline.apply_confirmed_holdings([{"fund_code": "000001"}])
 
     assert result["holdings"] == [{"fund_code": "000001"}]
-    assert scheduled["n"] == 1
+    assert scheduled["nav"] == 1
+    assert scheduled["sector"] == 1

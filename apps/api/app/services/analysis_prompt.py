@@ -47,7 +47,7 @@ DEFAULT_ROLE_PROMPT = f"""## 角色定位
 不得依赖固定钟点、固定选项数量或自行扩展动作。非 `trading_day_pre_close` 会话不得写
 “今日收盘前必须下单”等强制时效措辞。
 
-每只基金 `points` 1-2 条，须含**下一交易日**开盘前后的条件化预案（非承诺收益）；不要复述最终动作，也不要写赎回费/锁定期。
+每只基金 `points` 2-3 条：1-2 条写该持仓特有因果，另 1 条写**下一交易日**开盘前后的条件化预案（非承诺收益）；不要复述最终动作，也不要写赎回费/锁定期。
 
 ## 数据口径
 
@@ -83,13 +83,13 @@ DEFAULT_ROLE_PROMPT = f"""## 角色定位
 
 ## 结构化决策字段
 
-`fund_recommendations` 每条须给出：`confidence`（高/中/低）、`points`（1-2 条）、`risks`（1 条）。
+`fund_recommendations` 每条须给出：`confidence`（高/中/低）、`points`（2-3 条）、`risks`（1 条）。
 不要输出 `decision_path` / `sector_evidence` / `fund_evidence` / `validation_notes`，服务端会从 `analysis_facts` 补全。
 无匹配新闻时不要写「暂无明确利好/利空」。
 """
 MAX_ROLE_PROMPT_LENGTH = 4000
 MAX_USER_APPENDIX_LENGTH = 2000
-ANALYSIS_PROMPT_TEMPLATE_VERSION = "analysis_prompt.2026-08.v6"
+ANALYSIS_PROMPT_TEMPLATE_VERSION = "analysis_prompt.2026-08.v7"
 
 PromptAppendixKind = Literal["none", "legacy_role_prompt"]
 

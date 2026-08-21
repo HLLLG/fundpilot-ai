@@ -1214,6 +1214,96 @@ def test_spot_gold_and_gold_equities_remain_independent_directions() -> None:
     assert [item["sector_label"] for item in selected] == ["黄金", "黄金股"]
 
 
+def _gold_cluster_row(
+    label: str,
+    *,
+    score: float,
+    participation: float,
+    entry_state: str = ENTRY_READY_TO_START,
+    evidence_quality: str = "complete",
+) -> dict:
+    return {
+        "sector_label": label,
+        "score_policy_version": ENTRY_POLICY_VERSION_V3,
+        "entry_state": entry_state,
+        "evidence_quality": evidence_quality,
+        "research_score": score,
+        "selection_priority_score": score,
+        "participation_score": participation,
+        "entry_readiness_score": score,
+        "track": "momentum",
+        "sector_group": label,
+    }
+
+
+def test_precious_metals_yields_to_finer_gold_directions_when_all_ready() -> None:
+    """贵金属先占席会把黄金/黄金股相关性去重掉；细方向过线时粗方向必须让路。"""
+    from app.services.sector_opportunity_scoring import (
+        select_scored_sector_opportunities,
+    )
+
+    base = [
+        0.4, -0.9, 1.3, 0.2, -0.6, 1.1, -0.3, 0.8, -1.2, 0.5,
+        0.7, -0.4, 0.9, -1.1, 0.3, 0.6, -0.8, 1.0, -0.2, 0.1,
+    ]
+    rows = [
+        _gold_cluster_row("贵金属", score=93.67, participation=96.37),
+        _gold_cluster_row("黄金", score=94.19, participation=94.34),
+        _gold_cluster_row("黄金股", score=75.0, participation=86.75),
+        _gold_cluster_row("银行", score=60.0, participation=70.0),
+    ]
+    selected = select_scored_sector_opportunities(
+        rows,
+        max_total=3,
+        return_series_by_label={
+            "贵金属": base,
+            "黄金": [value * 1.01 for value in base],
+            "黄金股": [value * 1.02 + 0.01 for value in base],
+            "银行": list(reversed(base)),
+        },
+    )
+
+    assert [item["sector_label"] for item in selected] == ["黄金", "黄金股", "银行"]
+
+
+def test_precious_metals_kept_when_finer_gold_directions_are_not_ready() -> None:
+    from app.services.sector_opportunity_scoring import (
+        select_scored_sector_opportunities,
+    )
+
+    rows = [
+        _gold_cluster_row("贵金属", score=90.0, participation=96.0),
+        _gold_cluster_row(
+            "黄金",
+            score=88.0,
+            participation=90.0,
+            entry_state=ENTRY_FORMING,
+        ),
+        _gold_cluster_row("银行", score=60.0, participation=70.0),
+    ]
+    selected = select_scored_sector_opportunities(rows, max_total=2)
+
+    assert [item["sector_label"] for item in selected] == ["贵金属", "银行"]
+
+
+def test_precious_metals_stays_when_user_pins_it() -> None:
+    from app.services.sector_opportunity_scoring import (
+        select_scored_sector_opportunities,
+    )
+
+    rows = [
+        _gold_cluster_row("贵金属", score=90.0, participation=96.0),
+        _gold_cluster_row("黄金", score=88.0, participation=94.0),
+    ]
+    selected = select_scored_sector_opportunities(
+        rows,
+        max_total=2,
+        pinned_labels=["贵金属"],
+    )
+
+    assert {item["sector_label"] for item in selected} == {"黄金", "贵金属"}
+
+
 def test_correlation_dedup_is_skipped_when_series_are_too_short() -> None:
     """样本不足时宁可不去重，也不用噪声相关系数误杀方向。"""
     from app.services.sector_opportunity_scoring import (

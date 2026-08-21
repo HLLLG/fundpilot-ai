@@ -290,6 +290,20 @@ def _replace_current_if_stronger(
     existing = get_fund_sector_current_primary_by_codes([fund_code]).get(
         fund_code.strip().zfill(6)
     )
+    new_source = str(primary.get("source") or "")
+    new_verified = primary.get("identity_status") == "verified"
+    # Holdings research clues stay in the snapshot log.  Projecting them as
+    # the current primary made PCB/CPO look like a real association on the
+    # detail page even when coverage/dominance failed.
+    if new_source in _HOLDINGS_SOURCES and not new_verified:
+        if (
+            existing
+            and existing.get("identity_status") != "verified"
+            and str(existing.get("source") or "") in _HOLDINGS_SOURCES
+        ):
+            replace_fund_sector_current(fund_code=fund_code, rows=[])
+            return True
+        return False
     if not _should_replace_current(existing, primary):
         return False
     replace_fund_sector_current(fund_code=fund_code, rows=rows)

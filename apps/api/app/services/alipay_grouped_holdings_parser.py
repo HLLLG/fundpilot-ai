@@ -1,24 +1,26 @@
-"""支付宝「我的持有」按基金公司财富号分组的版式解析。
+"""支付宝基金 Tab「我的持有」三列版式解析。
 
-与「全部持有」总览页（4 列：金额 / 日收益 / 持有收益 / 累计收益）不同，这个版式是
-3 列 × 2 行：
+与「收益明细 → 全部持有」总览页（4 列：金额 / 日收益 / 持有收益 / 累计收益）不同，
+这个版式是 3 列 × 2 行：
 
     名称                金额/昨日收益      持有收益/率
-    新新华基金财富号 ›
-    新华鑫科技3个月滚动    2,229.22        -770.78
-    持有灵活配置混合A      0.00            -25.69%
+    南方黄金股指数C       1,592.98        +92.98
+                          +76.54         +6.20%
+    [产品周报] 通胀粘性仍存…
+    招商基金财富号 ›
+    招商医疗保健股票A     4,637.97        +137.97
+                          +205.86        +3.07%
 
-对解析而言它有三个特征，通用锚点策略都踩不住：
+对解析而言有四个特征，通用锚点策略都踩不住：
 
-1. **真正的块边界是「XX基金财富号」分组头**，不是基金名。基金名可能被 OCR 拆成两行
-   （`新华鑫科技3个月滚动` + `持有灵活配置混合A`），而首行既不含完整产品后缀、也不以
-   已知后缀结尾，通用锚点只会认到第二行，于是基金名被截断。
-2. **同一个财富号下可以有多只基金**，所以分组头不能一对一映射成一条持仓；行内的
-   「持有收益率」百分比才是每行的终结符。
-3. **数字列序不稳定**：qwen-vl-ocr 对真实截图按列读出 [金额, 昨日收益, 持有收益, 率]，
-   而某些截图会按视觉行读成 [金额, 持有收益, 昨日收益, 率]。靠位置判断必然错一半，
-   所以这里用收益率反算 `amount × pct / (100 + pct)` 去认领「持有收益」，剩下的才是
-   昨日收益——列序换了结果也不变。
+1. **财富号可有可无**。有的基金只有产品周报、没有财富号；要求「至少两个财富号」
+   会丢掉分组头之前的持仓，零财富号时整页走不通。
+2. **长基金名常被 OCR 拆成两行**（`万家宏观择时多策略灵活` + `配置混合C`），
+   首行既不含完整产品后缀，通用锚点认不到。真正的行终结符是「持有收益率」。
+3. **产品周报 / 财富号 / 底栏**会插在基金行之间，必须跳过而不能并进基金名。
+4. **数字列序不稳定**：qwen-vl-ocr 可能读成 [金额, 昨日收益, 持有收益, 率] 或
+   [金额, 持有收益, 昨日收益, 率]。靠位置判断必然错一半，所以用收益率反算
+   `amount × pct / (100 + pct)` 去认领「持有收益」，剩下的才是昨日收益。
 """
 from __future__ import annotations
 
@@ -58,6 +60,8 @@ _SKIP_EXACT = {
     "排行",
     "自选",
     "基金市场",
+    "产品周报",
+    "明细",
 }
 _SKIP_CONTAINS = (
     "金额/昨日收益",
@@ -67,19 +71,44 @@ _SKIP_CONTAINS = (
     "我的持有",
     "本页面非任何法律文件",
     "该页面由蚂蚁财富",
+    "产品周报",
+    "更多产品",
+    "去市场看看",
+    "板块近",
+    "近一年涨幅",
+    "蚂蚁（杭州）",
+    "蚂蚁(杭州)",
 )
+_PAGE_FOOTER_MARKERS = (
+    "基金市场",
+    "更多产品",
+    "去市场看看",
+    "本页面非任何法律文件",
+    "该页面由蚂蚁财富",
+    "以上按照持有收益排序",
+)
+_TIP_PUNCTUATION = "，。！？、"
+
+
+def is_alipay_my_holdings_three_column_page(lines: list[str]) -> bool:
+    """基金 Tab「我的持有」三列版式：名称 | 金额/昨日收益 | 持有收益/率。
+
+    与「收益明细 → 全部持有」四列总览互斥。财富号可有可无——有的基金没有财富号、
+    只有产品周报，不能再要求「至少两个财富号」才走这条解析。
+    """
+    from app.services.alipay_holdings_parser import is_alipay_overview_holdings_page
+
+    if is_alipay_overview_holdings_page(lines):
+        return False
+    joined = "\n".join(lines)
+    if "金额/昨日收益" in joined or "持有收益/率" in joined:
+        return True
+    return "我的持有" in joined and "名称/金额" not in joined
 
 
 def is_alipay_wealth_account_grouped_page(lines: list[str]) -> bool:
-    """至少两个财富号分组头 + 「我的持有」三列页眉，才认定是这个版式。"""
-    if _count_group_headers(lines) < 2:
-        return False
-    joined = "\n".join(lines)
-    return "金额/昨日收益" in joined or "持有收益/率" in joined or "我的持有" in joined
-
-
-def _count_group_headers(lines: list[str]) -> int:
-    return sum(1 for line in lines if parse_wealth_account_header(line) is not None)
+    """兼容旧名：三列「我的持有」页，不再要求必须出现两个财富号。"""
+    return is_alipay_my_holdings_three_column_page(lines)
 
 
 def parse_wealth_account_header(line: str) -> tuple[str, str] | None:
@@ -103,37 +132,38 @@ def parse_wealth_account_header(line: str) -> tuple[str, str] | None:
 
 
 def parse_alipay_grouped_holdings(lines: list[str]) -> list[Holding]:
-    """按财富号分组切块，块内再按「持有收益率」拆行，逐行解析成 Holding。"""
-    header_indexes = [
-        index for index, line in enumerate(lines) if parse_wealth_account_header(line) is not None
-    ]
-    if not header_indexes:
-        return []
+    """三列「我的持有」：按持有收益率切行；财富号只是可跳过的分组头。
 
-    holdings: list[Holding] = []
-    for position, start in enumerate(header_indexes):
-        end = (
-            header_indexes[position + 1]
-            if position + 1 < len(header_indexes)
-            else len(lines)
-        )
-        header = parse_wealth_account_header(lines[start])
-        assert header is not None  # header_indexes 由同一判定产生
-        _issuer, inline_rest = header
+    财富号之前的基金（只有产品周报、没有财富号）也要解析，不能从第一个分组头才起算。
+    """
+    return _parse_group_block(lines[_content_start_index(lines) :])
 
-        block: list[str] = [inline_rest] if inline_rest else []
-        block.extend(lines[start + 1 : end])
-        holdings.extend(_parse_group_block(block))
-    return holdings
+
+def _content_start_index(lines: list[str]) -> int:
+    start = 0
+    for index, line in enumerate(lines):
+        if "持有收益/率" in line or "金额/昨日收益" in line:
+            start = index + 1
+    return start
 
 
 def _parse_group_block(block_lines: list[str]) -> list[Holding]:
-    """一个财富号分组下可能有多只基金：以「持有收益率」行为终结符切分。"""
+    """以「持有收益率」行为终结符切分；财富号分组头本身丢掉，同行残留基金名保留。"""
     rows: list[list[str]] = []
     current: list[str] = []
     for line in block_lines:
         cleaned = line.strip()
-        if not cleaned or _should_skip(cleaned):
+        if not cleaned:
+            continue
+        if _is_page_footer(cleaned):
+            break
+        header = parse_wealth_account_header(cleaned)
+        if header is not None:
+            _issuer, inline_rest = header
+            if inline_rest:
+                current.append(inline_rest)
+            continue
+        if _should_skip(cleaned):
             continue
         current.append(cleaned)
         if _is_row_terminator(cleaned):
@@ -165,7 +195,24 @@ def _should_skip(line: str) -> bool:
     # 状态栏时间 `11:18`
     if re.fullmatch(r"\d{1,2}:\d{2}", line):
         return True
+    if _is_promo_tip_line(line):
+        return True
     return False
+
+
+def _is_page_footer(line: str) -> bool:
+    return any(marker in line for marker in _PAGE_FOOTER_MARKERS)
+
+
+def _is_promo_tip_line(line: str) -> bool:
+    """产品周报正文、运营文案：有中文标点且不像基金名。"""
+    if not any(punct in line for punct in _TIP_PUNCTUATION):
+        return False
+    if extract_percent(line) is not None:
+        return False
+    from app.services.fund_name_utils import FUND_PRODUCT_SUFFIX_RE
+
+    return FUND_PRODUCT_SUFFIX_RE.search(line) is None
 
 
 def _parse_fund_row(row_lines: list[str]) -> Holding | None:

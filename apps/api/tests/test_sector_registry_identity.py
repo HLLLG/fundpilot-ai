@@ -237,8 +237,14 @@ def test_oil_gas_uses_resource_index_not_the_old_hydrogen_code() -> None:
 
 
 def test_cxo_uses_industry_board_not_narrower_cro_concept() -> None:
-    """东财没有名叫 CXO 的板；医疗研发外包才是 CXO 行业，CRO 概念更窄、涨跌会分叉。"""
+    """主题板默认仍是 BK1600；CRO 概念更窄。分时另走国证CXO 980120。"""
     assert THEME_BOARD_INDEX["CXO"] == ("90.BK1600", "BK1600", "industry")
+    from app.services.sector_canonical import get_canonical_sector
+
+    cxo_index = get_canonical_sector("国证CXO")
+    assert cxo_index is not None
+    assert cxo_index.eastmoney_secid == "0.980120"
+    assert cxo_index.source_code == "980120"
 
 
 def test_digital_economy_is_not_aliased_to_xinchuang() -> None:

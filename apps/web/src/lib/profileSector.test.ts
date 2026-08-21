@@ -9,6 +9,8 @@ import {
 describe("profileSector", () => {
   it("accepts canonical ascii sector labels like CPO", () => {
     expect(isInvalidSectorLabel("CPO")).toBe(false);
+    expect(isInvalidSectorLabel("CXO")).toBe(false);
+    expect(isInvalidSectorLabel("国证CXO")).toBe(false);
     expect(isInvalidSectorLabel("中航机遇领航混合发起C")).toBe(true);
   });
 
@@ -115,5 +117,24 @@ describe("profileSector", () => {
         intraday_index_name: "沪港深黄金",
       }),
     ).toBe("沪港深黄金");
+  });
+
+  it("charts 国证CXO when the related board is CXO", () => {
+    const holding = {
+      fund_code: "000960",
+      fund_name: "招商医疗保健股票A",
+      sector_name: "CXO",
+      intraday_index_name: null,
+    };
+    expect(resolveIntradayQuery(holding)).toEqual({
+      source_type: "index",
+      source_name: "国证CXO",
+    });
+    expect(
+      holdingDisplaySectorLabel({
+        ...holding,
+        intraday_index_name: "国证CXO",
+      }),
+    ).toBe("国证CXO");
   });
 });

@@ -919,10 +919,10 @@ def _apply_primary_sector_to_holding_impl(
         )
 
     if record and _record_should_override_holding_sector(holding, record):
-        fields: dict[str, str] = {"sector_name": record.sector_name}
-        if record.intraday_index_name:
-            fields["intraday_index_name"] = record.intraday_index_name
-        if holding.sector_name != record.sector_name or holding.intraday_index_name != record.intraday_index_name:
+        fields = _display_fields_from_primary_record(record)
+        if holding.sector_name != record.sector_name or holding.intraday_index_name != fields.get(
+            "intraday_index_name"
+        ):
             updated = holding.model_copy(update=fields)
             upsert_primary_sector_from_holding(
                 updated,
@@ -943,9 +943,9 @@ def _apply_primary_sector_to_holding_impl(
 
     if record is None:
         return holding
-    fields = {"sector_name": record.sector_name}
-    if record.intraday_index_name and not holding.intraday_index_name:
-        fields["intraday_index_name"] = record.intraday_index_name
+    fields = _display_fields_from_primary_record(record)
+    if not fields.get("intraday_index_name") and holding.intraday_index_name:
+        fields.pop("intraday_index_name", None)
     updated = holding.model_copy(update=fields)
     upsert_primary_sector_from_holding(
         updated,
@@ -971,11 +971,24 @@ def apply_primary_sector_to_holdings(
     ]
 
 
+def _display_fields_from_primary_record(record: PrimarySectorRecord) -> dict[str, str]:
+    from app.services.fund_profile import infer_intraday_index_from_sector
+
+    fields: dict[str, str] = {"sector_name": record.sector_name}
+    index_name = record.intraday_index_name or infer_intraday_index_from_sector(
+        record.sector_name
+    )
+    if index_name:
+        fields["intraday_index_name"] = index_name
+    return fields
+
+
 def refresh_benchmark_sectors_for_holdings(
     holdings: list[Holding],
     *,
     fetch_missing_benchmark: bool = True,
     fetch_holdings_infer: bool = False,
+    infer_missing_only: bool = False,
     batch_context: PrimarySectorBatchContext | None = None,
 ) -> list[Holding]:
     """板块刷新前：拉业绩基准；仍无板块时可选重仓行业穿透。"""
@@ -1026,6 +1039,13 @@ def refresh_benchmark_sectors_for_holdings(
         )
         stocks_for_code = None
         holdings_evidence_for_code = None
+        if (
+            fetch_holdings_infer
+            and infer_missing_only
+            and _is_trustworthy_sector_label(updated.fund_name, updated.sector_name)
+        ):
+            refreshed.append(updated)
+            continue
         if fetch_holdings_infer:
             from app.services.fund_holdings_sector_infer import (
                 fetch_portfolio_stocks_with_industry_evidence,
@@ -1053,10 +1073,9 @@ def refresh_benchmark_sectors_for_holdings(
                 if _can_upsert_primary_sector(
                     existing_after, "holdings_infer", fund_name=updated.fund_name
                 ):
-                    fields: dict[str, str] = {"sector_name": record.sector_name}
-                    if record.intraday_index_name and not updated.intraday_index_name:
-                        fields["intraday_index_name"] = record.intraday_index_name
-                    updated = updated.model_copy(update=fields)
+                    updated = updated.model_copy(
+                        update=_display_fields_from_primary_record(record)
+                    )
         if (
             fetch_holdings_infer
             and not _is_trustworthy_sector_label(updated.fund_name, updated.sector_name)

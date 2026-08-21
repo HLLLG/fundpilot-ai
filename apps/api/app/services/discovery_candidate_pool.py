@@ -92,14 +92,14 @@ _DIRECTLY_VERIFIED_PRIMARY_SOURCES = frozenset(
 _BENCHMARK_PRIMARY_SOURCES = frozenset({"benchmark_index", "precompute_benchmark"})
 # 方向 label → 可接受的已核验基金身份板块（单向映射）。
 #
-# 方向引擎的行情证据可以比基金身份粒度更粗：「贵金属」方向的行情代理是东财
-# BK0732 贵金属行业板，而黄金 ETF 联接的身份挂在「黄金」（基准 AU9999 现货）、
-# 黄金股 ETF 联接挂在「黄金股」（931238）。这两类载体都是贵金属方向的合法工具，
-# 不扩展就会出现"方向可布局但结构性无载体"。注意映射只对方向侧生效：
+# 方向引擎的行情证据可以比基金身份粒度更粗：贵金属方向的行情代理是东财
+# BK0732，现货黄金 ETF 联接的身份挂在「黄金」（AU9999）。黄金股跟踪 931238，
+# 定价和现货/行业板不是同一条线，再归进贵金属会把关联板块写成贵金属、误导用户。
 # 「黄金」「黄金股」两个方向各自仍只接受自己的身份，互不混用。
 _DIRECTION_ACCEPTABLE_IDENTITY_SECTORS: dict[str, tuple[str, ...]] = {
-    "贵金属": ("贵金属", "黄金股", "黄金"),
+    "贵金属": ("贵金属", "黄金"),
 }
+_GOLD_EQUITY_NAME_MARKERS = ("黄金股", "黄金产业股票")
 
 
 def _acceptable_identity_sectors(sector_label: str) -> tuple[str, ...]:
@@ -1227,7 +1227,7 @@ def _index_rank_rows_by_name_sectors(
         if not name:
             continue
         for label, keywords in keywords_by_sector.items():
-            if _name_matches_sector(name, keywords):
+            if _name_matches_direction(name, keywords, label):
                 index[label].append(row)
     return index
 
@@ -1273,7 +1273,7 @@ def _candidates_for_sector(
             continue
         source = str(row.get("source") or "").strip()
         # 身份核验对照的是映射行自己的板块：同义召回（如贵金属方向接受
-        # 「黄金」身份）时，基准证据重放仍必须复现出「黄金」，而不是方向名。
+        # 现货「黄金」身份）时，基准证据重放仍必须复现出「黄金」，而不是方向名。
         verified_primary = identity_sector in verified_primary_sectors_by_code.get(
             code, set()
         )
@@ -1281,7 +1281,7 @@ def _candidates_for_sector(
             "primary"
             if verified_primary
             else "name"
-            if _name_matches_sector(name, keywords)
+            if _name_matches_direction(name, keywords, sector_label)
             else "fallback"
         )
         entry = _merge_rank_metrics(
@@ -1320,7 +1320,7 @@ def _candidates_for_sector(
         family = _family_key(name)
         if family and family in family_seen and recall_audit_state is None:
             continue
-        if not name_prefiltered and not _name_matches_sector(name, keywords):
+        if not name_prefiltered and not _name_matches_direction(name, keywords, sector_label):
             continue
         if not _passes_quality(row, as_of_date=as_of_date):
             continue
@@ -1526,7 +1526,9 @@ def _new_issue_entries_for_sector(
         seen_codes=set(seen_codes),
         fund_type_preference=fund_type_preference,
         limit=2,
-        name_matches_sector=_name_matches_sector,
+        name_matches_sector=lambda name, keys: _name_matches_direction(
+            name, keys, sector_label
+        ),
         matches_fund_type=_matches_fund_type_preference,
         as_of_date=as_of_date,
     )
@@ -2006,7 +2008,7 @@ def _with_exact_passive_tracking_match(row: dict) -> dict:
         # track 399998 or 399990. The resolver has already allow-listed the
         # exact index and mapped it to a canonical sector, so compare that
         # canonical identity while still keeping 黄金 and 黄金股 distinct.
-        # 方向级同义（如贵金属方向接受黄金/黄金股跟踪标的）也在这里生效。
+        # 贵金属方向只接受现货黄金身份，不把黄金股跟踪标的算作同义命中。
         if resolved_sector not in acceptable_labels:
             result["sector_identity_mismatch"] = {
                 "relation_kind": "tracking_reference",
@@ -2164,7 +2166,7 @@ def _sector_keywords(sector_label: str, canon) -> tuple[str, ...]:
         "互联网": ("互联网", "网络", "游戏", "传媒"),
         "传媒": ("传媒", "游戏", "影视", "动漫", "出版", "文化传媒"),
         "有色金属": ("有色", "金属", "铜", "铝", "锂矿"),
-        "贵金属": ("贵金属", "黄金", "白银", "金银", "黄金产业"),
+        "贵金属": ("贵金属", "黄金", "白银", "金银"),
         "新能源车": ("新能源", "汽车", "电动车", "锂电"),
         "医药": ("医药", "生物", "制药", "医疗"),
         "证券": ("证券", "券商"),
@@ -2185,9 +2187,24 @@ def _sector_keywords(sector_label: str, canon) -> tuple[str, ...]:
     return tuple(names) + extra
 
 
+def _is_gold_equity_fund_name(name: str) -> bool:
+    text = (name or "").strip()
+    return any(marker in text for marker in _GOLD_EQUITY_NAME_MARKERS)
+
+
 def _name_matches_sector(name: str, keywords: tuple[str, ...]) -> bool:
     text = name.strip()
     return any(keyword in text for keyword in keywords if keyword)
+
+
+def _name_matches_direction(
+    name: str,
+    keywords: tuple[str, ...],
+    sector_label: str,
+) -> bool:
+    if sector_label == "贵金属" and _is_gold_equity_fund_name(name):
+        return False
+    return _name_matches_sector(name, keywords)
 
 
 def infer_sector_label_from_discovery_keywords(fund_name: str) -> str:
@@ -2200,7 +2217,7 @@ def infer_sector_label_from_discovery_keywords(fund_name: str) -> str:
     for label in list_discovery_sector_labels():
         canon = get_canonical_sector(label)
         keywords = _sector_keywords(label, canon)
-        if _name_matches_sector(name, keywords):
+        if _name_matches_direction(name, keywords, label):
             return label
     return "综合"
 
