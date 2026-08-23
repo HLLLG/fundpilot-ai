@@ -1,0 +1,188 @@
+apps/api/app/services/holding_metrics.py
+  s_ba1113a7ce43c8::t_14f047d258ccb3 30
+apps/api/app/services/decision_data_evidence.py
+  s_ba1113a7ce43c8::t_61595143da448f 835
+apps/api/app/services/fund_primary_sector_service.py
+  s_ba1113a7ce43c8::t_cfc9952165eb16 186-190
+  s_ba1113a7ce43c8::t_704e9634ba6c25 1047-1048
+  s_ba1113a7ce43c8::t_7874fc383589c1 1083-1087,1089-1096
+  s_ba1113a7ce43c8::t_7f356134f60759 76,78-96
+  s_ba1113a7ce43c8::t_ad9243446f8a54 77
+  s_ba1113a7ce43c8::t_fd55c085c78edd 622-623
+  s_ba1113a7ce43c8::t_7a8eedf09042d3 906-911
+  s_ba1113a7ce43c8::t_6d6f49fedc8f78 1172,1174,1180-1182,1191-1192,1199-1203,1221-1222
+  s_ba1113a7ce43c8::t_af76c0144b6e9c 34
+  s_ba1113a7ce43c8::t_875a273cb2c810 967-973
+  s_ba1113a7ce43c8::t_9133b1637c9b28 1027-1030
+  s_ba1113a7ce43c8::t_b61d62ef0bc013 660-661
+  s_ba1113a7ce43c8::t_3d1bf90604a379 1178-1179,1183-1189
+  s_ba1113a7ce43c8::t_66ceb0418d9df1 1193-1198,1204-1206,1209-1220,1223-1270
+  s_ba1113a7ce43c8::t_498b268baeb6aa 1207-1208
+  s_ba1113a7ce43c8::t_b0fd073c4cef10 1395-1403
+  s_ba1113a7ce43c8::t_3c0d7e172bfd5d 1373-1374
+  s_ba1113a7ce43c8::t_983304b8b41174 1406-1468,1485,1513-1519,1532-1577,1580,1582-1589,1591-1596,1614-1615,1617
+  s_ba1113a7ce43c8::t_a4433962c4f412 1489-1497
+  s_ba1113a7ce43c8::t_1bf6a43b106ec0 1649-1655
+  s_ba1113a7ce43c8::t_7b1cc464dd5dd6 707-715
+  s_ba1113a7ce43c8::t_472af420f5e273 1031-1034,1151-1158
+  s_ba1113a7ce43c8::t_811e470cbcda65 1159-1171,1173,1175-1177,1190
+  s_ba1113a7ce43c8::t_43ebc2eaf3096d 1035-1046,1049-1082,1088,1097-1150
+apps/api/tests/test_fund_holdings_return_estimate.py
+  s_ba1113a7ce43c8::t_9d7b43ae658ade 225
+  s_ba1113a7ce43c8::t_5ce0ec36d01f79 1-13,15-32,34-47,58-62,64,78-182,201-224,226-235
+  s_ba1113a7ce43c8::t_51dcb6d941baba 183-200
+  s_ba1113a7ce43c8::t_4e300e0dc28c59 236-242
+  s_ba1113a7ce43c8::t_fb04111e79d39c 33,48-57,63,65-77
+  s_ba1113a7ce43c8::t_c03fccacb48657 14
+apps/api/app/services/holding_estimates.py
+  s_ba1113a7ce43c8::t_26e74976084aa5 522-526
+  s_ba1113a7ce43c8::t_336cdc019ce3a0 433
+  s_ba1113a7ce43c8::t_fe7664c53f68b9 143-147
+  s_ba1113a7ce43c8::t_a242000f60f247 421
+apps/web/src/lib/holdingMetrics.test.ts
+  s_ba1113a7ce43c8::t_02074b0dba03dc 321-346,351-352
+  s_ba1113a7ce43c8::t_0313324223c4b2 347-350
+  s_ba1113a7ce43c8::t_a6abb205a300fc 258-280
+  s_ba1113a7ce43c8::t_c511743e11f403 19
+apps/api/app/services/discovery_prompt.py
+  s_ba1113a7ce43c8::t_c5928356f52891 22
+apps/api/tests/test_holdings_page_associated_sector.py
+  s_ba1113a7ce43c8::t_7e72d68fc00456 14,16-18
+  s_ba1113a7ce43c8::t_32ddb1f101baa8 117-127
+  s_ba1113a7ce43c8::t_727ab206b7c08b 239-370
+  s_ba1113a7ce43c8::t_6616e53b0b6e09 86-87
+  s_ba1113a7ce43c8::t_97af4864ba5313 69
+  s_ba1113a7ce43c8::t_b54c3f7ff73a61 107
+  s_ba1113a7ce43c8::t_8949fbb98589a7 63-68,70-83
+  s_ba1113a7ce43c8::t_51eb1e6db6fa74 223
+  s_ba1113a7ce43c8::t_5338dc2b1fdb73 84-85,88-92
+  s_ba1113a7ce43c8::t_d1822c113c5a95 37-62
+  s_ba1113a7ce43c8::t_1a0d6995c67ea0 142
+  s_ba1113a7ce43c8::t_85a32904d10c87 172-216
+  s_ba1113a7ce43c8::t_812e875d3f936b 1
+  s_ba1113a7ce43c8::t_0b9c696c1b2a0a 2-12,15,19-36,93-106,108-116,128-141,143-171,217-222,224-238
+  s_ba1113a7ce43c8::t_1bbdf940935a61 13
+  s_ba1113a7ce43c8::t_7e917f00fc4c64 371-417
+apps/api/app/services/holding_client.py
+  s_ba1113a7ce43c8::t_e9a5ce9bde8be0 31-35
+apps/api/tests/test_holdings_sector_label_authority.py
+  s_ba1113a7ce43c8::t_a8b2b970ee8ec3 3
+  s_ba1113a7ce43c8::t_8133bc0e90f8ba 21,27,32-35,38
+apps/api/app/services/sector_labels.py
+  s_ba1113a7ce43c8::t_7b3223d2dec272 242,248-249,251-253,255-257
+  s_ba1113a7ce43c8::t_e222a212d5dfbe 364-371
+  s_ba1113a7ce43c8::t_9b41e6899dd9ea 3
+  s_ba1113a7ce43c8::t_82291e05e12c8e 250,254
+  s_ba1113a7ce43c8::t_9af200e6bd83b9 12-14
+apps/api/app/services/fund_holdings_return_estimate.py
+  s_ba1113a7ce43c8::t_8c05ce61fcf83d 1-376
+apps/api/tests/test_fund_holdings_sector_infer_theme_refinement.py
+  s_ba1113a7ce43c8::t_7c77d8925679d9 284-285
+  s_ba1113a7ce43c8::t_21021a45d0f6f6 350-414
+  s_ba1113a7ce43c8::t_030093958caae1 16
+apps/api/tests/test_sector_market_identity.py
+  s_ba1113a7ce43c8::t_a5c5b428038529 52-75
+apps/api/app/services/decision_guard_shared.py
+  s_ba1113a7ce43c8::t_05ea9341030dde 73
+apps/web/src/lib/holdingMetrics.ts
+  s_ba1113a7ce43c8::t_e3bb0f6a1881ab 323,326-327
+  s_ba1113a7ce43c8::t_a621f157a2d989 95-101
+  s_ba1113a7ce43c8::t_6e94555abd464f 522-525
+  s_ba1113a7ce43c8::t_32d5ca5e385e96 589-591
+  s_ba1113a7ce43c8::t_9ab9d96ab892c0 8
+  s_ba1113a7ce43c8::t_b2a070889dff13 631-636
+  s_ba1113a7ce43c8::t_ca33fea710f382 141-143,145-147
+apps/web/src/components/YangjibaoFundDetail.tsx
+  s_ba1113a7ce43c8::t_a0851c5741725a 749-753
+apps/web/src/components/FundResearchDetail.tsx
+  s_ba1113a7ce43c8::t_7a799f4c28fd38 164
+  s_ba1113a7ce43c8::t_cac540f36c35c2 378-380
+  s_ba1113a7ce43c8::t_ade004fd9d10ba 165-166
+apps/api/app/services/sector_quote_service.py
+  s_ba1113a7ce43c8::t_258db32449772e 682-683,707-732
+  s_ba1113a7ce43c8::t_831eaf1aa6de33 16
+  s_ba1113a7ce43c8::t_d1494f70c5db29 684-688,691-697,699-701,704-706
+  s_ba1113a7ce43c8::t_3536ff341b0c96 689-690
+  s_ba1113a7ce43c8::t_fa667c3795c1d2 698,702-703
+  s_ba1113a7ce43c8::t_4e31e299263ced 3,7
+  s_ba1113a7ce43c8::t_99ccedda51f149 14
+  s_ba1113a7ce43c8::t_04324c557ee658 15
+  s_ba1113a7ce43c8::t_0c2ebfd655acd9 262-267
+  s_ba1113a7ce43c8::t_9ab5118fa4bc8c 410-424,435-437
+  s_ba1113a7ce43c8::t_f2b2200b49a654 434
+  s_ba1113a7ce43c8::t_35dd2ed4c10371 400-408
+  s_ba1113a7ce43c8::t_127c81733e3e54 209-214
+  s_ba1113a7ce43c8::t_6202c890f65700 536-541
+apps/web/src/components/YangjibaoHoldingsBoard.tsx
+  s_ba1113a7ce43c8::t_e447cd750bd022 675-679
+  s_ba1113a7ce43c8::t_3986e6b2ddc9c7 775
+  s_ba1113a7ce43c8::t_e4eeccc4f2dccc 765-766
+apps/api/app/models.py
+  s_ba1113a7ce43c8::t_79375cc0c9f82d 83-88
+apps/api/app/database.py
+  s_ba1113a7ce43c8::t_88bdf792c3db1a 2201-2236
+apps/api/app/services/portfolio_holdings_service.py
+  s_ba1113a7ce43c8::t_98099244385cfb 429-430
+  s_ba1113a7ce43c8::t_c23b7e31783511 235-239
+  s_ba1113a7ce43c8::t_db628bc5cf75d1 452-456,459-461
+  s_ba1113a7ce43c8::t_a4d2224d8dcf4f 484-485
+apps/api/tests/test_holdings_display_sector_fallback.py
+  s_ba1113a7ce43c8::t_7e2a65865e83bb 106-107,113-114,116-121
+  s_ba1113a7ce43c8::t_eb2ff505fe2269 1-105,108-112,115,122-139
+apps/web/src/lib/profileSector.test.ts
+  s_ba1113a7ce43c8::t_a69eeb71ebd2f5 156-166
+  s_ba1113a7ce43c8::t_8396c1d456d30c 122-132
+  s_ba1113a7ce43c8::t_49faf12d419037 133-143
+  s_ba1113a7ce43c8::t_7ffd7c82d62c44 144-155,167-176
+apps/api/app/services/fund_profile.py
+  s_ba1113a7ce43c8::t_affc4a8c908b80 202
+  s_ba1113a7ce43c8::t_4da076bbe9cdb4 265-273
+  s_ba1113a7ce43c8::t_ad638bd25e91bc 208-211,222-252,254-257,259-260
+  s_ba1113a7ce43c8::t_d0851f9be1d610 305-308,311-319,326-334,336-337
+  s_ba1113a7ce43c8::t_e018700ed67b5c 258
+apps/api/app/services/fund_holdings_sector_infer.py
+  s_ba1113a7ce43c8::t_08698cc6f531fc 462-491
+  s_ba1113a7ce43c8::t_5352d0126145ee 360-364
+  s_ba1113a7ce43c8::t_3615a2c338a8d3 41-51
+  s_ba1113a7ce43c8::t_272c19a3bf9864 423-427,431-432
+apps/web/src/lib/decisionText.ts
+  s_ba1113a7ce43c8::t_689f62213dc410 124
+apps/web/src/lib/profileSector.ts
+  s_ba1113a7ce43c8::t_91bc936dfcc03f 9
+  s_ba1113a7ce43c8::t_d28b8e3861f851 92-103,115-118,123-125,127-128
+  s_ba1113a7ce43c8::t_cc1e22ee069d9e 119-122
+  s_ba1113a7ce43c8::t_129ba227b147e6 134-135
+  s_ba1113a7ce43c8::t_e7f829385e9bda 315-317
+  s_ba1113a7ce43c8::t_218ad40cb50c06 15-23
+  s_ba1113a7ce43c8::t_9ad495f320b0ec 388-390
+  s_ba1113a7ce43c8::t_2150183411beda 148-150
+  s_ba1113a7ce43c8::t_36bb2cf99c9fdc 237-240
+  s_ba1113a7ce43c8::t_846f76b07648a7 104-114,126
+  s_ba1113a7ce43c8::t_ecff2a4c045239 216
+apps/api/app/services/sector_registry.py
+  s_ba1113a7ce43c8::t_522126b744ff7c 128-131
+  s_ba1113a7ce43c8::t_fcbf6025034c22 5-9
+  s_ba1113a7ce43c8::t_6be170a471c78f 164-166
+apps/api/app/services/fund_primary_sector_precompute.py
+  s_ba1113a7ce43c8::t_604f731baa10a6 1289-1299
+  s_ba1113a7ce43c8::t_1167701358c8cb 706
+  s_ba1113a7ce43c8::t_7597aa28d3312a 662-675
+  s_ba1113a7ce43c8::t_93fc263e2f1ea0 1287
+  s_ba1113a7ce43c8::t_ff6737de6c5ce1 708-718
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.40-trip",
+  "base_commit_sha": "b69560cc96f0ebc4b1c9244b8d55fa4be2fa98f1",
+  "prompts": {},
+  "sessions": {
+    "s_ba1113a7ce43c8": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "49593186-5830-43ca-b303-e1ca6a30dada",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
