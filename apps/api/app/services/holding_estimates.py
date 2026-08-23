@@ -140,8 +140,11 @@ def resolve_holding_return_percent(holding: Holding) -> float | None:
 
 
 def resolve_intraday_return_percent(holding: Holding) -> float | None:
-    """当日涨跌分量：官方净值已公布时用净值，否则用关联板块涨跌。"""
-    if holding.daily_return_percent_source == "official_nav" and holding.daily_return_percent is not None:
+    """当日涨跌分量：官方净值 / 重仓加权优先于关联板块。"""
+    if (
+        holding.daily_return_percent_source in {"official_nav", "holdings_estimate"}
+        and holding.daily_return_percent is not None
+    ):
         return holding.daily_return_percent
     if holding.sector_return_percent is not None:
         return holding.sector_return_percent
@@ -415,7 +418,7 @@ def apply_sector_daily_estimates(
 ) -> Holding:
     """刷新板块后重算当日收益，忽略 OCR 截图中的当日收益。
 
-    若已写入官方净值当日收益率，则保留（关联板块列仍用 sector_return_percent）。
+    若已写入官方净值或季报重仓加权，则保留（关联板块列仍用 sector_return_percent）。
     若档案标记份额待确认（当日买入），则当日收益保持 0，不用板块覆盖。"""
     from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
@@ -427,7 +430,7 @@ def apply_sector_daily_estimates(
                 "daily_return_percent_source": "pending_accrual",
             }
         )
-    if holding.daily_return_percent_source == "official_nav":
+    if holding.daily_return_percent_source in {"official_nav", "holdings_estimate"}:
         return holding
     sector = holding.sector_return_percent
     amount = holding.settled_holding_amount or holding.holding_amount
@@ -516,6 +519,11 @@ def enrich_holding_estimates(
     """补全可持久化字段；含当日涨跌的持有收益仅在展示/分析层计算。"""
     profile = _profile_for_holding(holding, profile)
     holding = _repair_corrupted_settled_profit(holding, profile=profile)
+    from app.services.fund_primary_sector_service import (
+        strip_unthemed_allocation_associated_sector,
+    )
+
+    holding = strip_unthemed_allocation_associated_sector(holding)
     includes_today = _amount_includes_today_return(holding)
     holding = apply_sector_daily_estimates(holding, profile=profile)
     daily_profit = compute_daily_profit(holding)
@@ -566,7 +574,7 @@ def holding_daily_return_is_estimated(
 ) -> bool:
     if holding.daily_return_percent_source in {"official_nav", "pending_accrual"}:
         return False
-    if holding.daily_return_percent_source == "sector_estimate":
+    if holding.daily_return_percent_source in {"sector_estimate", "holdings_estimate"}:
         return True
     from app.services.profit_accrual_defer import is_profit_accrual_deferred
 

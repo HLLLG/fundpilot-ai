@@ -832,7 +832,7 @@ def build_analysis_data_evidence(
             # holding, borrowing snapshot.nav_date would falsely certify old data.
             daily_source_type, daily_confidence, daily_estimate = "official", "medium", False
             daily_as_of, daily_freshness = None, "unknown"
-        elif daily_source == "sector_estimate":
+        elif daily_source in {"sector_estimate", "holdings_estimate"}:
             daily_source_type, daily_confidence, daily_estimate = "derived", "low", True
             daily_as_of, daily_freshness = position_as_of, "unknown"
         elif daily_source == "pending_accrual":

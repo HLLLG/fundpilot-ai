@@ -13,6 +13,7 @@ from app.services.fund_holdings_sector_infer import (
     HoldingStockRow,
     _refine_current_portfolio_themes,
     assess_sector_from_portfolio_stocks,
+    resolve_display_sector,
 )
 
 _NOW = datetime(2026, 8, 17, 3, 0, tzinfo=timezone.utc).isoformat()
@@ -280,6 +281,8 @@ def test_refined_pcb_theme_wins_primary_sector_vote():
     assert assessment["sector_name"] == "PCB"
     assert assessment["scores"] == {"PCB": 46.0, "电子": 8.0}
     assert assessment["qualification"]["sector_inference_eligible"] is True
+    assert assessment["display_sector"] == "PCB"
+    assert assessment["display"]["method"] == "verified_winner"
 
 
 def test_pcb_rule_requires_a_core_leader(monkeypatch):
@@ -344,3 +347,68 @@ def test_pcb_rule_requires_portfolio_weight(monkeypatch):
         for value in enriched.values()
         if isinstance(value, dict)
     )
+
+
+def test_mixed_active_fund_still_displays_vote_winner():
+    """养基宝会对混合持仓给出主板块；我们只把不过线结果留给展示，不升成 verified。"""
+
+    coverage = {"portfolio_weight_coverage_percent": 50.0}
+    stocks = [
+        HoldingStockRow(
+            name="恒瑞医药",
+            weight=18.0,
+            industry="化学制药",
+            stock_code="600276",
+            coverage=coverage,
+            industry_pit_qualified=True,
+        ),
+        HoldingStockRow(
+            name="贵州茅台",
+            weight=15.0,
+            industry="白酒",
+            stock_code="600519",
+            coverage=coverage,
+            industry_pit_qualified=True,
+        ),
+        HoldingStockRow(
+            name="宁德时代",
+            weight=12.0,
+            industry="电池",
+            stock_code="300750",
+            coverage=coverage,
+            industry_pit_qualified=True,
+        ),
+    ]
+
+    assessment = assess_sector_from_portfolio_stocks(stocks)
+
+    assert assessment["sector_name"] == "医药"
+    assert assessment["qualification"]["sector_inference_eligible"] is False
+    assert assessment["qualification"]["research_only"] is True
+    assert assessment["display_sector"] == "医药"
+    assert assessment["display"]["method"] == "vote_winner"
+
+
+def test_unverified_pcb_displays_parent_electronics():
+    """细分主题不过线时，列表应显示父行业，而不是空着或挂上 PCB。"""
+
+    display = resolve_display_sector(
+        sector_name="PCB",
+        scores={"PCB": 12.0, "电子": 8.0},
+        eligible=False,
+    )
+
+    assert display == {
+        "sector_name": "电子",
+        "method": "fine_theme_parent_fallback",
+    }
+
+
+def test_verified_fine_theme_keeps_display_winner():
+    display = resolve_display_sector(
+        sector_name="CXO",
+        scores={"CXO": 32.0, "医疗": 6.0},
+        eligible=True,
+    )
+
+    assert display == {"sector_name": "CXO", "method": "verified_winner"}

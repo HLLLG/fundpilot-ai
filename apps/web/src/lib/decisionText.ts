@@ -121,6 +121,7 @@ export function translateEvidenceText(text: string): string {
     .replace(/quality_penalties\s*提示/gi, "系统校验提示")
     .replace(/quality_penalties/gi, "系统校验提示")
     .replace(/sector_estimate/gi, "板块估算")
+    .replace(/holdings_estimate/gi, "重仓估算")
     .replace(/nav_trend/gi, "净值走势")
     .replace(/return_3m_percent/gi, "近3月收益")
     .replace(/return_6m_percent/gi, "近6月收益")

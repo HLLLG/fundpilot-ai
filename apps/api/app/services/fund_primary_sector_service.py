@@ -31,6 +31,7 @@ from app.services.fund_profile import (
 from app.services.fund_type_classification import has_positive_qdii_marker
 from app.services.sector_canonical import get_canonical_sector
 from app.services.sector_labels import (
+    fund_name_has_registered_theme,
     infer_sector_label_from_fund_name,
     infer_semantic_sector_from_fund_name,
     normalize_sector_label,
@@ -72,6 +73,27 @@ _HIGH_TRUST_SECTOR_SOURCES = frozenset({"ocr_detail", "manual"})
 # 修正后必须重新校验，否则旧标签会一直挡住正确结果（用户行没有 TTL）。
 _BENCHMARK_DERIVED_SOURCES = frozenset({"benchmark_index", "precompute_benchmark"})
 _HOLDINGS_INFER_SOURCES = frozenset({"holdings_infer", "precompute_holdings"})
+# 持仓页「关联板块」只展示合同跟踪 / 名称主题 / 手工档案。
+# 名称没有主题的灵活配置 / 滚动持有：关联板块本身不确定，身份表也不许写死。
+_PAGE_ASSOCIATED_SECTOR_SOURCES = frozenset(
+    {
+        "ocr_detail",
+        "manual",
+        "benchmark_index",
+        "precompute_benchmark",
+        "semantic_name",
+        "name_infer",
+    }
+)
+_RESEARCH_ASSOCIATED_SECTOR_SOURCES = frozenset(
+    {
+        "holdings_infer",
+        "precompute_holdings",
+        "llm_infer",
+        "semantic_name_freeform",
+        "benchmark_freeform",
+    }
+)
 
 
 from app.services.fund_primary_sector_types import PrimarySectorRecord
@@ -160,6 +182,11 @@ class PrimarySectorBatchContext:
         code = self._code(str(row.get("fund_code") or ""))
         if code and code != "000000":
             self.global_rows_by_code[code] = row
+
+    def forget_identity(self, fund_code: str) -> None:
+        code = self._code(fund_code)
+        self.user_rows_by_code.pop(code, None)
+        self.global_rows_by_code.pop(code, None)
 
 
 def _is_cross_market_theme_fund(fund_name: str | None) -> bool:
@@ -592,6 +619,8 @@ def upsert_primary_sector_from_profile(
 ) -> None:
     if not profile.fund_code or profile.fund_code == "000000":
         return
+    if _is_unthemed_allocation_fund(profile.fund_name):
+        return
     if not _is_valid_sector_label(profile.sector_name):
         return
     if source not in _HIGH_TRUST_SECTOR_SOURCES and source != "manual" and _is_fund_name_residue_label(
@@ -627,6 +656,8 @@ def upsert_primary_sector_from_holding(
     batch_context: PrimarySectorBatchContext | None = None,
 ) -> None:
     if not holding.fund_code or holding.fund_code == "000000":
+        return
+    if _is_unthemed_allocation_fund(holding.fund_name):
         return
     if not _is_valid_sector_label(holding.sector_name):
         return
@@ -671,6 +702,15 @@ def resolve_primary_sector(
 ) -> PrimarySectorRecord | None:
     code = fund_code.strip().zfill(6)
     if len(code) != 6 or code == "000000":
+        return None
+
+    resolved_name = _fund_name_for_code(code, fund_name, batch_context)
+    if _is_unthemed_allocation_fund(resolved_name):
+        forget_uncertain_inferred_sector_identity(
+            code,
+            fund_name=resolved_name,
+            batch_context=batch_context,
+        )
         return None
 
     # 跨市场主题基金（QDII/全球/海外）的"名称主题优先"判断需要始终生效，不受
@@ -863,6 +903,12 @@ def primary_sector_fields_for_holding(
     )
     if record is None:
         return {}
+    if not associated_sector_is_page_visible(
+        fund_name=holding.fund_name,
+        sector_name=record.sector_name,
+        source=record.source,
+    ):
+        return {}
     fields: dict[str, str] = {"sector_name": record.sector_name}
     if record.intraday_index_name and not holding.intraday_index_name:
         fields["intraday_index_name"] = record.intraday_index_name
@@ -918,6 +964,13 @@ def _apply_primary_sector_to_holding_impl(
             batch_context=batch_context,
         )
 
+    if record and not associated_sector_is_page_visible(
+        fund_name=holding.fund_name,
+        sector_name=record.sector_name,
+        source=record.source,
+    ):
+        return _clear_holding_associated_sector(holding)
+
     if record and _record_should_override_holding_sector(holding, record):
         fields = _display_fields_from_primary_record(record)
         if holding.sector_name != record.sector_name or holding.intraday_index_name != fields.get(
@@ -969,6 +1022,250 @@ def apply_primary_sector_to_holdings(
         )
         for item in holdings
     ]
+
+
+def is_research_associated_sector_source(source: str | None) -> bool:
+    return str(source or "") in _RESEARCH_ASSOCIATED_SECTOR_SOURCES
+
+
+def is_unthemed_allocation_fund(fund_name: str | None) -> bool:
+    return _is_unthemed_allocation_fund(fund_name)
+
+
+def _fund_name_for_code(
+    fund_code: str,
+    fund_name: str | None = None,
+    batch_context: PrimarySectorBatchContext | None = None,
+) -> str | None:
+    if fund_name and str(fund_name).strip():
+        return str(fund_name).strip()
+    code = fund_code.strip().zfill(6)
+    if batch_context is not None:
+        profile = batch_context.profile(code)
+        if profile and profile.fund_name:
+            return profile.fund_name
+    if try_get_request_user_id() is None:
+        return None
+    profile = get_fund_profile_by_code(code)
+    if profile and profile.fund_name:
+        return profile.fund_name
+    return None
+
+
+def forget_uncertain_inferred_sector_identity(
+    fund_code: str,
+    *,
+    fund_name: str | None = None,
+    batch_context: PrimarySectorBatchContext | None = None,
+) -> bool:
+    """不确定就不落身份：清掉猜测出来的关联板块，避免发现/决策误用。"""
+
+    code = fund_code.strip().zfill(6)
+    if len(code) != 6 or code == "000000":
+        return False
+    resolved_name = _fund_name_for_code(code, fund_name, batch_context)
+    if not _is_unthemed_allocation_fund(resolved_name):
+        return False
+
+    from app.database import (
+        delete_fund_primary_sector_global,
+        delete_fund_primary_sectors_by_code,
+        replace_fund_sector_current,
+        save_fund_profile,
+    )
+
+    delete_fund_primary_sectors_by_code(code)
+    delete_fund_primary_sector_global(code)
+    replace_fund_sector_current(fund_code=code, rows=[])
+    if batch_context is not None:
+        batch_context.forget_identity(code)
+
+    if try_get_request_user_id() is not None:
+        profile = (
+            batch_context.profile(code)
+            if batch_context is not None
+            else get_fund_profile_by_code(code)
+        )
+        if profile is not None and (profile.sector_name or profile.intraday_index_name):
+            saved = save_fund_profile(
+                profile.model_copy(
+                    update={"sector_name": None, "intraday_index_name": None}
+                )
+            )
+            if batch_context is not None:
+                batch_context.profiles_by_code[code] = saved
+    return True
+
+
+def repair_uncertain_inferred_sector_identities() -> dict[str, str]:
+    """扫身份表，把无法确定关联板块的猜测行清掉。"""
+
+    from app.database import (
+        list_fund_primary_sectors_global,
+        list_fund_sector_current_primaries,
+        list_fund_sector_resolution_statuses,
+        list_fund_profiles,
+    )
+
+    names: dict[str, str] = {}
+    for code, row in list_fund_sector_resolution_statuses().items():
+        name = str(row.get("fund_name") or "").strip()
+        if name:
+            names[code] = name
+    try:
+        for profile in list_fund_profiles():
+            if profile.fund_code and profile.fund_name:
+                names.setdefault(profile.fund_code, profile.fund_name)
+    except Exception:
+        logger.debug("repair uncertain identity: skip user profiles", exc_info=True)
+    for row in list_fund_primary_sectors_global():
+        code = str(row.get("fund_code") or "").strip().zfill(6)
+        detail = _row_detail(row) or {}
+        name = str(detail.get("fund_name") or "").strip()
+        if code and name:
+            names.setdefault(code, name)
+    missing = [
+        str(row.get("fund_code") or "").strip().zfill(6)
+        for row in list_fund_sector_current_primaries()
+        if str(row.get("fund_code") or "").strip()
+        and str(row.get("fund_code") or "").strip().zfill(6) not in names
+    ]
+    if missing:
+        try:
+            from app.services.fund_primary_sector_precompute import _lookup_fund_name
+
+            for code in missing:
+                name = _lookup_fund_name(code)
+                if name:
+                    names[code] = name
+        except Exception:
+            logger.debug("repair uncertain identity: skip name table", exc_info=True)
+
+    cleared: dict[str, str] = {}
+    for code, name in names.items():
+        if forget_uncertain_inferred_sector_identity(code, fund_name=name):
+            cleared[code] = name
+    return cleared
+
+
+def strip_unthemed_allocation_associated_sector(holding: Holding) -> Holding:
+    """灵活配置/滚动持有且无名称主题：持仓页不展示重仓研究标签。"""
+
+    if not _is_unthemed_allocation_fund(holding.fund_name):
+        return holding
+    return _clear_holding_associated_sector(holding)
+
+
+# 名称只描述配置/择时/轮动风格，不点明单一板块。重仓投票哪怕过线也只是当期切片，
+# 不能当成关联板块（017787 宏观择时被写成煤炭，养基宝是「暂无」）。
+_UNDETERMINED_ASSOCIATED_SECTOR_MARKERS = (
+    "灵活配置",
+    "滚动持有",
+    "宏观择时",
+    "多策略",
+    "量化对冲",
+    "行业轮动",
+    "风格轮动",
+)
+
+
+def _is_unthemed_allocation_fund(fund_name: str | None) -> bool:
+    """名称没有板块主题、产品本身也不跟踪单一赛道：关联板块不确定。
+
+    012200（灵活配置/滚动持有）、017787（宏观择时多策略）都属于这类。
+    名称已经点明医药/军工等注册主题的，可以确定，不在此列。
+    债券/货币滚动持有也不是「猜权益板块」的对象。
+    """
+
+    if not fund_name or _is_passive_index_fund_name(fund_name):
+        return False
+    compact = re.sub(r"\s+", "", fund_name)
+    if any(
+        token in compact
+        for token in ("债券", "货币", "短债", "中短债", "纯债", "理财", "固收")
+    ):
+        return False
+    if fund_name_has_registered_theme(fund_name):
+        return False
+    return any(token in compact for token in _UNDETERMINED_ASSOCIATED_SECTOR_MARKERS)
+
+
+def associated_sector_is_page_visible(
+    *,
+    fund_name: str | None,
+    sector_name: str | None,
+    source: str | None,
+) -> bool:
+    """持仓页是否展示该关联板块。
+
+    合同跟踪、名称主题、行业股票的重仓穿透可以展示；012200 这类灵活配置
+    上的研究标签不展示，对齐养基宝「暂无」。
+    """
+
+    if not _is_valid_sector_label(sector_name):
+        return False
+    if _is_unthemed_allocation_fund(fund_name):
+        return False
+    if _is_passive_index_fund_name(fund_name):
+        return True
+    resolved_source = str(source or "")
+    if resolved_source in _PAGE_ASSOCIATED_SECTOR_SOURCES:
+        return _is_trustworthy_sector_label(fund_name, sector_name)
+    named = infer_sector_label_from_fund_name(fund_name)
+    named_key = normalize_sector_label(named)
+    sector_key = normalize_sector_label(sector_name)
+    if named_key and sector_key and (
+        named_key == sector_key or named_key in sector_key or sector_key in named_key
+    ):
+        return True
+    if resolved_source in _RESEARCH_ASSOCIATED_SECTOR_SOURCES:
+        return not _is_unthemed_allocation_fund(fund_name)
+    return False
+
+
+def _clear_holding_associated_sector(holding: Holding) -> Holding:
+    named = infer_sector_label_from_fund_name(holding.fund_name)
+    if named:
+        index_name = infer_intraday_index_from_fund_name(holding.fund_name)
+        updates: dict[str, str | None] = {"sector_name": named}
+        if index_name:
+            updates["intraday_index_name"] = index_name
+        elif holding.sector_name != named:
+            updates["intraday_index_name"] = None
+            updates["sector_return_percent"] = None
+            updates["sector_return_percent_source"] = None
+        return holding.model_copy(update=updates)
+    if (
+        holding.sector_name is None
+        and holding.intraday_index_name is None
+        and holding.sector_return_percent is None
+    ):
+        return holding
+    return holding.model_copy(
+        update={
+            "sector_name": None,
+            "intraday_index_name": None,
+            "sector_return_percent": None,
+            "sector_return_percent_source": None,
+        }
+    )
+
+
+def apply_page_associated_sector(
+    holding: Holding,
+    record: PrimarySectorRecord | None,
+) -> Holding:
+    """把可展示的关联板块写到持仓行；研究标签则清空，避免列表误显示。"""
+
+    if record is None:
+        return holding
+    if associated_sector_is_page_visible(
+        fund_name=holding.fund_name,
+        sector_name=record.sector_name,
+        source=record.source,
+    ):
+        return holding.model_copy(update=_display_fields_from_primary_record(record))
+    return _clear_holding_associated_sector(holding)
 
 
 def _display_fields_from_primary_record(record: PrimarySectorRecord) -> dict[str, str]:
@@ -1073,9 +1370,8 @@ def refresh_benchmark_sectors_for_holdings(
                 if _can_upsert_primary_sector(
                     existing_after, "holdings_infer", fund_name=updated.fund_name
                 ):
-                    updated = updated.model_copy(
-                        update=_display_fields_from_primary_record(record)
-                    )
+                    # 持仓穿透可以落研究身份，但不能写进持仓页关联板块。
+                    updated = apply_page_associated_sector(updated, record)
         if (
             fetch_holdings_infer
             and not _is_trustworthy_sector_label(updated.fund_name, updated.sector_name)
@@ -1096,7 +1392,80 @@ def refresh_benchmark_sectors_for_holdings(
 
 
 def recommend_sector_from_holdings(fund_code: str) -> PrimarySectorRecord | None:
-    return _resolve_from_holdings_infer(fund_code, persist=True)
+    record = _resolve_from_holdings_infer(fund_code, persist=True)
+    if record is None:
+        return None
+    qualification = (record.detail or {}).get("qualification")
+    if not _holdings_qualification_is_verified(
+        qualification if isinstance(qualification, Mapping) else None
+    ):
+        return None
+    return record
+
+
+def _holdings_qualification_is_verified(qualification: Mapping[str, Any] | None) -> bool:
+    return bool(
+        isinstance(qualification, Mapping)
+        and qualification.get("sector_inference_eligible") is True
+        and qualification.get("research_only") is False
+    )
+
+
+def _holdings_row_is_verified(row: Mapping[str, Any] | None) -> bool:
+    if not row:
+        return False
+    source = str(row.get("source") or "")
+    if source not in _HOLDINGS_INFER_SOURCES:
+        return False
+    detail = _row_detail(row) or {}
+    qualification = detail.get("qualification")
+    if isinstance(qualification, Mapping):
+        return _holdings_qualification_is_verified(qualification)
+    # Older rows written before qualification was persisted: treat as verified
+    # so a display fallback cannot silently replace them.
+    return True
+
+
+def _holdings_infer_record(
+    *,
+    code: str,
+    sector_name: str,
+    scores: Mapping[str, Any],
+    evidence: list,
+    sector_clue: Mapping[str, Any],
+    qualification: Mapping[str, Any],
+    evidence_payload: Mapping[str, Any] | None,
+    display: Mapping[str, Any] | None = None,
+) -> PrimarySectorRecord:
+    from app.services.fund_profile import infer_intraday_index_from_sector
+
+    dominant = scores.get(sector_name)
+    try:
+        dominant_mass = float(dominant)
+    except (TypeError, ValueError):
+        dominant_mass = 0.0
+    confidence = min(0.92, round(dominant_mass / 100.0 + 0.5, 2))
+    index_name = infer_intraday_index_from_sector(sector_name)
+    payload = evidence_payload if isinstance(evidence_payload, Mapping) else {}
+    return PrimarySectorRecord(
+        fund_code=code,
+        sector_name=sector_name,
+        intraday_index_name=index_name,
+        source="holdings_infer",
+        confidence=confidence,
+        detail={
+            "scores": dict(scores),
+            "evidence": evidence[:8],
+            "coverage": sector_clue.get("coverage"),
+            "qualification": dict(qualification),
+            "display": dict(display) if display else None,
+            "snapshot_hash": payload.get("snapshot_hash"),
+            "report_period": payload.get("report_period"),
+            "as_of_date": payload.get("as_of"),
+            "available_at": payload.get("available_at"),
+            "association_evaluated_at": payload.get("association_evaluated_at"),
+        },
+    )
 
 
 def _resolve_from_holdings_infer(
@@ -1113,9 +1482,19 @@ def _resolve_from_holdings_infer(
     from app.services.fund_holdings_sector_infer import (
         assess_sector_from_portfolio_stocks,
         fetch_portfolio_stocks_with_industry_evidence,
+        resolve_display_sector,
     )
 
     code = fund_code.strip().zfill(6)
+    resolved_name = _fund_name_for_code(code, fund_name, batch_context)
+    if _is_unthemed_allocation_fund(resolved_name):
+        if persist or materialize_research:
+            forget_uncertain_inferred_sector_identity(
+                code,
+                fund_name=resolved_name,
+                batch_context=batch_context,
+            )
+        return None
     if evidence_payload is None and stocks is None:
         evidence_payload = fetch_portfolio_stocks_with_industry_evidence(code)
         raw_stocks = evidence_payload.get("stocks")
@@ -1131,10 +1510,13 @@ def _resolve_from_holdings_infer(
     if not isinstance(sector_clue, Mapping):
         sector_clue = assess_sector_from_portfolio_stocks(stocks)
     qualification = sector_clue.get("qualification")
-    if (
-        not isinstance(qualification, Mapping)
-        or qualification.get("sector_inference_eligible") is not True
-        or qualification.get("research_only") is not False
+    scores = sector_clue.get("scores")
+    evidence = sector_clue.get("evidence")
+    if not isinstance(scores, Mapping) or not isinstance(evidence, list):
+        return None
+
+    if not _holdings_qualification_is_verified(
+        qualification if isinstance(qualification, Mapping) else None
     ):
         if persist or materialize_research:
             from app.services.fund_sector_identity import (
@@ -1147,55 +1529,71 @@ def _resolve_from_holdings_infer(
                 evidence_payload=evidence_payload,
                 source=materialization_source,
             )
-        return None
+        existing = (
+            batch_context.user_row(code)
+            if batch_context is not None
+            else get_fund_primary_sector(code)
+        )
+        if _holdings_row_is_verified(existing):
+            return _record_from_row({**dict(existing), "fund_code": code})
+        display = sector_clue.get("display")
+        if not isinstance(display, Mapping):
+            display = resolve_display_sector(
+                sector_name=str(sector_clue.get("sector_name") or "") or None,
+                scores={
+                    str(key): float(value)
+                    for key, value in scores.items()
+                    if isinstance(value, (int, float))
+                },
+                eligible=False,
+            )
+        display_name = str(display.get("sector_name") or "").strip()
+        if not display_name or not isinstance(qualification, Mapping):
+            return None
+        record = _holdings_infer_record(
+            code=code,
+            sector_name=display_name,
+            scores=scores,
+            evidence=evidence,
+            sector_clue=sector_clue,
+            qualification=qualification,
+            evidence_payload=evidence_payload,
+            display=display,
+        )
+        if persist and try_get_request_user_id() is not None:
+            if _can_upsert_primary_sector(
+                existing, "holdings_infer", fund_name=fund_name
+            ):
+                saved = save_fund_primary_sector(
+                    fund_code=code,
+                    sector_name=record.sector_name,
+                    intraday_index_name=record.intraday_index_name,
+                    source="holdings_infer",
+                    confidence=record.confidence,
+                    detail=record.detail,
+                )
+                if batch_context is not None:
+                    batch_context.remember_user_row(saved)
+        return record
 
     sector_name = str(sector_clue.get("sector_name") or "").strip()
-    scores = sector_clue.get("scores")
-    evidence = sector_clue.get("evidence")
-    if not sector_name or not isinstance(scores, Mapping) or not isinstance(evidence, list):
+    if not sector_name:
         return None
-    confidence = min(0.92, round(scores[sector_name] / 100.0 + 0.5, 2))
-    from app.services.fund_profile import infer_intraday_index_from_sector
-
-    index_name = infer_intraday_index_from_sector(sector_name)
-
-    record = PrimarySectorRecord(
-        fund_code=code,
+    display = sector_clue.get("display")
+    if not isinstance(display, Mapping):
+        display = {
+            "sector_name": sector_name,
+            "method": "verified_winner",
+        }
+    record = _holdings_infer_record(
+        code=code,
         sector_name=sector_name,
-        intraday_index_name=index_name,
-        source="holdings_infer",
-        confidence=confidence,
-        detail={
-            "scores": dict(scores),
-            "evidence": evidence[:8],
-            "coverage": sector_clue.get("coverage"),
-            "qualification": dict(qualification),
-            "snapshot_hash": (
-                evidence_payload.get("snapshot_hash")
-                if isinstance(evidence_payload, Mapping)
-                else None
-            ),
-            "report_period": (
-                evidence_payload.get("report_period")
-                if isinstance(evidence_payload, Mapping)
-                else None
-            ),
-            "as_of_date": (
-                evidence_payload.get("as_of")
-                if isinstance(evidence_payload, Mapping)
-                else None
-            ),
-            "available_at": (
-                evidence_payload.get("available_at")
-                if isinstance(evidence_payload, Mapping)
-                else None
-            ),
-            "association_evaluated_at": (
-                evidence_payload.get("association_evaluated_at")
-                if isinstance(evidence_payload, Mapping)
-                else None
-            ),
-        },
+        scores=scores,
+        evidence=evidence,
+        sector_clue=sector_clue,
+        qualification=qualification if isinstance(qualification, Mapping) else {},
+        evidence_payload=evidence_payload,
+        display=display,
     )
 
     if persist:
@@ -1213,10 +1611,10 @@ def _resolve_from_holdings_infer(
             ):
                 saved = save_fund_primary_sector(
                     fund_code=code,
-                    sector_name=sector_name,
-                    intraday_index_name=index_name,
+                    sector_name=record.sector_name,
+                    intraday_index_name=record.intraday_index_name,
                     source="holdings_infer",
-                    confidence=confidence,
+                    confidence=record.confidence,
                     detail=record.detail,
                 )
                 if batch_context is not None:
@@ -1248,6 +1646,13 @@ def _resolve_from_llm_infer(
     from app.services.fund_sector_llm_infer import infer_sector_via_llm
 
     code = fund_code.strip().zfill(6)
+    if _is_unthemed_allocation_fund(fund_name):
+        forget_uncertain_inferred_sector_identity(
+            code,
+            fund_name=fund_name,
+            batch_context=batch_context,
+        )
+        return None
     global_row = (
         batch_context.fresh_global_row(code)
         if batch_context is not None

@@ -38,6 +38,17 @@ _MIN_CLASSIFIED_NAV_PERCENT = 20.0
 _MIN_CLASSIFIED_DISCLOSED_RATIO = 0.60
 _MIN_THEME_DOMINANCE_RATIO = 0.60
 
+# 养基宝详情页会尽量给出一个关联板块，但细分主题（CXO/PCB…）只有组合真的
+# 像那条赛道时才挂上去。我们的 verified 门槛仍守决策/荐基；展示层在不过线时
+# 退回父行业，避免列表空着，也不把未过线的 PCB/CPO 当成当前主板块。
+_FINE_THEME_DISPLAY_PARENT: dict[str, str] = {
+    "半导体材料": "半导体",
+    "CPO": "通信技术",
+    "CXO": "医疗",
+    "算力租赁": "计算机",
+    "PCB": "电子",
+}
+
 
 @dataclass(frozen=True)
 class _PortfolioThemeRefinementRule:
@@ -346,6 +357,11 @@ def assess_sector_from_portfolio_stocks(
         return {
             "status": "unavailable",
             "sector_name": None,
+            "display_sector": None,
+            "display": {
+                "sector_name": None,
+                "method": None,
+            },
             "scores": {},
             "evidence": [],
             "coverage": {
@@ -404,9 +420,16 @@ def assess_sector_from_portfolio_stocks(
     if not dominance_qualified:
         reasons.append("industry_theme_dominance_insufficient")
     eligible = not reasons
+    display = resolve_display_sector(
+        sector_name=sector_name,
+        scores=scores,
+        eligible=eligible,
+    )
     return {
         "status": "qualified" if eligible else "research_only",
         "sector_name": sector_name,
+        "display_sector": display["sector_name"],
+        "display": display,
         "scores": dict(sorted(scores.items())),
         "evidence": evidence,
         "coverage": {
@@ -434,6 +457,36 @@ def assess_sector_from_portfolio_stocks(
             "reason_codes": reasons,
         },
     }
+
+
+def resolve_display_sector(
+    *,
+    sector_name: str | None,
+    scores: Mapping[str, float],
+    eligible: bool,
+) -> dict[str, str | None]:
+    """Pick the 养基宝-style label shown on holdings list / detail.
+
+    Decision-grade identity still requires the coverage + dominance + PIT
+    gates. Display only needs a vote winner. An unverified fine theme falls
+    back to its parent industry so mixed electronics/pharma funds still show
+    a board, without promoting a failed PCB/CPO clue.
+    """
+
+    if not scores:
+        return {"sector_name": None, "method": None}
+    winner = str(sector_name or "").strip()
+    if not winner:
+        winner = min(scores, key=lambda key: (-scores[key], key))
+    dominant_mass = float(scores.get(winner) or 0.0)
+    if dominant_mass < _MIN_SCORE_PERCENT:
+        return {"sector_name": None, "method": None}
+    if eligible:
+        return {"sector_name": winner, "method": "verified_winner"}
+    parent = _FINE_THEME_DISPLAY_PARENT.get(winner)
+    if parent:
+        return {"sector_name": parent, "method": "fine_theme_parent_fallback"}
+    return {"sector_name": winner, "method": "vote_winner"}
 
 
 def _select_disclosed_holdings(value: object) -> list[dict[str, Any]]:

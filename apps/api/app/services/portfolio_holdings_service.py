@@ -232,6 +232,11 @@ def _fast_serialize_holding_for_client(
     *,
     profile: FundProfile | None = None,
 ) -> dict:
+    from app.services.fund_primary_sector_service import (
+        strip_unthemed_allocation_associated_sector,
+    )
+
+    holding = strip_unthemed_allocation_associated_sector(holding)
     payload = holding.model_dump()
     settled = holding.settled_holding_amount or holding.holding_amount
     sector_return = _fast_trusted_sector_return(holding)
@@ -421,10 +426,8 @@ def apply_authoritative_sector_labels(holdings: list[Holding]) -> list[Holding]:
     """把持仓的板块标签对齐 `fund_primary_sectors`（按用户的权威身份表）。
 
     快照和基金档案里的 `sector_name` 都只是权威身份表的反规范化副本。持仓穿透纠正
-    身份之后，这两份副本不会跟着变，于是界面会继续显示旧标签——典型的坏例子是名称
-    残留：「万家宏观择时多策略混合C」被切成「宏观择时多策略」当板块，而真实身份是
-    「煤炭」。此时行情取的是煤炭的涨跌，标签却写着一个不存在的板块，**标签和数字来自
-    两个不同的板块**，比干脆没有标签更容易误导。
+    身份之后，这两份副本不会跟着变，于是界面会继续显示旧标签。宏观择时 / 灵活配置
+    这类无法确定单一板块的基金，权威表也不该写死猜测（017787 不是煤炭）。
 
     只在权威标签本身是合法板块名时才覆盖：身份表里也存在「军工」这种当前板块表里
     查不到的写法，那种情况保留副本里可用的「国防军工」。
@@ -446,8 +449,16 @@ def apply_authoritative_sector_labels(holdings: list[Holding]) -> list[Holding]:
     if not identity_rows:
         return holdings
 
+    from app.services.fund_primary_sector_service import (
+        is_unthemed_allocation_fund,
+        strip_unthemed_allocation_associated_sector,
+    )
+
     aligned: list[Holding] = []
     for holding in holdings:
+        if is_unthemed_allocation_fund(holding.fund_name):
+            aligned.append(strip_unthemed_allocation_associated_sector(holding))
+            continue
         row = identity_rows.get(holding.fund_code or "")
         label = str((row or {}).get("sector_name") or "").strip()
         if (
@@ -470,11 +481,8 @@ def _overlay_profile_onto_holding(
     """合并档案中的结构性字段；金额/收益由份额×净值与官方净值自动推算，不用 OCR 快照覆盖。
 
     板块标签以 `fund_primary_sectors`（按用户的权威身份表）为准，档案与快照里的
-    `sector_name` 只是它的反规范化副本。两者不一致时必须信权威表：名称残留标签
-    （如「万家宏观择时多策略混合C」被切成「宏观择时多策略」）会被持仓穿透纠正并写回
-    权威表，但档案/快照的副本不会跟着变。此前这里无条件优先用档案副本，于是界面会
-    一直显示那个残留标签，而旁边的涨跌其实取自纠正后的真实板块——标签和数字来自
-    两个不同的板块，比没有标签更容易误导。
+    `sector_name` 只是它的反规范化副本。宏观择时 / 灵活配置这类不确定单一板块的
+    基金，权威表应留空，不再用重仓切片写死煤炭等猜测。
     """
     patch: dict = {
         "fund_code": profile.fund_code,

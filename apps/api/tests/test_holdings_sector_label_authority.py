@@ -1,9 +1,6 @@
 """板块标签必须以 `fund_primary_sectors` 权威身份表为准。
 
-回归背景：快照与基金档案里的 `sector_name` 都只是权威身份表的反规范化副本。持仓穿透
-把「万家宏观择时多策略混合C」的身份从名称残留「宏观择时多策略」纠正为「煤炭」之后，
-这两份副本不会跟着变，于是列表页继续显示「宏观择时多策略」，而旁边的涨跌其实取自
-煤炭板块——**标签和数字来自两个不同的板块**，比干脆没有标签更容易误导。
+宏观择时 / 灵活配置这类无法确定单一板块的基金，权威表也不该写死重仓切片猜测。
 """
 from __future__ import annotations
 
@@ -21,20 +18,24 @@ def _holding(fund_code: str, fund_name: str, sector_name: str | None) -> Holding
     )
 
 
-def test_authoritative_identity_replaces_stale_name_residue_label(monkeypatch) -> None:
+def test_authoritative_identity_does_not_stamp_timing_strategy_fund(monkeypatch) -> None:
     monkeypatch.setattr(
         service,
         "get_fund_primary_sectors_by_codes",
         lambda codes: {
             "017787": {"sector_name": "煤炭", "source": "holdings_infer"},
+            "000960": {"sector_name": "CXO", "source": "holdings_infer"},
         },
     )
 
     aligned = service.apply_authoritative_sector_labels(
-        [_holding("017787", "万家宏观择时多策略混合C", "宏观择时多策略")]
+        [
+            _holding("017787", "万家宏观择时多策略混合C", "煤炭"),
+            _holding("000960", "招商医疗保健股票A", "医疗保健"),
+        ]
     )
 
-    assert [item.sector_name for item in aligned] == ["煤炭"]
+    assert [item.sector_name for item in aligned] == [None, "CXO"]
 
 
 def test_identity_label_that_is_not_a_board_name_keeps_the_usable_copy(monkeypatch) -> None:

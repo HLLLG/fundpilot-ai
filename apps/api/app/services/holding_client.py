@@ -28,6 +28,11 @@ def serialize_holding_for_client(
     if isinstance(profile, _ProfileNotProvided):
         profile = get_profile_for_holding(holding)
 
+    from app.services.fund_primary_sector_service import (
+        strip_unthemed_allocation_associated_sector,
+    )
+
+    holding = strip_unthemed_allocation_associated_sector(holding)
     payload = holding.model_dump()
     display = build_holding_display_metrics(holding, profile=profile)
     settled = resolve_display_settled_amount(holding, profile=profile)

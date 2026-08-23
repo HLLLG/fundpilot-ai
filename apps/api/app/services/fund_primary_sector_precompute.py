@@ -659,6 +659,20 @@ def _evaluate_holdings_resolution(
             ),
             detail=base_detail,
         )
+    fund_name = _lookup_fund_name(fund_code)
+    from app.services.fund_primary_sector_service import (
+        forget_uncertain_inferred_sector_identity,
+        is_unthemed_allocation_fund,
+    )
+
+    if is_unthemed_allocation_fund(fund_name):
+        forget_uncertain_inferred_sector_identity(fund_code, fund_name=fund_name)
+        return _HoldingsResolutionEvaluation(
+            record=None,
+            resolution_status="unavailable",
+            reason_code="uncertain_allocation_no_identity",
+            detail={**base_detail, "fund_name": fund_name},
+        )
 
     raw_clue = evidence_payload.get("sector_clue")
     sector_clue = (
@@ -689,8 +703,19 @@ def _evaluate_holdings_resolution(
         evidence_payload=evidence_payload,
         materialize_research=True,
         materialization_source="precompute_holdings",
+        fund_name=fund_name,
     )
-    if record is not None:
+    record_qualification = (
+        (record.detail or {}).get("qualification")
+        if record is not None and isinstance(record.detail, Mapping)
+        else {}
+    )
+    if (
+        record is not None
+        and isinstance(record_qualification, Mapping)
+        and record_qualification.get("sector_inference_eligible") is True
+        and record_qualification.get("research_only") is False
+    ):
         return _HoldingsResolutionEvaluation(
             record=record,
             resolution_status="verified",
@@ -1259,8 +1284,19 @@ def precompute_fund_sector(
                 persist=False,
                 materialize_research=True,
                 materialization_source="precompute_holdings",
+                fund_name=_lookup_fund_name(code),
             )
-            if record is not None:
+            record_qualification = (
+                (record.detail or {}).get("qualification")
+                if record is not None and isinstance(record.detail, Mapping)
+                else {}
+            )
+            if (
+                record is not None
+                and isinstance(record_qualification, Mapping)
+                and record_qualification.get("sector_inference_eligible") is True
+                and record_qualification.get("research_only") is False
+            ):
                 _promote_and_remember(
                     record,
                     source="precompute_holdings",

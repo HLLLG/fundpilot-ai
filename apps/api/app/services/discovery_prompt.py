@@ -19,7 +19,7 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """你是个人基金投顾分析师，从 `disc
 - `sector_identity_status=verified` 且 `sector_identity_eligible=true` 才可执行；`sector_fit_score` 只是排序分
 - 同类分位与基准对比不在本轮输入，不要编造；载体质量以池内已有字段为准，缺失时不要据此否决
 - 金额一律输出 `suggested_amount_yuan=null`，由服务端分配；不要编造申购状态、费率或平台可买性
-- 今日涨跌：`official_nav` 可作主论据；`sector_estimate` 必须写成「（板块估算，截至 HH:MM）」
+- 今日涨跌：`official_nav` 可作主论据；`holdings_estimate` 写成「（重仓估算）」；`sector_estimate` 必须写成「（板块估算，截至 HH:MM）」
 
 ## 决策顺序
 

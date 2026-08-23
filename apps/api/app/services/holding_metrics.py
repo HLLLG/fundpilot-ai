@@ -27,7 +27,7 @@ HOLDING_RETURN_SEMANTICS: dict[str, str] = {
         "有则优先使用，勿与估算值叠加。"
     ),
     "estimated_daily_return_percent": (
-        "当日基金涨跌：优先 daily_return_percent；否则用 sector_return_percent 估算。"
+        "当日基金涨跌：优先官方净值，其次季报重仓加权，再次板块/天天基金估值。"
         "勿与 estimated_holding_return_percent 混淆（后者为累计持有收益）。"
     ),
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Container
 from dataclasses import dataclass
 import re
 
@@ -8,6 +9,9 @@ from app.services.sector_registry_data import THEME_BOARD_INDEX
 _TOPIC_ALIASES = (
     "人工智能",
     "电网设备",
+    # 「半导体材料」必须长于「半导体」单独登记。否则「中证半导体材料设备主题指数」
+    # 会被截成中证半导体 H30184（2026-08-21：931743 -0.42%，H30184 +0.34%）。
+    "半导体材料",
     "半导体",
     "国防军工",
     "商业航天",
@@ -235,10 +239,22 @@ def build_sector_candidates(label: str | None) -> list[str]:
     for suffix in ("主题", "指数", "ETF", "板块"):
         if base.endswith(suffix) and len(base) > len(suffix):
             add(base[: -len(suffix)])
-    for token in _TOPIC_ALIASES:
+    for token in sorted(_TOPIC_ALIASES, key=lambda item: (-len(item), item)):
         if token in base:
             add(token)
     return candidates
+
+
+def pick_longest_candidate(
+    candidates: list[str],
+    registered: Container[str],
+) -> str | None:
+    """在已登记标签里取最长命中，避免「半导体材料」被截成「半导体」。"""
+
+    matches = [item for item in candidates if item in registered]
+    if not matches:
+        return None
+    return max(matches, key=lambda item: (len(item), item))
 
 
 def sector_label_key(label: str | None) -> str:
@@ -343,6 +359,14 @@ def infer_semantic_sector_from_fund_name(
             reason="freeform_theme_phrase",
         )
     return None
+
+
+def fund_name_has_registered_theme(fund_name: str | None) -> bool:
+    """名称里是否已经点明了注册表里的板块主题（医药/互联网/国防军工…）。"""
+    if infer_sector_label_from_fund_name(fund_name):
+        return True
+    normalized = normalize_sector_label((fund_name or "").replace("...", ""))
+    return bool(normalized) and _theme_board_match(normalized) is not None
 
 
 def infer_sector_label_from_fund_name(fund_name: str | None) -> str | None:

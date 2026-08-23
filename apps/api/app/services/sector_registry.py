@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.services.sector_labels import build_sector_candidates, normalize_sector_label
+from app.services.sector_labels import (
+    build_sector_candidates,
+    normalize_sector_label,
+    pick_longest_candidate,
+)
 from app.services.sector_registry_data import (
     CANONICAL_SECTORS,
     DISCOVERY_CHIP_LABELS,
@@ -121,10 +125,10 @@ def get_sector_entry(label: str | None) -> SectorRegistryEntry | None:
         return None
     if normalized in _ENTRIES:
         return _ENTRIES[normalized]
-    for candidate in build_sector_candidates(label):
-        if candidate in _ENTRIES:
-            return _ENTRIES[candidate]
-    return None
+    matched = pick_longest_candidate(build_sector_candidates(label), _ENTRIES)
+    if matched is None:
+        return None
+    return _ENTRIES[matched]
 
 
 def list_discovery_sector_labels() -> list[str]:
@@ -157,9 +161,9 @@ def resolve_theme_sector_label(label: str | None) -> str | None:
         return None
     if normalized in THEME_BOARD_INDEX:
         return normalized
-    for candidate in build_sector_candidates(label):
-        if candidate in THEME_BOARD_INDEX:
-            return candidate
+    matched = pick_longest_candidate(build_sector_candidates(label), THEME_BOARD_INDEX)
+    if matched is not None:
+        return matched
     entry = get_sector_entry(label)
     if entry is not None and entry.theme_board_eligible:
         return entry.label

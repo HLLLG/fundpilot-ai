@@ -70,6 +70,7 @@ _BASE_TEXT_REPLACEMENTS: tuple[tuple[str, str], ...] = (
     ("quality_penalties提示", "系统校验提示"),
     ("quality_penalties", "系统校验提示"),
     ("sector_estimate", "板块估算"),
+    ("holdings_estimate", "重仓估算"),
     ("nav_trend", "净值走势"),
     ("return_3m_percent", "近3月收益"),
     ("return_6m_percent", "近6月收益"),

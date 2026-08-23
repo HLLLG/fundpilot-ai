@@ -199,12 +199,16 @@ class FundProfileService:
     ) -> Holding:
         sector_name = holding.sector_name
         index_name = holding.intraday_index_name
+        hide_research_board = False
         fund_name = holding.fund_name or (profile.fund_name if profile else None)
         fund_code = holding.fund_code if holding.fund_code != "000000" else (
             profile.fund_code if profile and profile.fund_code != "000000" else ""
         )
         if fund_code:
-            from app.services.fund_primary_sector_service import resolve_primary_sector
+            from app.services.fund_primary_sector_service import (
+                associated_sector_is_page_visible,
+                resolve_primary_sector,
+            )
 
             record = resolve_primary_sector(
                 fund_code,
@@ -215,39 +219,58 @@ class FundProfileService:
                 batch_context=primary_sector_batch_context,
             )
             if record and _is_valid_sector_label(record.sector_name):
-                sector_name = record.sector_name
-                if record.intraday_index_name:
-                    index_name = record.intraday_index_name
-                elif record.source in {"holdings_infer", "precompute_holdings"}:
-                    inferred_index = infer_intraday_index_from_sector(record.sector_name)
-                    if inferred_index:
-                        index_name = inferred_index
-                if profile is not None and (
-                    profile.sector_name != sector_name
-                    or (
-                        index_name
-                        and profile.intraday_index_name != index_name
-                    )
-                ):
-                    saved_profile = save_fund_profile(
-                        profile.model_copy(
-                            update={
-                                "sector_name": sector_name,
-                                **(
-                                    {"intraday_index_name": index_name}
-                                    if index_name
-                                    else {}
-                                ),
-                            }
+                page_visible = associated_sector_is_page_visible(
+                    fund_name=fund_name,
+                    sector_name=record.sector_name,
+                    source=record.source,
+                )
+                if page_visible:
+                    sector_name = record.sector_name
+                    if record.intraday_index_name:
+                        index_name = record.intraday_index_name
+                    elif record.source in {"holdings_infer", "precompute_holdings"}:
+                        inferred_index = infer_intraday_index_from_sector(record.sector_name)
+                        if inferred_index:
+                            index_name = inferred_index
+                    if profile is not None and (
+                        profile.sector_name != sector_name
+                        or (
+                            index_name
+                            and profile.intraday_index_name != index_name
                         )
-                    )
-                    self._invalidate_profiles_cache()
-                    if batch_profiles_by_code is not None:
-                        batch_profiles_by_code[saved_profile.fund_code] = saved_profile
+                    ):
+                        saved_profile = save_fund_profile(
+                            profile.model_copy(
+                                update={
+                                    "sector_name": sector_name,
+                                    **(
+                                        {"intraday_index_name": index_name}
+                                        if index_name
+                                        else {}
+                                    ),
+                                }
+                            )
+                        )
+                        self._invalidate_profiles_cache()
+                        if batch_profiles_by_code is not None:
+                            batch_profiles_by_code[saved_profile.fund_code] = saved_profile
+                else:
+                    hide_research_board = True
+                    sector_name = None
+                    index_name = None
 
         if profile is None:
             from app.services.fund_primary_sector_service import primary_sector_fields_for_holding
 
+            if hide_research_board:
+                return holding.model_copy(
+                    update={
+                        "sector_name": None,
+                        "intraday_index_name": None,
+                        "sector_return_percent": None,
+                        "sector_return_percent_source": None,
+                    }
+                )
             fields = primary_sector_fields_for_holding(
                 holding,
                 allow_name_infer=False,
@@ -279,27 +302,39 @@ class FundProfileService:
             )
             if fields.get("sector_name"):
                 sector_name = fields["sector_name"]
-            elif _is_valid_sector_label(profile.sector_name):
+            elif (
+                not hide_research_board
+                and _is_valid_sector_label(profile.sector_name)
+            ):
                 sector_name = profile.sector_name
 
-        if not index_name or not _looks_like_index_name(index_name):
-            index_name = profile.intraday_index_name
-        if not index_name or not _looks_like_index_name(index_name):
-            index_name = infer_intraday_index_from_sector(sector_name)
-        if not index_name or not _looks_like_index_name(index_name):
-            index_name = infer_intraday_index_from_sector(profile.sector_name)
-        if not index_name or not _looks_like_index_name(index_name):
-            index_name = infer_intraday_index_from_fund_name(fund_name)
+        if not hide_research_board:
+            if not index_name or not _looks_like_index_name(index_name):
+                index_name = profile.intraday_index_name
+            if not index_name or not _looks_like_index_name(index_name):
+                index_name = infer_intraday_index_from_sector(sector_name)
+            if not index_name or not _looks_like_index_name(index_name):
+                index_name = infer_intraday_index_from_sector(profile.sector_name)
+            if not index_name or not _looks_like_index_name(index_name):
+                index_name = infer_intraday_index_from_fund_name(fund_name)
 
         sector_name, index_name = _normalize_index_and_board_fields(sector_name, index_name)
 
         updates: dict = {
             "sector_name": sector_name,
             "intraday_index_name": index_name,
-            "sector_return_percent": holding.sector_return_percent
-            if holding.sector_return_percent is not None
-            else profile.sector_return_percent,
+            "sector_return_percent": (
+                None
+                if hide_research_board
+                else (
+                    holding.sector_return_percent
+                    if holding.sector_return_percent is not None
+                    else profile.sector_return_percent
+                )
+            ),
         }
+        if hide_research_board:
+            updates["sector_return_percent_source"] = None
         if (
             holding.fund_code == "000000"
             and profile.fund_code != "000000"

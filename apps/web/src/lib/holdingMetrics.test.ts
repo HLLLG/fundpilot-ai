@@ -16,6 +16,7 @@ import {
   mergeSectorIntradayClose,
   mergeHoldingsPreserveQuoteFields,
   dedupeHoldingsByCode,
+  resolveSectorBoardReturnPercent,
   navigableHoldings,
   patchHoldingRecord,
   portfolioOfficialNavSettled,
@@ -254,6 +255,29 @@ describe("mergeHoldingsPreserveQuoteFields", () => {
     expect(merged[0].daily_profit).toBe(18.4);
   });
 
+  it("does not restore a hidden research board for unthemed allocation funds", () => {
+    const previous = [
+      {
+        ...holding("012200", "新华鑫科技3个月滚动持有灵活配置混合A"),
+        sector_name: "半导体材料",
+        sector_return_percent: -0.42,
+        intraday_index_name: "中证半导体材料设备主题指数",
+      },
+    ];
+    const incoming = [
+      {
+        ...holding("012200", "新华鑫科技3个月滚动持有灵活配置混合A"),
+        sector_name: null,
+        sector_return_percent: null,
+        intraday_index_name: null,
+      },
+    ];
+    const merged = mergeHoldingsPreserveQuoteFields(previous, incoming);
+    expect(merged[0].sector_name).toBeNull();
+    expect(merged[0].sector_return_percent).toBeNull();
+    expect(merged[0].intraday_index_name).toBeNull();
+  });
+
   it("keeps shares/cost/days when a later payload omits them", () => {
     const previous = [
       {
@@ -291,6 +315,38 @@ describe("profit accrual defer", () => {
     const estimated = applySectorDailyEstimate(deferred);
     expect(estimated.daily_profit).toBe(0);
     expect(estimated.daily_return_percent_source).toBe("pending_accrual");
+  });
+});
+
+describe("holdings-weighted daily estimate", () => {
+  const holdingsEstimate: Holding = {
+    fund_code: "012200",
+    fund_name: "新华鑫科技3个月滚动持有灵活配置混合A",
+    holding_amount: 10000,
+    return_percent: 10,
+    holding_return_percent: 10,
+    holding_profit: 909.09,
+    daily_return_percent: 0.17,
+    daily_profit: 17,
+    daily_return_percent_source: "holdings_estimate",
+    sector_name: "半导体材料",
+    sector_return_percent: -0.42,
+  };
+
+  it("overlays holdings-weighted daily instead of the sector board", () => {
+    expect(computeEstimatedHoldingReturnPercent(holdingsEstimate, "trading_day_intraday")).toBe(10.17);
+    expect(computeDailyProfit(holdingsEstimate)).toBe(17);
+  });
+
+  it("does not let applySectorDailyEstimate overwrite holdings estimate", () => {
+    const next = applySectorDailyEstimate(holdingsEstimate);
+    expect(next.daily_return_percent).toBe(0.17);
+    expect(next.daily_return_percent_source).toBe("holdings_estimate");
+    expect(next.sector_return_percent).toBe(-0.42);
+  });
+
+  it("hides the associated-board column for unthemed allocation funds", () => {
+    expect(resolveSectorBoardReturnPercent(holdingsEstimate)).toBeNull();
   });
 });
 

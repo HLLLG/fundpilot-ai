@@ -746,9 +746,11 @@ export function YangjibaoFundDetail({
                 label={
                   dailyReturnPending
                     ? `当日暂不计 ${tradeDateLabel}`
-                    : dailyReturnEstimated
-                      ? `板块参考 ${tradeDateLabel}`
-                      : `官方净值 ${tradeDateLabel}`
+                    : activeHolding.daily_return_percent_source === "holdings_estimate"
+                      ? `重仓估算 ${tradeDateLabel}`
+                      : dailyReturnEstimated
+                        ? `板块参考 ${tradeDateLabel}`
+                        : `官方净值 ${tradeDateLabel}`
                 }
                 value={
                   dailyReturnPending

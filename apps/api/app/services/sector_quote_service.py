@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from app.config import get_settings
 from app.database import get_sector_mapping, save_sector_mapping
 from app.models import Holding, HoldingFieldWarning, SectorMappingCandidate, SectorQuoteMeta
 from app.services.fund_primary_sector_service import (
     PrimarySectorBatchContext,
+    associated_sector_is_page_visible,
+    is_research_associated_sector_source,
+    is_unthemed_allocation_fund,
     primary_sector_fields_for_holding,
 )
 from app.services.fund_profile import (
@@ -200,6 +206,12 @@ def refresh_holdings_sector_quotes(
         )
 
     if cache_only and not any(boards.values()):
+        holdings = _overlay_holdings_daily_estimates(
+            holdings,
+            cache_only=True,
+            accurate=accurate,
+            profiles=profiles,
+        )
         return {
             "ok": True,
             "message": "板块缓存未命中，后台将刷新",
@@ -247,6 +259,12 @@ def refresh_holdings_sector_quotes(
         and not estimate_quotes
         and kline_prefetched == 0
     ):
+        holdings = _overlay_holdings_daily_estimates(
+            holdings,
+            cache_only=cache_only,
+            accurate=accurate,
+            profiles=profiles,
+        )
         return {
             "ok": False,
             "message": "板块行情拉取失败（网络/代理），且没有可用快照，请稍后重试",
@@ -379,21 +397,31 @@ def refresh_holdings_sector_quotes(
 
             sector_source = "realtime" if is_trading_hours else "closing_estimate"
             update: dict = {}
+            hide_research_board = _hide_research_associated_board(
+                holding,
+                batch_context=batch_context,
+            )
+            if hide_research_board:
+                update["sector_name"] = None
+                update["intraday_index_name"] = None
+                update["sector_return_percent"] = None
+                update["sector_return_percent_source"] = None
             display_sector = sector_display_label(holding)
-            if _is_valid_sector_label(display_sector) and not _is_valid_sector_label(
-                holding.sector_name
-            ):
-                update["sector_name"] = display_sector
-            elif (
-                estimate_quote is None
-                and result.message != "天天基金估值"
-                and _is_valid_sector_label(result.matched_name)
-                and not _is_valid_sector_label(holding.sector_name)
-            ):
-                canonical = get_canonical_sector(result.matched_name or "")
-                update["sector_name"] = (
-                    canonical.label if canonical else result.matched_name
-                )
+            if not hide_research_board:
+                if _is_valid_sector_label(display_sector) and not _is_valid_sector_label(
+                    holding.sector_name
+                ):
+                    update["sector_name"] = display_sector
+                elif (
+                    estimate_quote is None
+                    and result.message != "天天基金估值"
+                    and _is_valid_sector_label(result.matched_name)
+                    and not _is_valid_sector_label(holding.sector_name)
+                ):
+                    canonical = get_canonical_sector(result.matched_name or "")
+                    update["sector_name"] = (
+                        canonical.label if canonical else result.matched_name
+                    )
             from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
             amount = holding.settled_holding_amount or holding.holding_amount
@@ -403,8 +431,10 @@ def refresh_holdings_sector_quotes(
             # 显示数字，有的（从没匹配过）一直空白的不一致假象。估值兜底走的这个
             # 分支，前端会用 sectorMeta.provider 单独标"估值兜底"角标区分数据来源，
             # 不会误当成真实板块行情。
-            update["sector_return_percent"] = result.change_percent
-            update["sector_return_percent_source"] = sector_source
+            # 灵活配置且无法确定关联板块时，不写板块列，当日走重仓估算。
+            if not hide_research_board:
+                update["sector_return_percent"] = result.change_percent
+                update["sector_return_percent_source"] = sector_source
             if nav_return is not None and not is_profit_accrual_deferred(profile):
                 update["daily_return_percent"] = nav_return
                 update["daily_profit"] = compute_daily_profit_from_rate(
@@ -503,6 +533,12 @@ def refresh_holdings_sector_quotes(
             }
         )
 
+    updated = _overlay_holdings_daily_estimates(
+        updated,
+        cache_only=cache_only,
+        accurate=accurate,
+        profiles=profiles,
+    )
     provider_path = _effective_provider_path(fetch_result, estimate_fallback=estimate_fallback)
     return {
         "ok": True,
@@ -643,3 +679,54 @@ def _merge_spot_board_under_canonical(
     兜底源只填空缺，不改写更可信的那一份。
     """
     return {**(spot or {}), **(canonical or {})}
+
+
+def _hide_research_associated_board(
+    holding: Holding,
+    *,
+    batch_context: PrimarySectorBatchContext | None,
+) -> bool:
+    if is_unthemed_allocation_fund(holding.fund_name):
+        return True
+    code = (holding.fund_code or "").strip()
+    row = batch_context.user_row(code) if batch_context is not None and code else None
+    if row is None and code and code != "000000":
+        from app.database import get_fund_primary_sector
+
+        row = get_fund_primary_sector(code)
+    source = str((row or {}).get("source") or "")
+    if not is_research_associated_sector_source(source):
+        return False
+    return not associated_sector_is_page_visible(
+        fund_name=holding.fund_name,
+        sector_name=(row or {}).get("sector_name") or holding.sector_name,
+        source=source,
+    )
+
+
+def _overlay_holdings_daily_estimates(
+    holdings: list[Holding],
+    *,
+    cache_only: bool,
+    accurate: bool,
+    profiles: list | None = None,
+) -> list[Holding]:
+    """主动基金当日：季报重仓加权优先于板块/天天基金估值；官方净值仍锁定。"""
+
+    from app.services.fund_holdings_return_estimate import (
+        apply_holdings_daily_estimates,
+        estimate_holdings_weighted_returns,
+    )
+
+    try:
+        estimates = estimate_holdings_weighted_returns(
+            holdings,
+            allow_fetch=not cache_only,
+            allow_live_snapshot=not cache_only and accurate,
+        )
+    except Exception:
+        logger.exception("holdings-weighted daily estimate failed")
+        return holdings
+    if not estimates:
+        return holdings
+    return apply_holdings_daily_estimates(holdings, estimates, profiles=profiles)

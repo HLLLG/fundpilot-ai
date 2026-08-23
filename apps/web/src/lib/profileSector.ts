@@ -6,11 +6,21 @@ const FUND_NAME_TOPIC_TOKENS = [
   "商业航天",
   "人工智能",
   "电网设备",
+  "半导体材料",
   "半导体",
   "新能源",
   "红利",
   "传媒",
   "CPO",
+  "CXO",
+  "医药",
+  "医疗",
+  "互联网",
+  "军工",
+  "煤炭",
+  "黄金",
+  "电子",
+  "计算机",
 ] as const;
 
 const FUND_PRODUCT_LABEL_RE =
@@ -79,12 +89,50 @@ function seededSectorLabel(
   return seeded.sector_name;
 }
 
+function isPassiveIndexFundName(fundName: string | null | undefined): boolean {
+  if (!fundName) {
+    return false;
+  }
+  const normalized = fundName.toUpperCase();
+  if (["指数", "ETF", "联接", "LOF"].some((marker) => normalized.includes(marker))) {
+    return true;
+  }
+  const compact = fundName.replace(/\s+/g, "");
+  return /黄金股[ACEH]?$/i.test(compact);
+}
+
+const UNDETERMINED_ASSOCIATED_SECTOR_MARKERS = [
+  "灵活配置",
+  "滚动持有",
+  "宏观择时",
+  "多策略",
+  "量化对冲",
+  "行业轮动",
+  "风格轮动",
+] as const;
+
+/** 名称无板块主题、产品也不跟踪单一赛道：持仓页不展示猜测的关联板块。 */
+export function isUnthemedAllocationFund(fundName: string | null | undefined): boolean {
+  if (!fundName || isPassiveIndexFundName(fundName)) {
+    return false;
+  }
+  const compact = fundName.replace(/\s+/g, "");
+  if (["债券", "货币", "短债", "中短债", "纯债", "理财", "固收"].some((token) => compact.includes(token))) {
+    return false;
+  }
+  if (inferSectorLabelFromFundName(fundName)) {
+    return false;
+  }
+  return UNDETERMINED_ASSOCIATED_SECTOR_MARKERS.some((token) => compact.includes(token));
+}
+
 function inferSectorLabelFromFundName(fundName: string | null | undefined): string | null {
   const normalized = (fundName || "").replace("...", "").replace(/\s+/g, "");
   if (!normalized) {
     return null;
   }
-  for (const token of FUND_NAME_TOPIC_TOKENS) {
+  const tokens = [...FUND_NAME_TOPIC_TOKENS].sort((left, right) => right.length - left.length);
+  for (const token of tokens) {
     if (normalized.includes(token)) {
       return token;
     }
@@ -97,6 +145,9 @@ export function holdingDisplaySectorLabel(
   holding: Pick<Holding, "fund_code" | "fund_name" | "sector_name" | "intraday_index_name">,
   sectorMeta?: SectorQuoteMeta | null,
 ): string {
+  if (isUnthemedAllocationFund(holding.fund_name)) {
+    return "—";
+  }
   const base = holdingRelatedBoardLabel(holding);
   if (base !== "—") {
     return base;
@@ -162,6 +213,7 @@ const FUND_NAME_INDEX_TOKENS = [
 const FEEDER_THEME_TO_INDEX: Record<string, string> = {
   人工智能: "中证人工智能",
   电网设备: "中证电网设备",
+  半导体材料: "半导体材料",
   半导体: "中证半导体",
   新能源: "中证新能源",
   军工: "中证军工",
@@ -182,7 +234,10 @@ function inferIndexFromFundName(fundName: string | null | undefined): string | n
   if (!compact.includes("ETF联接") && !compact.includes("ETF连接")) {
     return null;
   }
-  for (const [theme, index] of Object.entries(FEEDER_THEME_TO_INDEX)) {
+  const themes = Object.entries(FEEDER_THEME_TO_INDEX).sort(
+    (left, right) => right[0].length - left[0].length,
+  );
+  for (const [theme, index] of themes) {
     if (normalized.includes(theme)) {
       return index;
     }
@@ -257,6 +312,9 @@ export function resolveIntradayQuery(
   holding: Pick<Holding, "fund_code" | "fund_name" | "sector_name" | "intraday_index_name">,
   sectorMeta?: SectorQuoteMeta | null,
 ): IntradayQuery | null {
+  if (isUnthemedAllocationFund(holding.fund_name)) {
+    return null;
+  }
   const seeded = seededSectorFields(holding);
   const effectiveHolding = seeded
     ? {
@@ -327,6 +385,9 @@ export function resolveIntradayFallbackQuery(
   holding: Pick<Holding, "fund_code" | "fund_name" | "sector_name" | "intraday_index_name">,
   primaryQuery: IntradayQuery | null,
 ): IntradayQuery | null {
+  if (isUnthemedAllocationFund(holding.fund_name)) {
+    return null;
+  }
   const seeded = seededSectorFields(holding);
   const boardName = (seeded?.sector_name ?? holding.sector_name)?.trim();
   if (!boardName || isInvalidSectorLabel(boardName)) {

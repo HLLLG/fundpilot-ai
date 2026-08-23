@@ -49,6 +49,30 @@ def test_intraday_request_hint_is_resolved_by_the_registry() -> None:
     ) == ("index", "互联网")
 
 
+def test_semiconductor_materials_index_name_does_not_collapse_to_semiconductor() -> None:
+    """合同跟踪名含「半导体」，但不能落到更宽的中证半导体 H30184。
+
+    2026-08-21：931743 收盘 -0.42%，H30184 收盘 +0.34%。详情分时若走错标的，
+    会和官方净值（联接跟踪 931743）完全对不上。
+    """
+
+    long_name = "中证半导体材料设备主题指数"
+    materials = sector_canonical.get_canonical_sector(long_name)
+    semiconductor = sector_canonical.get_canonical_sector("半导体")
+
+    assert materials is not None
+    assert materials.source_code == "931743"
+    assert materials.label == "半导体材料"
+    assert semiconductor is not None
+    assert semiconductor.source_code == "H30184"
+    assert sector_intraday_provider.resolve_intraday_source(
+        "index",
+        long_name,
+    ) == ("index", "半导体材料")
+    assert resolve_theme_sector_label(long_name) == "半导体材料"
+    assert resolve_theme_sector_label("中证半导体指数") == "半导体"
+
+
 def test_market_identity_and_fund_flow_identity_are_explicitly_separate() -> None:
     market = resolve_market_quote("半导体")
     flow = resolve_discovery_quote("半导体")

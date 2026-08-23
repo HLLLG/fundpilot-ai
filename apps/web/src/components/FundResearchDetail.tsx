@@ -161,7 +161,9 @@ export function FundResearchDetail({ fund, holding, onClose }: FundResearchDetai
   const relationChange = intraday?.close_change_percent ??
     intraday?.points.at(-1)?.percent ?? null;
   const holdingDailyEstimated = Boolean(
-    held?.daily_return_is_estimated ?? held?.daily_return_percent_source === "sector_estimate",
+    held?.daily_return_is_estimated ??
+      (held?.daily_return_percent_source === "sector_estimate" ||
+        held?.daily_return_percent_source === "holdings_estimate"),
   );
 
   return (
@@ -373,7 +375,9 @@ export function FundResearchDetail({ fund, holding, onClose }: FundResearchDetai
                     </div>
                     {holdingDailyEstimated ? (
                       <p className="mt-3 rounded-xl bg-[var(--warn-bg)] px-3 py-2.5 text-xs leading-5 text-[var(--warn-fg)]">
-                        ≈板块参考估算，等待官方净值后会切换为正式当日收益。
+                        {held.daily_return_percent_source === "holdings_estimate"
+                          ? "≈重仓加权估算，等待官方净值后会切换为正式当日收益。"
+                          : "≈板块参考估算，等待官方净值后会切换为正式当日收益。"}
                       </p>
                     ) : null}
                   </section>

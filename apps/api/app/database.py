@@ -2198,6 +2198,42 @@ def get_fund_primary_sector_global(fund_code: str) -> dict[str, Any] | None:
     return rows.get(code)
 
 
+def delete_fund_primary_sector_global(fund_code: str) -> bool:
+    code = fund_code.strip().zfill(6)
+    with _connect() as connection:
+        cursor = connection.execute(
+            "DELETE FROM fund_primary_sectors_global WHERE fund_code = ?",
+            (code,),
+        )
+        connection.commit()
+    return cursor.rowcount > 0
+
+
+def delete_fund_primary_sectors_by_code(fund_code: str) -> int:
+    """跨用户删除一只基金的 per-user 主关联板块，给不确定身份纠错用。"""
+    code = fund_code.strip().zfill(6)
+    with _connect() as connection:
+        cursor = connection.execute(
+            "DELETE FROM fund_primary_sectors WHERE fund_code = ?",
+            (code,),
+        )
+        connection.commit()
+    return int(cursor.rowcount or 0)
+
+
+def list_fund_sector_current_primaries() -> list[dict[str, Any]]:
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT fund_code, sector_name, source, identity_status, confidence
+            FROM fund_sector_current
+            WHERE is_primary = 1
+            ORDER BY fund_code
+            """
+        ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
 def get_fund_primary_sectors_global_by_codes(
     fund_codes: set[str] | list[str],
 ) -> dict[str, dict[str, Any]]:

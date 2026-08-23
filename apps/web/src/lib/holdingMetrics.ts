@@ -5,6 +5,7 @@
  */
 import type { Holding } from "@/lib/api";
 import { readTradingSessionCache } from "@/lib/holdingDetailCache";
+import { isUnthemedAllocationFund } from "@/lib/profileSector";
 
 const HOLDING_RETURN_ESTIMATE_SESSIONS = new Set([
   "trading_day_intraday",
@@ -91,6 +92,13 @@ const HOLDING_QUOTE_FIELDS = [
 
 const PRESERVE_QUOTE_FIELDS = HOLDING_QUOTE_FIELDS;
 
+const ASSOCIATED_SECTOR_QUOTE_FIELDS = new Set<keyof Holding>([
+  "sector_return_percent",
+  "sector_return_percent_source",
+  "sector_name",
+  "intraday_index_name",
+]);
+
 export function stripHoldingsQuoteFields(holdings: Holding[]): Holding[] {
   return holdings.map((holding) => {
     const stripped: Holding = { ...holding };
@@ -130,7 +138,13 @@ export function withApplyDisplayFields(holdings: Holding[]): Holding[] {
 
 function mergeHoldingQuoteFields(previous: Holding, incoming: Holding): Holding {
   const merged: Holding = { ...incoming };
+  const hideAssociatedSector = isUnthemedAllocationFund(
+    incoming.fund_name || previous.fund_name,
+  );
   for (const key of PRESERVE_QUOTE_FIELDS) {
+    if (hideAssociatedSector && ASSOCIATED_SECTOR_QUOTE_FIELDS.has(key)) {
+      continue;
+    }
     const nextValue = incoming[key];
     const prevValue = previous[key];
     if ((nextValue === null || nextValue === undefined) && prevValue !== null && prevValue !== undefined) {
@@ -306,10 +320,11 @@ function resolveHoldingReturnPercent(holding: Holding): number | null {
   return null;
 }
 
-/** 当日涨跌分量：官方净值已公布时用净值，否则用关联板块涨跌。 */
+/** 当日涨跌分量：官方净值 / 重仓加权优先于关联板块。 */
 function resolveIntradayReturnPercent(holding: Holding): number | null {
   if (
-    holding.daily_return_percent_source === "official_nav" &&
+    (holding.daily_return_percent_source === "official_nav" ||
+      holding.daily_return_percent_source === "holdings_estimate") &&
     holding.daily_return_percent != null
   ) {
     return holding.daily_return_percent;
@@ -346,6 +361,7 @@ export function holdingReturnNeedsSessionEstimate(
   if (kind == null) {
     return (
       holding.daily_return_percent_source === "sector_estimate" ||
+      holding.daily_return_percent_source === "holdings_estimate" ||
       holding.sector_return_percent != null
     );
   }
@@ -503,7 +519,10 @@ export function applySectorDailyEstimate(holding: Holding): Holding {
       daily_return_percent_source: "pending_accrual",
     };
   }
-  if (holding.daily_return_percent_source === "official_nav") {
+  if (
+    holding.daily_return_percent_source === "official_nav" ||
+    holding.daily_return_percent_source === "holdings_estimate"
+  ) {
     return holding;
   }
   const sector = holding.sector_return_percent;
@@ -567,6 +586,9 @@ export function computeDailyProfit(holding: Holding): number | null {
 
 /** 关联板块列：始终展示东财板块/指数涨跌，不用官方净值。 */
 export function resolveSectorBoardReturnPercent(holding: Holding): number | null {
+  if (isUnthemedAllocationFund(holding.fund_name)) {
+    return null;
+  }
   return holding.sector_return_percent ?? null;
 }
 
@@ -605,6 +627,12 @@ export function holdingDailyReturnIsEstimated(holding: Holding): boolean {
     holding.profit_accrual_deferred
   ) {
     return false;
+  }
+  if (
+    holding.daily_return_percent_source === "sector_estimate" ||
+    holding.daily_return_percent_source === "holdings_estimate"
+  ) {
+    return true;
   }
   return holding.daily_return_percent == null && holding.sector_return_percent != null;
 }

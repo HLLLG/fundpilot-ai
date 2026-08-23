@@ -119,6 +119,61 @@ describe("profileSector", () => {
     ).toBe("沪港深黄金");
   });
 
+  it("still shows a named medical flexible-allocation fund", () => {
+    expect(
+      holdingDisplaySectorLabel({
+        fund_code: "000452",
+        fund_name: "南方医药保健灵活配置混合A",
+        sector_name: "医药",
+        intraday_index_name: null,
+      }),
+    ).toBe("医药");
+  });
+
+  it("hides research board labels for macro timing multi-strategy funds", () => {
+    const holding = {
+      fund_code: "017787",
+      fund_name: "万家宏观择时多策略混合C",
+      sector_name: "煤炭",
+      intraday_index_name: null,
+    };
+    expect(holdingDisplaySectorLabel(holding)).toBe("—");
+    expect(resolveIntradayQuery(holding)).toBeNull();
+  });
+
+  it("hides research board labels for unthemed flexible allocation funds", () => {
+    const holding = {
+      fund_code: "012200",
+      fund_name: "新华鑫科技3个月滚动持有灵活配置混合A",
+      sector_name: "半导体材料",
+      intraday_index_name: "中证半导体材料设备主题指数",
+    };
+    expect(holdingDisplaySectorLabel(holding)).toBe("—");
+    expect(resolveIntradayQuery(holding)).toBeNull();
+    expect(resolveIntradayFallbackQuery(holding, null)).toBeNull();
+  });
+
+  it("does not infer the broad semiconductor board from a materials-equipment feeder", () => {
+    expect(
+      holdingDisplaySectorLabel({
+        fund_code: "020356",
+        fund_name: "华夏半导体材料设备ETF联接A",
+        sector_name: null,
+        intraday_index_name: null,
+      }),
+    ).toBe("半导体材料");
+  });
+
+  it("keeps holdings-inferred theme for industry equity funds", () => {
+    const holding = {
+      fund_code: "000960",
+      fund_name: "招商医疗保健股票A",
+      sector_name: "CXO",
+      intraday_index_name: null,
+    };
+    expect(holdingDisplaySectorLabel(holding)).toBe("CXO");
+  });
+
   it("charts 国证CXO when the related board is CXO", () => {
     const holding = {
       fund_code: "000960",

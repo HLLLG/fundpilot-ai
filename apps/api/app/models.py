@@ -80,7 +80,12 @@ class RiskAssessment(BaseModel):
 AnalysisMode = Literal["fast", "deep"]
 DailyProfitSource = Literal["settled", "penetration_estimate"]
 SectorReturnSource = Literal["realtime", "closing_estimate"]
-DailyReturnSource = Literal["sector_estimate", "official_nav", "pending_accrual"]
+DailyReturnSource = Literal[
+    "sector_estimate",
+    "official_nav",
+    "pending_accrual",
+    "holdings_estimate",
+]
 DataSourceType = Literal["first_party", "official", "third_party", "derived", "user_input"]
 DataFreshness = Literal["fresh", "aging", "stale", "unknown", "unavailable"]
 DataConfidence = Literal["high", "medium", "low", "none"]
