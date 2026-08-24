@@ -188,7 +188,7 @@ def deepseek_stream_slot(
 
     global _active_streams
     settings = get_settings()
-    limit = max(0, int(getattr(settings, "deepseek_max_concurrent_streams", 1)))
+    limit = max(0, int(getattr(settings, "deepseek_max_concurrent_streams", 2)))
     if limit == 0:
         yield
         return

@@ -130,3 +130,44 @@ def test_two_sse_producers_emit_independently_on_one_loop() -> None:
     assert any('"type": "done"' in chunk and '"name": "discovery"' in chunk for chunk in right)
     assert len(left) == 4
     assert len(right) == 4
+
+
+def test_handled_provider_error_still_emits_done_through_sse() -> None:
+    """A recoverable DeepSeek failure must still reach the browser as ``done``."""
+
+    import httpx
+
+    from app.services.streaming_heartbeat import iter_with_heartbeat
+
+    stop_event = threading.Event()
+
+    def failing_llm():
+        yield "partial-token"
+        raise httpx.PoolTimeout("DeepSeek concurrency budget exhausted")
+
+    def produce():
+        yield {"type": "stage", "stage": "generating"}
+        try:
+            for _chunk in iter_with_heartbeat(
+                failing_llm(),
+                heartbeat_seconds=10,
+                heartbeat_factory=lambda: {"type": "stage", "stage": "generating"},
+                stop_event=stop_event,
+            ):
+                yield {"type": "token"}
+        except httpx.PoolTimeout:
+            yield {"type": "done", "report_id": "offline"}
+
+    async def collect() -> list[str]:
+        return [
+            chunk
+            async for chunk in sse_from_sync_iterator(
+                produce(),
+                stop_event=stop_event,
+            )
+        ]
+
+    chunks = asyncio.run(collect())
+    assert any('"type": "done"' in chunk and '"report_id": "offline"' in chunk for chunk in chunks)
+    # The SSE bridge sets stop while tearing down; the important contract is
+    # that the recoverable fallback reached the client before that.

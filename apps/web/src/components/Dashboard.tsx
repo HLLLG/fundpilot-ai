@@ -1140,6 +1140,29 @@ export function Dashboard() {
             lastAnalysisStageRef.current = null;
             return;
           }
+          try {
+            const reports = await listReports();
+            const recovered = detectCompletedScan({
+              reports: sortReportsByCreatedAtDesc(reports),
+              knownLatestId: latestAnalysisReportIdRef.current,
+            });
+            if (recovered) {
+              streamAbortRef.current = null;
+              userLeftReportDuringStreamRef.current = false;
+              setStreamingReport(null);
+              setActiveJobId(null);
+              setIsSubmitting(false);
+              latestAnalysisReportIdRef.current = recovered.id;
+              writeDailyReportsListCache(user?.id, reports);
+              setReports(reports);
+              hydrateReport(recovered, { asLatest: true, force: true });
+              setActiveTab("report");
+              updateReportUrl(null, "replace");
+              return;
+            }
+          } catch {
+            // The stream dropped; keep retrying / surface the original error.
+          }
           lastError = streamError;
         }
       }

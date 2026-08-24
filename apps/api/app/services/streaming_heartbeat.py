@@ -91,6 +91,7 @@ def iter_with_heartbeat(
 
     next_heartbeat = time.monotonic() + heartbeat_seconds
     completed = False
+    source_failed = False
     try:
         while True:
             raise_if_stream_cancelled(stop_event)
@@ -106,8 +107,13 @@ def iter_with_heartbeat(
                 completed = True
                 return
             if kind == "error":
+                source_failed = True
                 raise payload
             yield payload
     finally:
-        if not completed and stop_event is not None:
+        # Source errors are the caller's to recover from (offline fallback,
+        # salvage, or a terminal SSE error). Cancelling the shared pipeline
+        # stop_event here used to drop those follow-up events: the SSE bridge
+        # treats a set stop as "client gone" and refuses later yields.
+        if not completed and not source_failed and stop_event is not None:
             stop_event.set()

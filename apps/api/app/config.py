@@ -248,11 +248,13 @@ class Settings(BaseSettings):
     eastmoney_lane_floor_discovery: int = 3
     eastmoney_circuit_failure_threshold: int = 3
     eastmoney_circuit_cooldown_seconds: float = 15
-    # Long-lived report streams are serialized by default so two SSE
-    # pipelines do not both sit on a 180s DeepSeek completion. Non-stream
-    # calls (news / judge / infer) use a separate, larger gate. ``0``
-    # disables that gate.
-    deepseek_max_concurrent_streams: int = 1
+    # Daily-report and fund-discovery streams must be able to hold a
+    # DeepSeek completion at the same time. Serializing them (limit=1)
+    # made the second stream wait out the acquire timeout, then either
+    # exhaust its request budget or fail the SSE without a terminal event.
+    # Non-stream calls (news / judge / infer) use a separate, larger gate.
+    # ``0`` disables that gate.
+    deepseek_max_concurrent_streams: int = 2
     deepseek_max_concurrent_requests: int = 3
     deepseek_stream_acquire_timeout_seconds: float = 180
     deepseek_acquire_timeout_seconds: float = 45

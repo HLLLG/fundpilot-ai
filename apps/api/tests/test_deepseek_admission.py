@@ -65,6 +65,32 @@ def test_stream_slot_serializes_second_stream(monkeypatch):
     assert not errors
 
 
+def test_two_stream_slots_are_admitted_when_limit_is_two(monkeypatch):
+    monkeypatch.setattr(
+        deepseek_http,
+        "get_settings",
+        lambda: _settings(deepseek_max_concurrent_streams=2),
+    )
+    first_inside = threading.Event()
+    second_inside = threading.Event()
+    release = threading.Event()
+
+    def hold_stream(ready: threading.Event) -> None:
+        with deepseek_http.deepseek_stream_slot():
+            ready.set()
+            release.wait(2)
+
+    first = threading.Thread(target=hold_stream, args=(first_inside,))
+    second = threading.Thread(target=hold_stream, args=(second_inside,))
+    first.start()
+    second.start()
+    assert first_inside.wait(1)
+    assert second_inside.wait(1)
+    release.set()
+    first.join(2)
+    second.join(2)
+
+
 def test_stream_slot_times_out_instead_of_stacking(monkeypatch):
     monkeypatch.setattr(deepseek_http, "get_settings", lambda: _settings())
     release = threading.Event()

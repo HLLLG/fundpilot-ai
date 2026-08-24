@@ -79,6 +79,10 @@ CONTEXT_HEARTBEAT_SECONDS = 1.0
 # 与 discovery_streaming 一致：避免 LLM 首 token 延迟过久导致 SSE 连接被
 # 反向代理判定为空闲而中断（ERR_ABORT_HANDLER）。
 LLM_HEARTBEAT_SECONDS = 12.0
+# Cover fund-data / news waits that do not themselves yield. Concurrent
+# discovery can saturate shared_io; without a pipeline heartbeat the daily
+# SSE looks idle to the browser even though work is still queued.
+PIPELINE_HEARTBEAT_SECONDS = 12.0
 
 
 def stream_analysis(
@@ -90,11 +94,48 @@ def stream_analysis(
     """把 run_analysis 拆成可流式产出 SSE 事件的版本（fast / deep）。"""
     stop = stop_event or threading.Event()
     with provider_lane(LANE_ANALYSIS):
-        yield from _stream_analysis_on_lane(
+        yield from _stream_analysis_with_heartbeat(
             request,
             user_id=user_id,
             stop=stop,
         )
+
+
+def _stream_analysis_with_heartbeat(
+    request: AnalysisRequest,
+    *,
+    user_id: int,
+    stop: threading.Event,
+) -> Iterator[dict[str, Any]]:
+    started_at = time.monotonic()
+    active_stage = {
+        "stage": "connected",
+        "label": JOB_STAGES.get("fund_data", "正在连接流式分析…"),
+    }
+    try:
+        for entry in iter_with_heartbeat(
+            _stream_analysis_on_lane(
+                request,
+                user_id=user_id,
+                stop=stop,
+            ),
+            heartbeat_seconds=PIPELINE_HEARTBEAT_SECONDS,
+            heartbeat_factory=lambda: _stage(
+                active_stage["stage"],
+                active_stage["label"],
+                started_at=started_at,
+            ),
+            stop_event=stop,
+        ):
+            if isinstance(entry, Heartbeat):
+                yield entry.value
+                continue
+            if entry.get("type") == "stage":
+                active_stage["stage"] = str(entry.get("stage") or active_stage["stage"])
+                active_stage["label"] = str(entry.get("label") or active_stage["label"])
+            yield entry
+    except StreamCancelled:
+        return
 
 
 def _stream_analysis_on_lane(

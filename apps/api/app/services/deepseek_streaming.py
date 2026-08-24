@@ -42,12 +42,12 @@ def stream_chat_completion(
     """逐 chunk yield content 文本。"""
     raise_if_stream_cancelled(stop_event)
     settings = get_settings()
-    deadline = (
-        deadline_monotonic
-        if deadline_monotonic is not None
-        else deepseek_request_deadline(settings)
-    )
-    deepseek_budget_remaining(deadline)
+    # Caller-supplied deadlines still apply while waiting for a stream slot.
+    # A fresh request budget must start *after* admission: otherwise a peer
+    # daily/discovery stream can consume the entire 180s window in the queue.
+    deadline = deadline_monotonic
+    if deadline is not None:
+        deepseek_budget_remaining(deadline)
     if exact_provider_payload is not None:
         payload = deepcopy(dict(exact_provider_payload))
         if (
@@ -73,6 +73,9 @@ def stream_chat_completion(
         with deepseek_stream_slot(
             is_cancelled=lambda: stop_event is not None and stop_event.is_set(),
         ):
+            if deadline is None:
+                deadline = deepseek_request_deadline(settings)
+            deepseek_budget_remaining(deadline)
             yield from _stream_chat_completion_admitted(
                 payload=payload,
                 settings=settings,

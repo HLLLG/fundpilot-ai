@@ -130,6 +130,20 @@ describe("streamAnalysis", () => {
     expect(requestBody.analysis_mode).toBe("deep");
   });
 
+  it("throws when an otherwise healthy stream ends without a done event", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      body: sseBody([
+        { type: "stage", stage: "generating", label: "AI 分析中…" },
+      ]),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(streamAnalysis([], testProfile(), {}, {})).rejects.toThrow(
+      "流式生成异常结束，未收到完成状态。",
+    );
+  });
+
   it("throws when stream ends without any SSE events", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

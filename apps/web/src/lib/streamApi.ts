@@ -281,6 +281,24 @@ export async function streamAnalysis(
         throw new Error("流式生成长时间没有进展 (long time without progress)，请再点一次生成日报。");
       }
       if (done) {
+        buffer += decoder.decode();
+        if (buffer.trim()) {
+          for (const line of buffer.split("\n")) {
+            const event = parseSseLine(line.trim());
+            if (!event) {
+              continue;
+            }
+            sawEvent = true;
+            window.clearTimeout(timeoutId);
+            const outcome = dispatchEvent(event, events);
+            if (outcome === "done") {
+              return;
+            }
+            if (outcome === "error") {
+              throw new Error("stream error");
+            }
+          }
+        }
         break;
       }
       buffer += decoder.decode(value, { stream: true });
@@ -313,6 +331,7 @@ export async function streamAnalysis(
   if (!sawEvent) {
     throw new Error("流式连接未收到事件");
   }
+  throw new Error("流式生成异常结束，未收到完成状态。");
 }
 
 export async function submitStreamFollowup(sessionId: string, message: string): Promise<void> {

@@ -104,7 +104,7 @@ def test_deepseek_resilience_defaults_are_bounded(monkeypatch):
     assert settings.eastmoney_lane_floor_discovery == 3
     assert settings.eastmoney_circuit_failure_threshold == 3
     assert settings.eastmoney_circuit_cooldown_seconds == 15
-    assert settings.deepseek_max_concurrent_streams == 1
+    assert settings.deepseek_max_concurrent_streams == 2
     assert settings.deepseek_max_concurrent_requests == 3
     assert settings.deepseek_stream_acquire_timeout_seconds == 180
     assert settings.deepseek_acquire_timeout_seconds == 45
