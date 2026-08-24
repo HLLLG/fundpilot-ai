@@ -109,4 +109,24 @@ describe("tradeConfirmDates", () => {
       ),
     ).toEqual([true, false]);
   });
+
+  it("keeps two same-day share sells distinct", () => {
+    expect(
+      sameDayTransactionKey({
+        direction: "sell",
+        fund_code: "018951",
+        amount_yuan: 0,
+        confirmed_shares: 401.71,
+        trade_time: "2026-08-24 14:34:25",
+      }),
+    ).not.toBe(
+      sameDayTransactionKey({
+        direction: "sell",
+        fund_code: "018951",
+        amount_yuan: 0,
+        confirmed_shares: 133.91,
+        trade_time: "2026-08-24 14:26:16",
+      }),
+    );
+  });
 });

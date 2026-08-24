@@ -373,6 +373,84 @@ def test_transaction_analysis_fund_pipe_layout_from_holdings_tab_neighbor() -> N
     ]
 
 
+ALIPAY_PENDING_SHARE_SELLS_OCR = """交易分析
+全部持有 收益分析 配置分析 交易分析
+明细
+基金
+全部
+买入
+南方黄金股指数C
+10,000.00元
+2026-08-24 14:56:04
+交易进行中
+买入
+万家宏观择时多策略灵活配置混合C
+10,000.00元
+2026-08-24 14:55:06
+交易进行中
+买入
+博时黄金ETF联接A
+10,000.00元
+2026-08-24 14:54:28
+交易进行中
+卖出
+华夏半导体材料设备ETF联接A
+401.71份
+2026-08-24 14:34:25
+预计08-25 24点前到账
+卖出
+华夏半导体材料设备ETF联接A
+133.91份
+2026-08-24 14:26:16
+预计08-25 24点前到账
+卖出
+嘉实中证稀土产业ETF联接C
+1,431.92份
+2026-08-24 13:15:17
+预计08-25 24点前到账
+卖出
+鹏扬中证数字经济主题ETF联接C
+278.13份
+2026-08-24 13:14:45
+预计08-25 24点前到账
+"""
+
+
+def test_compact_share_sell_row_is_full_exit() -> None:
+    text = """全部持有 收益分析 配置分析 交易分析
+明细
+卖出 基金 华夏半导体材料设备ETF联接A 401.71份
+2026-08-24 14:34:25
+预计08-25 24点前到账
+"""
+    parsed = parse_alipay_transactions(text)
+    assert len(parsed) == 1
+    assert parsed[0].direction == "sell"
+    assert parsed[0].fund_name == "华夏半导体材料设备ETF联接A"
+    assert parsed[0].confirmed_shares == 401.71
+    assert parsed[0].full_exit is True
+    assert parsed[0].in_progress is True
+
+
+def test_pending_share_sells_parse_as_full_exit() -> None:
+    parsed = parse_alipay_transactions(ALIPAY_PENDING_SHARE_SELLS_OCR)
+    assert detect_ocr_source(ALIPAY_PENDING_SHARE_SELLS_OCR) == "alipay_transactions"
+    buys = [item for item in parsed if item.direction == "buy"]
+    sells = [item for item in parsed if item.direction == "sell"]
+    assert _compact(buys) == [
+        ("buy", "南方黄金股指数C", 10000.0, "2026-08-24 14:56:04", True),
+        ("buy", "万家宏观择时多策略灵活配置混合C", 10000.0, "2026-08-24 14:55:06", True),
+        ("buy", "博时黄金ETF联接A", 10000.0, "2026-08-24 14:54:28", True),
+    ]
+    assert [(item.fund_name, item.confirmed_shares, item.full_exit, item.in_progress) for item in sells] == [
+        ("华夏半导体材料设备ETF联接A", 401.71, True, True),
+        ("华夏半导体材料设备ETF联接A", 133.91, True, True),
+        ("嘉实中证稀土产业ETF联接C", 1431.92, True, True),
+        ("鹏扬中证数字经济主题ETF联接C", 278.13, True, True),
+    ]
+    assert all(item.amount_yuan == 0.0 for item in sells)
+
+
 def test_holdings_overview_tabs_alone_are_not_a_transaction_page() -> None:
     lines = [line.strip() for line in ALIPAY_OVERVIEW_OCR.splitlines() if line.strip()]
     assert not is_alipay_transaction_page(lines)

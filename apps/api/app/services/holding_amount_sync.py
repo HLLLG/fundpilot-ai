@@ -655,20 +655,13 @@ def _sync_one_holding(
     else:
         shares = profile.holding_shares if profile else None
 
-    # 清仓：账本有效份额 ≤ 0 → 金额归零（不写回档案，由展示层过滤）。
+    # 清仓：账本有效份额 ≤ 0。先留金额把当日收益算完，次日再关账本删除。
     if override_value is not None and override_value <= 0:
         if holding.holding_amount == 0:
             return holding, profile
-        return (
-            holding.model_copy(
-                update={
-                    "holding_amount": 0.0,
-                    "settled_holding_amount": 0.0,
-                    "amount_includes_today": False,
-                }
-            ),
-            profile,
-        )
+        from app.services.holding_exit import keep_amount_for_full_exit
+
+        return keep_amount_for_full_exit(holding, profile, trade_date=trade_date)
 
     if override_value is None and shares is None and profile and profile.holding_shares is None:
         from app.services.profit_accrual_defer import is_profit_accrual_deferred

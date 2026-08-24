@@ -85,11 +85,18 @@ function isPlaceholderHolding(holding: Holding): boolean {
   return name === "待录入基金" || name.startsWith("待录入");
 }
 
+export function isExitPendingHolding(holding: Holding): boolean {
+  return Boolean((holding.exit_pending_until || "").trim());
+}
+
 /** 账户汇总 / 生成日报使用的有效持仓列表。零金额的在途预览不进入日报。 */
 export function displayableHoldings(holdings: Holding[]): Holding[] {
   return withoutTestHoldings(holdings).filter((holding) => {
     if (isPlaceholderHolding(holding)) {
       return false;
+    }
+    if (isExitPendingHolding(holding)) {
+      return true;
     }
     const amount =
       holding.settled_holding_amount != null
@@ -278,7 +285,11 @@ export function navigableHoldings(holdings: Holding[]): Holding[] {
         holding.settled_holding_amount != null
           ? holding.settled_holding_amount
           : holding.holding_amount;
-      return (settled ?? 0) > 0 || isUnsettledPreviewHolding(holding);
+      return (
+        (settled ?? 0) > 0 ||
+        isUnsettledPreviewHolding(holding) ||
+        isExitPendingHolding(holding)
+      );
     }),
   );
 }

@@ -41,6 +41,7 @@ import {
   holdingHasCurrentOfficialNav,
   holdingIdentityKey,
   isUnsettledPreviewHolding,
+  isExitPendingHolding,
   pendingBuyAmount,
   type HoldingIdentity,
 } from "@/lib/holdingMetrics";
@@ -720,11 +721,19 @@ export function YangjibaoHoldingsBoard({
                       <div className="line-clamp-2 break-words text-sm font-bold leading-5 text-slate-900 sm:truncate sm:text-[13px] sm:leading-tight">
                         {holding.fund_name}
                       </div>
-                      {unsettledOnly || holding.has_in_progress_transactions || (isOfficialDaily && !unsettledOnly) ? (
+                      {unsettledOnly ||
+                      holding.has_in_progress_transactions ||
+                      isExitPendingHolding(holding) ||
+                      (isOfficialDaily && !unsettledOnly) ? (
                         <div className="mt-0.5 flex flex-wrap items-center gap-1">
                           {unsettledOnly || holding.has_in_progress_transactions ? (
                             <span className="shrink-0 rounded border border-[var(--warn-border)] bg-[var(--warn-bg)] px-1 py-0 text-[9px] font-bold leading-4 text-[var(--warn-icon)]">
                               待确认
+                            </span>
+                          ) : null}
+                          {isExitPendingHolding(holding) ? (
+                            <span className="shrink-0 rounded border border-slate-200 bg-slate-50 px-1 py-0 text-[9px] font-bold leading-4 text-slate-500">
+                              已全部卖出
                             </span>
                           ) : null}
                           {isOfficialDaily && !unsettledOnly ? (

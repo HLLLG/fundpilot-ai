@@ -66,6 +66,20 @@ describe("displayableHoldings", () => {
       "011036",
     ]);
   });
+
+  it("keeps a fully sold fund visible until the next-day ledger purge", () => {
+    const exiting: Holding = {
+      fund_code: "011036",
+      fund_name: "嘉实中证稀土产业ETF联接C",
+      holding_amount: 0,
+      settled_holding_amount: 0,
+      return_percent: 0,
+      exit_pending_until: "2026-08-25",
+      exit_basis_amount: 5000,
+    };
+    expect(displayableHoldings([exiting]).map((item) => item.fund_code)).toEqual(["011036"]);
+    expect(navigableHoldings([exiting]).map((item) => item.fund_code)).toEqual(["011036"]);
+  });
 });
 
 describe("findHoldingIndex", () => {

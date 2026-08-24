@@ -18,6 +18,9 @@ TRANSACTION_PAGE_MARKERS = (
 TIME_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\b")
 # 金额：1,500.00元 / 500.00元
 AMOUNT_RE = re.compile(r"([\d,]+(?:\.\d+)?)\s*元")
+# 在途卖出：401.71份。汇总「红利再投 0份」由 summary 排除。
+SHARES_RE = re.compile(r"([\d,]+(?:\.\d+)?)\s*份")
+EXPECTED_ARRIVAL_RE = re.compile(r"预计.+到账")
 # 「基金 |」「基金|」前缀（交易记录页）
 FUND_PREFIX_RE = re.compile(r"^基金\s*[|｜]\s*")
 # 「全部交易汇总」统计：47次 买入 / 65笔 / 共91,000.00元
@@ -27,7 +30,7 @@ SUMMARY_TOTAL_RE = re.compile(r"^共\s*[\d,]")
 DIRECTION_LINE_RE = re.compile(r"^(买入|卖出|定投)(?:\s*基金)?(?:\s+(.*))?$")
 DIRECTION_TOKEN_RE = re.compile(r"(买入|卖出|定投)")
 NAME_NOISE_RE = re.compile(
-    r"^(交易成功|交易进行中|明细|基金|全部类型|全部基金|筛选|近一年|近三个月|近一月|近一周)$"
+    r"^(交易成功|交易进行中|明细|基金|全部类型|全部基金|筛选|近一年|近三个月|近一月|近一周|全部)$"
 )
 
 _DIRECTION_BY_ANCHOR: dict[str, TransactionDirection] = {
@@ -99,7 +102,7 @@ def _window_for_timestamp(
     if found_direction and start - 1 > prev_time:
         previous = lines[start - 1]
         if (
-            AMOUNT_RE.search(previous)
+            _is_quantity_line(previous)
             and not _is_summary_line(previous)
             and not _is_direction_anchor(previous)
             and _leading_amount_belongs_to_current_card(lines, prev_time)
@@ -118,16 +121,20 @@ def _has_amount_before_timestamp(lines: list[str], start: int, time_index: int) 
         line = lines[index]
         if _is_summary_line(line):
             continue
-        if AMOUNT_RE.search(line):
+        if _is_quantity_line(line):
             return True
     time_line = lines[time_index]
     match = TIME_RE.search(time_line)
-    return bool(match and AMOUNT_RE.search(time_line[: match.start()]))
+    return bool(match and _is_quantity_line(time_line[: match.start()]))
+
+
+def _is_quantity_line(line: str) -> bool:
+    return bool(AMOUNT_RE.search(line) or SHARES_RE.search(line))
 
 
 def _is_attachable_amount_line(line: str) -> bool:
     return bool(
-        AMOUNT_RE.search(line)
+        _is_quantity_line(line)
         and not _is_summary_line(line)
         and not _is_direction_anchor(line)
     )
@@ -203,6 +210,7 @@ def _is_direction_anchor(line: str) -> bool:
 def _parse_window(block_lines: list[str]) -> ParsedTransaction | None:
     direction: TransactionDirection | None = None
     amount_yuan: float | None = None
+    shares_qty: float | None = None
     trade_time: str | None = None
     in_progress = False
     name_fragments: list[str] = []
@@ -211,7 +219,7 @@ def _parse_window(block_lines: list[str]) -> ParsedTransaction | None:
         line = raw.strip()
         if not line:
             continue
-        if IN_PROGRESS_MARKER in line:
+        if IN_PROGRESS_MARKER in line or EXPECTED_ARRIVAL_RE.search(line):
             in_progress = True
 
         time_match = TIME_RE.search(line)
@@ -228,6 +236,12 @@ def _parse_window(block_lines: list[str]) -> ParsedTransaction | None:
                 amount_yuan = float(amount_match.group(1).replace(",", ""))
             line = f"{line[: amount_match.start()]} {line[amount_match.end() :]}".strip()
 
+        shares_match = SHARES_RE.search(line)
+        if shares_match:
+            if shares_qty is None or trade_time is None:
+                shares_qty = float(shares_match.group(1).replace(",", ""))
+            line = f"{line[: shares_match.start()]} {line[shares_match.end() :]}".strip()
+
         dir_match = DIRECTION_TOKEN_RE.search(line)
         if dir_match and not _is_summary_line(line):
             token = dir_match.group(1)
@@ -240,6 +254,13 @@ def _parse_window(block_lines: list[str]) -> ParsedTransaction | None:
         if fragment:
             name_fragments.append(fragment)
 
+    full_exit = False
+    confirmed_shares = None
+    if amount_yuan is None and direction == "sell" and shares_qty:
+        # 在途卖出只显示份额：按产品语义视为卖出该基金全部金额。
+        confirmed_shares = shares_qty
+        amount_yuan = 0.0
+        full_exit = True
     if direction is None or amount_yuan is None or trade_time is None:
         return None
 
@@ -256,12 +277,14 @@ def _parse_window(block_lines: list[str]) -> ParsedTransaction | None:
         confirm_date=confirm_date,
         first_return_date=resolve_first_return_date(trade_time),
         in_progress=in_progress,
+        confirmed_shares=confirmed_shares,
+        full_exit=full_exit,
     )
 
 
 def _clean_name_fragment(line: str) -> str:
     cleaned = line.strip()
-    if not cleaned or NAME_NOISE_RE.match(cleaned):
+    if not cleaned or NAME_NOISE_RE.match(cleaned) or EXPECTED_ARRIVAL_RE.search(cleaned):
         return ""
     cleaned = FUND_PREFIX_RE.sub("", cleaned).strip()
     cleaned = re.sub(r"^基金\s+", "", cleaned).strip()

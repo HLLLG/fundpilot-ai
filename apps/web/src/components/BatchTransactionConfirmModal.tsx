@@ -95,7 +95,17 @@ function confirmBadgeFor({
     }
     return { label: "买入", className: "text-[var(--danger-icon)]" };
   }
+  if (tx.full_exit) {
+    return { label: "全部卖出", className: "text-[var(--success-icon)]" };
+  }
   return { label: "减仓", className: "text-[var(--success-icon)]" };
+}
+
+function transactionQuantityLabel(tx: ParsedTransaction): string {
+  if (tx.full_exit && tx.confirmed_shares != null) {
+    return `${formatPlainMoney(tx.confirmed_shares)} 份`;
+  }
+  return `${formatPlainMoney(tx.amount_yuan)} 元`;
 }
 
 function FundCodeSearchPanel({
@@ -512,7 +522,9 @@ export function BatchTransactionConfirmModal({
                         {badge?.label ?? (isBuy ? "买入" : "卖出")}
                       </button>
                       {tx.in_progress ? (
-                        <span className="text-[12px] font-medium text-[var(--warn-icon)]">交易进行中</span>
+                        <span className="text-[12px] font-medium text-[var(--warn-icon)]">
+                          {tx.full_exit ? "待到账" : "交易进行中"}
+                        </span>
                       ) : null}
                     </div>
                     <FundCodeSearchButton
@@ -533,15 +545,27 @@ export function BatchTransactionConfirmModal({
                       ariaLabel={`基金名称：${rowLabel}`}
                       onChange={(value) => updateAt(index, { fund_name: value })}
                     />
-                    <ReviewEditRow
-                      label="金额"
-                      value={String(tx.amount_yuan ?? 0)}
-                      ariaLabel={`交易金额：${rowLabel}`}
-                      inputMode="decimal"
-                      onChange={(value) =>
-                        updateAt(index, { amount_yuan: parseAmountInput(value) })
-                      }
-                    />
+                    {tx.full_exit ? (
+                      <ReviewEditRow
+                        label="份额"
+                        value={String(tx.confirmed_shares ?? 0)}
+                        ariaLabel={`卖出份额：${rowLabel}`}
+                        inputMode="decimal"
+                        onChange={(value) =>
+                          updateAt(index, { confirmed_shares: parseAmountInput(value) })
+                        }
+                      />
+                    ) : (
+                      <ReviewEditRow
+                        label="金额"
+                        value={String(tx.amount_yuan ?? 0)}
+                        ariaLabel={`交易金额：${rowLabel}`}
+                        inputMode="decimal"
+                        onChange={(value) =>
+                          updateAt(index, { amount_yuan: parseAmountInput(value) })
+                        }
+                      />
+                    )}
                     <ReviewEditRow
                       label="成交时间"
                       value={tx.trade_time}
@@ -582,7 +606,9 @@ export function BatchTransactionConfirmModal({
                         {badge?.label ?? (isBuy ? "买入" : "卖出")}
                       </button>
                       {tx.in_progress ? (
-                        <span className="text-[12px] font-medium text-[var(--warn-icon)]">交易进行中</span>
+                        <span className="text-[12px] font-medium text-[var(--warn-icon)]">
+                          {tx.full_exit ? "待到账" : "交易进行中"}
+                        </span>
                       ) : null}
                     </div>
                     <button
@@ -598,7 +624,7 @@ export function BatchTransactionConfirmModal({
                         {tx.fund_name || "未识别基金"}
                       </span>
                       <span className="shrink-0 text-[16px] font-bold tabular-nums leading-6 text-slate-900">
-                        {formatPlainMoney(tx.amount_yuan)} 元
+                        {transactionQuantityLabel(tx)}
                       </span>
                     </button>
                     <p className="mt-0.5 text-[13px] leading-5 text-slate-400">{tx.trade_time}</p>

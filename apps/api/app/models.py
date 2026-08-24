@@ -20,6 +20,9 @@ class Holding(BaseModel):
     fund_code: str = Field(..., min_length=6, max_length=6)
     fund_name: str
     holding_amount: float = Field(..., ge=0)
+    # 全部卖出后：当日仍留在持仓页算收益，次日从账本删除。
+    exit_pending_until: str | None = None
+    exit_basis_amount: float | None = None
     return_percent: float = 0
     daily_profit: float | None = None
     daily_return_percent: float | None = None
@@ -194,6 +197,9 @@ class FundProfile(BaseModel):
     intraday_index_name: str | None = None
     source: str = "alipay-overview"
     is_provisional: bool = False
+    # 全部卖出宽限期：到该日（含）之前仍保留金额以便算当日收益；到期后关账本删除。
+    exit_pending_until: str | None = None
+    exit_basis_amount: float | None = None
 
 
 class ParsedTransaction(BaseModel):
@@ -211,6 +217,8 @@ class ParsedTransaction(BaseModel):
     # 旧 OCR 请求没有这两个字段，继续兼容并在确认时降级为 amount/nav 推算。
     confirmed_shares: float | None = Field(default=None, gt=0)
     fee_yuan: float | None = Field(default=None, ge=0)
+    # 支付宝交易分析在途卖出只显示「份」：按产品语义视为卖出该基金全部金额。
+    full_exit: bool = False
 
     @field_validator("fund_code")
     @classmethod

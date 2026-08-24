@@ -77,13 +77,26 @@ export function resolveFirstReturnDate(tradeTime: string): string | null {
   return isoDate(nextWeekday(new Date(year, month - 1, day)));
 }
 
+function sharesIdentity(confirmedShares?: number | null): string {
+  if (confirmedShares == null || !Number.isFinite(confirmedShares)) {
+    return "";
+  }
+  return confirmedShares.toFixed(6);
+}
+
 export function recordedTransactionKey(input: {
   direction: string;
   fund_code?: string | null;
   amount_yuan: number;
   trade_time: string;
+  confirmed_shares?: number | null;
 }): string {
-  return `${input.fund_code ?? ""}|${input.direction}|${input.trade_time}|${input.amount_yuan}`;
+  const base = `${input.fund_code ?? ""}|${input.direction}|${input.trade_time}|${input.amount_yuan}`;
+  const shares = sharesIdentity(input.confirmed_shares);
+  if (Number(input.amount_yuan) === 0 && shares) {
+    return `${base}|${shares}`;
+  }
+  return base;
 }
 
 /** 同码同日同方向同金额的占用身份。用来对照已入库条数，不把同一张图里的两笔真买入折成一笔。 */
@@ -93,15 +106,18 @@ export function sameDayTransactionKey(input: {
   fund_name?: string;
   amount_yuan: number;
   trade_time: string;
+  confirmed_shares?: number | null;
 }): string {
   const day = input.trade_time.trim().slice(0, 10);
   const amount = Number(input.amount_yuan);
   const rounded = Number.isFinite(amount) ? amount.toFixed(2) : String(input.amount_yuan);
   const code = (input.fund_code || "").trim();
+  const shares = sharesIdentity(input.confirmed_shares);
+  const shareSuffix = Number(rounded) === 0 && shares ? `|${shares}` : "";
   if (code && code !== "000000") {
-    return `${code}|${input.direction}|${day}|${rounded}`;
+    return `${code}|${input.direction}|${day}|${rounded}${shareSuffix}`;
   }
-  return `${input.direction}|${input.fund_name ?? ""}|${day}|${rounded}`;
+  return `${input.direction}|${input.fund_name ?? ""}|${day}|${rounded}${shareSuffix}`;
 }
 
 export function countSameDayKeys(
@@ -111,6 +127,7 @@ export function countSameDayKeys(
     fund_name?: string;
     amount_yuan: number;
     trade_time: string;
+    confirmed_shares?: number | null;
   }>,
 ): Map<string, number> {
   const counts = new Map<string, number>();
@@ -127,6 +144,7 @@ export function markAlreadyRecordedTransactions<T extends {
   fund_name?: string;
   amount_yuan: number;
   trade_time: string;
+  confirmed_shares?: number | null;
 }>(transactions: T[], recordedCounts: Map<string, number>): boolean[] {
   const remaining = new Map(recordedCounts);
   return transactions.map((tx) => {

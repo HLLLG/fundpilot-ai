@@ -294,6 +294,9 @@ def _fast_serialize_holding_for_client(
 
 def build_fast_snapshot_holdings_response() -> dict | None:
     """Cold-start GET path: return the latest persisted snapshot without slow enrichment."""
+    from app.services.holding_exit import purge_due_full_exits
+
+    purge_due_full_exits()
     snapshot = get_most_recent_portfolio_snapshot()
     if not snapshot or not snapshot.get("holdings"):
         return None
@@ -452,6 +455,8 @@ def profile_to_holding(profile: FundProfile) -> Holding:
         intraday_index_name=profile.intraday_index_name,
         daily_profit=profile.daily_profit,
         yesterday_profit=profile.yesterday_profit,
+        exit_pending_until=profile.exit_pending_until,
+        exit_basis_amount=profile.exit_basis_amount,
     )
 
 
@@ -467,6 +472,7 @@ def holdings_from_profiles(
             profile_to_holding(profile)
             for profile in profiles
             if (profile.holding_amount or 0) > min_amount
+            or bool((profile.exit_pending_until or "").strip())
         ]
     )
     if not holdings:
@@ -560,6 +566,9 @@ def _overlay_profile_onto_holding(
         "fund_code": profile.fund_code,
         "fund_name": profile.fund_name,
     }
+    if profile.exit_pending_until:
+        patch["exit_pending_until"] = profile.exit_pending_until
+        patch["exit_basis_amount"] = profile.exit_basis_amount or base.holding_amount
     identity_sector = str((identity_row or {}).get("sector_name") or "").strip()
     locked = healthcare_parent_lock_against_cxo(profile.fund_name or base.fund_name)
     if locked and normalize_sector_label(identity_sector) == "CXO":
@@ -608,7 +617,10 @@ def merge_holdings_with_profiles(
     active_profiles = [
         profile
         for profile in all_profiles
-        if (profile.holding_amount or 0) > 0
+        if (
+            (profile.holding_amount or 0) > 0
+            or bool((profile.exit_pending_until or "").strip())
+        )
         and not is_test_holding(profile_to_holding(profile))
     ]
     matched_profiles = match_profiles_to_holdings(
@@ -619,7 +631,11 @@ def merge_holdings_with_profiles(
     snapshot_by_profile_code = {
         profile.fund_code: row
         for row, profile in zip(snapshot_holdings, matched_profiles, strict=True)
-        if profile is not None and (profile.holding_amount or 0) > 0
+        if profile is not None
+        and (
+            (profile.holding_amount or 0) > 0
+            or bool((profile.exit_pending_until or "").strip())
+        )
     }
     # 一次批量读权威身份表，避免逐只查询；板块标签以它为准（见
     # `_overlay_profile_onto_holding` 的说明）。读失败不该让持仓列表打不开。
@@ -665,7 +681,9 @@ def merge_holdings_with_profiles(
         if is_inactive_holding(row):
             continue
         if matched_profile is not None:
-            if (matched_profile.holding_amount or 0) <= 0:
+            if (matched_profile.holding_amount or 0) <= 0 and not (
+                matched_profile.exit_pending_until or ""
+            ).strip():
                 continue
             if matched_profile.fund_code in seen_codes:
                 continue
@@ -791,6 +809,9 @@ def load_persisted_holdings(
     *,
     fetch_benchmark: bool = True,
 ) -> tuple[list[Holding], str, str | None, datetime | None]:
+    from app.services.holding_exit import purge_due_full_exits
+
+    purge_due_full_exits()
     snapshot = get_most_recent_portfolio_snapshot()
 
     def _finalize(holdings: list[Holding], source: str, snap_date: str | None, refreshed: datetime | None):

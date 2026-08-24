@@ -139,6 +139,36 @@ it("reviews transactions in a one-line Yangjibao card and hides helper copy", ()
   expect(screen.getByRole("button", { name: "收起" })).toBeInTheDocument();
 });
 
+it("shows share-based sells as a full exit instead of yuan", () => {
+  render(
+    <BatchTransactionConfirmModal
+      transactions={[
+        {
+          direction: "sell",
+          fund_name: "华夏半导体材料设备ETF联接A",
+          fund_code: "018951",
+          amount_yuan: 0,
+          confirmed_shares: 401.71,
+          full_exit: true,
+          trade_time: "2026-08-24 14:34:25",
+          confirm_date: "2026-08-24",
+          in_progress: true,
+        },
+      ]}
+      heldFunds={[{ fund_code: "018951", fund_name: "华夏半导体材料设备ETF联接A" }]}
+      onChange={vi.fn()}
+      onConfirm={vi.fn()}
+      onContinueUpload={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByRole("button", { name: "全部卖出" })).toBeInTheDocument();
+  expect(screen.getByText("401.71 份")).toBeInTheDocument();
+  expect(screen.getByText("待到账")).toBeInTheDocument();
+  expect(screen.queryByText("0.00 元")).not.toBeInTheDocument();
+});
+
 it("sends extra screenshots from the album without leaving the review list", () => {
   const onUploadMore = vi.fn();
   const onContinueUpload = vi.fn();

@@ -352,8 +352,17 @@ def _previous_day(iso_date: str) -> str:
     return (date.fromisoformat(iso_date) - timedelta(days=1)).isoformat()
 
 
+def _shares_identity(confirmed_shares: float | None) -> str:
+    if confirmed_shares is None:
+        return ""
+    return f"{round(float(confirmed_shares), 6):.6f}"
+
+
 def _dedup_key(parsed: ParsedTransaction) -> str:
     raw = f"{parsed.fund_code}|{parsed.direction}|{parsed.trade_time}|{parsed.amount_yuan}"
+    # 在途卖出金额为 0 时，用份额区分同一秒之外的多笔全卖。
+    if float(parsed.amount_yuan) == 0 and parsed.confirmed_shares:
+        raw = f"{raw}|{_shares_identity(parsed.confirmed_shares)}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -363,18 +372,23 @@ def _same_day_identity(
     direction: str,
     amount_yuan: float,
     trade_time: str,
+    confirmed_shares: float | None = None,
 ) -> str | None:
     """同码同日同方向同金额的占用身份。
 
     支付宝「交易记录」和「交易分析」对同一笔的秒级时间经常不一致；去重键仍按
     完整时间落库。匹配只消耗已入库且尚未占用的行，同一请求里 14:50 / 14:52
-    两笔同金额买入不会互相折叠。
+    两笔同金额买入不会互相折叠。份额卖出用 confirmed_shares 区分同日多笔全卖。
     """
     code = (fund_code or "").strip()
     day = (trade_time or "").strip()[:10]
     if not code or code == "000000" or len(day) != 10 or day[4] != "-":
         return None
-    return f"{code}|{direction}|{day}|{round(float(amount_yuan), 2):.2f}"
+    amount = round(float(amount_yuan), 2)
+    identity = f"{code}|{direction}|{day}|{amount:.2f}"
+    if amount == 0 and confirmed_shares:
+        return f"{identity}|{_shares_identity(confirmed_shares)}"
+    return identity
 
 
 def _existing_semantic_dedup_key(tx: FundTransaction) -> str | None:
@@ -387,6 +401,7 @@ def _existing_semantic_dedup_key(tx: FundTransaction) -> str | None:
             fund_code=tx.fund_code,
             amount_yuan=tx.amount_yuan,
             trade_time=tx.trade_time,
+            confirmed_shares=tx.confirmed_shares,
         )
     except ValueError:
         return None
@@ -445,6 +460,7 @@ def _preflight_transaction_truth(
                 direction=stored.direction,
                 amount_yuan=stored.amount_yuan,
                 trade_time=stored.trade_time,
+                confirmed_shares=stored.confirmed_shares,
             )
             if same_day_key:
                 same_day_existing.setdefault(same_day_key, []).append(stored)
@@ -457,6 +473,7 @@ def _preflight_transaction_truth(
                 direction=item.direction,
                 amount_yuan=item.amount_yuan,
                 trade_time=item.trade_time,
+                confirmed_shares=item.confirmed_shares,
             )
             previous_request = seen_request.get(canonical_dedup_key)
             if previous_request is not None:
@@ -766,9 +783,22 @@ def _apply_parsed_transactions_unlocked(
 
     返回 {"holdings": [...], "inserted": n, "skipped": m, "pending": <仍 pending 条数>}。
     """
+    from app.services.holding_exit import fill_full_exit_amounts, stamp_full_exits_from_parsed
+
     inserted = 0
+    profiles = list_fund_profiles() if parsed else []
+    profiles_by_code = {profile.fund_code: profile for profile in profiles}
     resolved_items = _preflight_transaction_truth(parsed)
     skipped = sum(1 for item, _date, _key in resolved_items if not item.fund_code)
+    if apply_position:
+        filled = fill_full_exit_amounts(
+            [item for item, _date, _key in resolved_items],
+            profiles_by_code,
+        )
+        resolved_items = [
+            (filled[index], confirm_date, dedup_key)
+            for index, (_item, confirm_date, dedup_key) in enumerate(resolved_items)
+        ]
     # Stable lock order prevents two reversed MySQL batches from locking unique
     # transaction keys in opposite order before they contend on the ledger head.
     valid_items = sorted(
@@ -780,8 +810,6 @@ def _apply_parsed_transactions_unlocked(
     # One mutable snapshot serves profile existence checks, profile creation,
     # effective-share folding, and amount seeding for the entire transaction
     # batch. Empty/invalid batches keep the zero-query fast path.
-    profiles = list_fund_profiles() if valid_items else []
-    profiles_by_code = {profile.fund_code: profile for profile in profiles}
     from app.services.fund_profile import FundProfileService
 
     profile_service = FundProfileService()
@@ -882,6 +910,7 @@ def _apply_parsed_transactions_unlocked(
         inserted += 1
 
     if apply_position:
+        stamp_full_exits_from_parsed(parsed, profiles_by_code)
         confirm_pending_transactions()
         _seed_amounts_for_new_positions(
             [item.fund_code for item in parsed if item.fund_code],

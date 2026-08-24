@@ -40,8 +40,15 @@ def effective_holding_amount(holding: Holding) -> float:
     return float(holding.holding_amount or 0)
 
 
+def is_exit_pending_holding(holding: Holding) -> bool:
+    """全部卖出宽限期内：金额可为 0，但仍要留在持仓页把当日收益算完。"""
+    return bool((holding.exit_pending_until or "").strip())
+
+
 def is_inactive_holding(holding: Holding) -> bool:
     """已删除/停用：持有金额为 0，不应出现在账户汇总列表。"""
+    if is_exit_pending_holding(holding):
+        return False
     return effective_holding_amount(holding) <= 0
 
 

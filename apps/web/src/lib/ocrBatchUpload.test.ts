@@ -132,6 +132,30 @@ describe("mergeParsedTransactions", () => {
     expect(mergeParsedTransactions(fromRecords, fromAnalysis)).toHaveLength(1);
   });
 
+  it("keeps two same-day share sells from one screenshot", () => {
+    const page = [
+      tx({
+        direction: "sell",
+        fund_name: "华夏半导体材料设备ETF联接A",
+        fund_code: "018951",
+        amount_yuan: 0,
+        confirmed_shares: 401.71,
+        full_exit: true,
+        trade_time: "2026-08-24 14:34:25",
+      }),
+      tx({
+        direction: "sell",
+        fund_name: "华夏半导体材料设备ETF联接A",
+        fund_code: "018951",
+        amount_yuan: 0,
+        confirmed_shares: 133.91,
+        full_exit: true,
+        trade_time: "2026-08-24 14:26:16",
+      }),
+    ];
+    expect(mergeParsedTransactions(page, page)).toHaveLength(2);
+  });
+
   it("keeps two same-day same-amount buys from one screenshot", () => {
     const page = [
       tx({

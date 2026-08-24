@@ -118,6 +118,9 @@ export type Holding = {
   amount_includes_today?: boolean | null;
   /** 上一交易日结算持有金额（养基宝口径） */
   settled_holding_amount?: number | null;
+  /** 全部卖出宽限期：到期日当天起从账本删除，此前仍显示以便算当日收益 */
+  exit_pending_until?: string | null;
+  exit_basis_amount?: number | null;
   /** API 展示用结算金额 */
   display_holding_amount?: number | null;
   /** 后端 holding_client.serialize 写入的展示口径（优先于前端 fallback 计算） */
@@ -3323,6 +3326,8 @@ export type ParsedTransaction = {
   amount_yuan: number;
   /** 用户从原平台确认的实际成交份额；缺失时后端只能按金额/净值估算。 */
   confirmed_shares?: number | null;
+  /** 支付宝在途卖出只显示份额时，视为卖出该基金全部金额。 */
+  full_exit?: boolean;
   /** 原平台实际收取的申购/赎回费；未知必须保持 null，不能当作 0。 */
   fee_yuan?: number | null;
   trade_time: string; // "YYYY-MM-DD HH:MM:SS"
@@ -3339,6 +3344,7 @@ export type FundTransaction = {
   fund_name: string;
   direction: TransactionDirection;
   amount_yuan: number;
+  confirmed_shares?: number | null;
   trade_time: string;
   confirm_date: string;
   status: "pending" | "confirmed" | "superseded" | "skipped" | "reversed";
