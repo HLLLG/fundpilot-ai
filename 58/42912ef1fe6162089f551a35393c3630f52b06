@@ -1,0 +1,111 @@
+apps/api/app/services/holding_amount_sync.py
+  s_ff5d32ff9f5abc::t_250e5e2c958dd5 658,662
+  s_ff5d32ff9f5abc::t_2cfa6b801f3ca1 663-664
+apps/api/tests/test_alipay_transactions_parser.py
+  s_ff5d32ff9f5abc::t_f396fea5022dfb 376-418,435-453
+  s_ff5d32ff9f5abc::t_8d373fbfb4e7c8 419-434
+apps/api/tests/test_holding_exit.py
+  s_ff5d32ff9f5abc::t_70c26498be9bbd 81,83-84
+  s_ff5d32ff9f5abc::t_0204bf3597ca85 64-66,68
+  s_ff5d32ff9f5abc::t_79241c95f54492 1-2,5-63,69-80,85-138
+  s_ff5d32ff9f5abc::t_93c00686e65a6a 3-4
+  s_ff5d32ff9f5abc::t_632d3e69febd0d 67,82
+apps/web/src/components/BatchTransactionConfirmModal.test.tsx
+  s_ff5d32ff9f5abc::t_19a9c9cba8841d 142-171
+apps/web/src/lib/ocrBatchUpload.test.ts
+  s_ff5d32ff9f5abc::t_132a3144a09e43 135-158
+README.md
+  s_ff5d32ff9f5abc::t_e38277d12bd5b1 45
+  s_ff5d32ff9f5abc::t_8958b8da5a7a2c 138
+apps/web/src/lib/holdingMetrics.ts
+  s_ff5d32ff9f5abc::t_33ead3465b618f 88-91,98-99
+  s_ff5d32ff9f5abc::t_50c1b6cbea5b2a 288-292
+apps/web/src/components/BatchTransactionConfirmModal.tsx
+  s_ff5d32ff9f5abc::t_28898ff95c5cfe 609-611,627
+  s_ff5d32ff9f5abc::t_0ff006fffafb69 525-527
+  s_ff5d32ff9f5abc::t_d84a131dc25e3e 98-100,104-108
+  s_ff5d32ff9f5abc::t_2b563efa4fb0e8 548-568
+apps/web/src/components/YangjibaoHoldingsBoard.tsx
+  s_ff5d32ff9f5abc::t_aed4c4ee32f7c8 44
+  s_ff5d32ff9f5abc::t_fa18cf49aca600 724-727,734-736
+apps/web/src/lib/tradeConfirmDates.ts
+  s_ff5d32ff9f5abc::t_fb8818ebbb6a53 80-86,92,109,115,130
+  s_ff5d32ff9f5abc::t_946f4e8615d0cb 116,118,120
+  s_ff5d32ff9f5abc::t_eb795d0d8c5c57 94-99
+  s_ff5d32ff9f5abc::t_6fb1b724e67f1f 147
+apps/web/src/lib/holdingMetrics.test.ts
+  s_ff5d32ff9f5abc::t_e7bab75b386705 72-78
+  s_ff5d32ff9f5abc::t_4d200dcdc88544 69-71,79-82
+apps/api/app/services/holding_exit.py
+  s_ff5d32ff9f5abc::t_6b547c87a76c50 1-100,103-211
+  s_ff5d32ff9f5abc::t_a213836336ebd4 101-102
+apps/web/src/lib/tradeConfirmDates.test.ts
+  s_ff5d32ff9f5abc::t_4ed70a7c75d332 112-131
+apps/api/app/models.py
+  s_ff5d32ff9f5abc::t_5b690201087c7e 200-202
+  s_ff5d32ff9f5abc::t_ea0407cd2608d6 23-25
+  s_ff5d32ff9f5abc::t_16d773866b0870 220-221
+apps/api/app/services/portfolio_holdings_service.py
+  s_ff5d32ff9f5abc::t_73492bf9c9266e 458-459
+  s_ff5d32ff9f5abc::t_7fd4e3c2e24ee2 297-299
+  s_ff5d32ff9f5abc::t_510611ed7f4ad6 684-686
+  s_ff5d32ff9f5abc::t_feb5c85abeca2a 812-814
+  s_ff5d32ff9f5abc::t_ad92901fa4eea6 620-623
+  s_ff5d32ff9f5abc::t_268879fe298529 475
+  s_ff5d32ff9f5abc::t_b8c657575bbf4e 569-571
+  s_ff5d32ff9f5abc::t_49bc2beaedce00 634-638
+apps/web/src/lib/api.ts
+  s_ff5d32ff9f5abc::t_eebe9ad43bf12d 3347
+  s_ff5d32ff9f5abc::t_5f291dfd9ae7b5 3329-3330
+  s_ff5d32ff9f5abc::t_b08da6014a3c68 121-123
+apps/api/app/services/holding_filters.py
+  s_ff5d32ff9f5abc::t_c05e6a053baeb5 43-47,50-51
+docs/PROJECT_CONTEXT.md
+  s_ff5d32ff9f5abc::t_7e497af2824998 312
+  s_ff5d32ff9f5abc::t_04b78641f104b6 7
+  s_ff5d32ff9f5abc::t_2e75ca1b397cc1 399-400
+  s_ff5d32ff9f5abc::t_da82b587d4f6d8 18
+  s_ff5d32ff9f5abc::t_5297f92f11762d 592-593
+  s_ff5d32ff9f5abc::t_232a498157142f 710
+  s_ff5d32ff9f5abc::t_97f6544839d69c 902
+  s_ff5d32ff9f5abc::t_7c2610c6047313 349
+  s_ff5d32ff9f5abc::t_793851165a33e0 307
+  s_ff5d32ff9f5abc::t_28e2d186e1b20c 928-930
+  s_ff5d32ff9f5abc::t_e0a90f122bc986 1367
+  s_ff5d32ff9f5abc::t_e475ba5320e944 403
+  s_ff5d32ff9f5abc::t_073ba8f87c0e9e 1378
+apps/api/app/services/alipay_transactions_parser.py
+  s_ff5d32ff9f5abc::t_c8a95ce3e2df2e 213
+  s_ff5d32ff9f5abc::t_63cb188043b97f 222,239-244,257-263,280-281
+  s_ff5d32ff9f5abc::t_4aefd649b494c4 105
+  s_ff5d32ff9f5abc::t_eee218c31c7fe3 33
+  s_ff5d32ff9f5abc::t_b27278b1777846 21-23
+  s_ff5d32ff9f5abc::t_644ad62a7e5a45 287
+  s_ff5d32ff9f5abc::t_23dace336ea123 124,128-132,137
+apps/api/app/services/transaction_ledger.py
+  s_ff5d32ff9f5abc::t_f9f0c94add3aee 786-787,789-790
+  s_ff5d32ff9f5abc::t_848f669ed2557a 463
+  s_ff5d32ff9f5abc::t_c80cdd214a0005 793-801
+  s_ff5d32ff9f5abc::t_6793a6be93e9ab 476
+  s_ff5d32ff9f5abc::t_c511e20a8a9594 387-391
+  s_ff5d32ff9f5abc::t_40fbf829016dff 913
+  s_ff5d32ff9f5abc::t_70cc573fc7834a 363-365
+  s_ff5d32ff9f5abc::t_83ca51d2cb80fe 355-360,375,381
+  s_ff5d32ff9f5abc::t_51de9c730ce235 404
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "5842912ef1fe6162089f551a35393c3630f52b06",
+  "prompts": {},
+  "sessions": {
+    "s_ff5d32ff9f5abc": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "77947099-4358-4a8b-ba40-ed331bbfc802",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
