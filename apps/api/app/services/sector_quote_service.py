@@ -21,7 +21,6 @@ from app.services.fund_profile import (
     _is_valid_sector_label,
     match_profiles_to_holdings,
 )
-from app.services.fund_estimate_provider import fetch_fund_estimate_quotes
 from app.services.sector_canonical import (
     get_canonical_sector,
     labels_need_spot_boards,
@@ -49,17 +48,6 @@ from app.services.holding_estimates import (
     release_stale_official_nav_to_sector,
 )
 from app.services.eastmoney_trends_client import is_plausible_daily_change
-
-
-class _EstimateResult:
-    def __init__(self, holding: Holding, estimate_quote: dict[str, Any]) -> None:
-        self.confidence = "high"
-        self.change_percent = estimate_quote.get("change_percent")
-        self.matched_name = estimate_quote.get("fund_name") or holding.fund_name
-        self.source_type = None
-        self.source_code = holding.fund_code
-        self.message = "天天基金估值"
-        self.candidates = []
 
 
 def refresh_holdings_sector_quotes(
@@ -154,8 +142,6 @@ def refresh_holdings_sector_quotes(
         for board_type in ("index", "concept", "industry"):
             boards[board_type] = dict(fetch_result.boards.get(board_type) or {})
         kline_prefetched = 0
-        estimate_quotes: dict[str, dict] = {}
-        estimate_quotes_loaded = True
     else:
         kline_prefetched = prefetch_canonical_kline_quotes(
             lookup_labels,
@@ -193,19 +179,6 @@ def refresh_holdings_sector_quotes(
                 live_attempted=True,
                 elapsed_seconds=0.0,
             )
-        estimate_quotes: dict[str, dict] = {}
-        if need_spot_boards:
-            estimate_quotes = _maybe_fetch_estimate_quotes(
-                holdings,
-                boards=boards,
-                fetch_result=fetch_result,
-                timeout_seconds=timeout_seconds,
-            )
-        estimate_quotes_loaded = (
-            need_spot_boards
-            and timeout_seconds is not None
-            and _board_entry_count(fetch_result.boards) < 8
-        )
 
     if cache_only and not any(boards.values()):
         holdings = _overlay_holdings_daily_estimates(
@@ -235,30 +208,9 @@ def refresh_holdings_sector_quotes(
             **_provider_meta(fetch_result, provider_path=fetch_result.provider_path),
         }
 
-    # 兜底：当没有任何板块/指数命中（例如全部持仓都是无关联板块的新基金，
-    # 如「中航机遇领航混合发起C」）时，仍尝试用天天基金估值给出当日收益，
-    # 避免直接硬失败 + 当日收益恒为 0。
     if (
         not cache_only
         and not any(boards.values())
-        and not estimate_quotes
-        and kline_prefetched == 0
-    ):
-        has_real_fund_code = any(
-            (holding.fund_code or "").strip() and holding.fund_code != "000000"
-            for holding in holdings
-        )
-        if has_real_fund_code:
-            estimate_quotes = fetch_fund_estimate_quotes(
-                holdings,
-                timeout_seconds=timeout_seconds,
-            )
-            estimate_quotes_loaded = True
-
-    if (
-        not cache_only
-        and not any(boards.values())
-        and not estimate_quotes
         and kline_prefetched == 0
     ):
         holdings = _overlay_holdings_daily_estimates(
@@ -267,14 +219,35 @@ def refresh_holdings_sector_quotes(
             accurate=accurate,
             profiles=profiles,
         )
+        if any(label and str(label).strip() for label in lookup_labels):
+            return {
+                "ok": False,
+                "message": "板块行情拉取失败（网络/代理），且没有可用快照，请稍后重试",
+                "holdings": [holding.model_dump() for holding in holdings],
+                "items": [],
+                "summary": {
+                    "matched": 0,
+                    "unresolved": len(holdings),
+                    "needs_mapping": 0,
+                    "estimate_fallback": 0,
+                    "board_matched": 0,
+                    "secid_matched": 0,
+                    "provider_path": fetch_result.provider_path,
+                    "from_stale_cache": fetch_result.from_stale_cache,
+                },
+                "session": session,
+                "provider_failed": True,
+                **_provider_meta(fetch_result, provider_path=fetch_result.provider_path),
+            }
         return {
-            "ok": False,
-            "message": "板块行情拉取失败（网络/代理），且没有可用快照，请稍后重试",
+            "ok": True,
+            "message": "已按重仓估算更新当日收益",
             "holdings": [holding.model_dump() for holding in holdings],
             "items": [],
+            "holding_warnings": [],
             "summary": {
                 "matched": 0,
-                "unresolved": len(holdings),
+                "unresolved": 0,
                 "needs_mapping": 0,
                 "estimate_fallback": 0,
                 "board_matched": 0,
@@ -283,7 +256,7 @@ def refresh_holdings_sector_quotes(
                 "from_stale_cache": fetch_result.from_stale_cache,
             },
             "session": session,
-            "provider_failed": True,
+            "fetched_at": fetched_at.isoformat(),
             **_provider_meta(fetch_result, provider_path=fetch_result.provider_path),
         }
 
@@ -293,7 +266,6 @@ def refresh_holdings_sector_quotes(
     matched = 0
     unresolved = 0
     needs_mapping = 0
-    estimate_fallback = 0
     secid_matched = 0
     mapping_cache: dict[str, dict[str, Any] | None] = {}
 
@@ -343,7 +315,6 @@ def refresh_holdings_sector_quotes(
                 if on_demand.source_type and on_demand.matched_name:
                     boards.setdefault(on_demand.source_type, {})[on_demand.matched_name] = on_demand.change_percent
 
-        estimate_quote = None
         used_secid_quote = False
         if (
             result.confidence in {"high", "medium"}
@@ -354,16 +325,6 @@ def refresh_holdings_sector_quotes(
                 confidence="none",
                 message=f"板块涨跌 {result.change_percent:+.2f}% 超出合理范围，已忽略",
             )
-        if result.confidence not in {"high", "medium"}:
-            if timeout_seconds is not None and not estimate_quotes_loaded and not cache_only:
-                estimate_quotes = fetch_fund_estimate_quotes(
-                    holdings,
-                    timeout_seconds=timeout_seconds,
-                )
-                estimate_quotes_loaded = True
-            estimate_quote = estimate_quotes.get(holding.fund_code)
-            if estimate_quote is not None and estimate_quote.get("change_percent") is not None:
-                result = _EstimateResult(holding, estimate_quote)
         elif result.message and result.message.startswith("东财K线"):
             used_secid_quote = True
 
@@ -371,13 +332,9 @@ def refresh_holdings_sector_quotes(
         meta = SectorQuoteMeta(
             source="ocr",
             provider=(
-                "tiantian-fund-estimate"
-                if estimate_quote is not None
-                else (
-                    "eastmoney-kline"
-                    if result.message and result.message.startswith("东财K线")
-                    else "eastmoney-akshare"
-                )
+                "eastmoney-kline"
+                if result.message and result.message.startswith("东财K线")
+                else "eastmoney-akshare"
             ),
             confidence=result.confidence,
             matched_name=result.matched_name,
@@ -419,9 +376,7 @@ def refresh_holdings_sector_quotes(
                 ):
                     update["sector_name"] = display_sector
                 elif (
-                    estimate_quote is None
-                    and result.message != "天天基金估值"
-                    and _is_valid_sector_label(result.matched_name)
+                    _is_valid_sector_label(result.matched_name)
                     and not _is_valid_sector_label(holding.sector_name)
                 ):
                     canonical = get_canonical_sector(result.matched_name or "")
@@ -431,13 +386,8 @@ def refresh_holdings_sector_quotes(
             from app.services.profit_accrual_defer import is_profit_accrual_deferred
 
             amount = holding.settled_holding_amount or holding.holding_amount
-            # 无论是真实板块行情还是天天基金净值估值兜底，只要这轮确实拿到了一个
-            # change_percent，就该写回 sector_return_percent——否则会出现同样落在
-            # 「海外基金」这种伪板块下的持仓里，有的（曾经匹配过真实板块、残留旧值）
-            # 显示数字，有的（从没匹配过）一直空白的不一致假象。估值兜底走的这个
-            # 分支，前端会用 sectorMeta.provider 单独标"估值兜底"角标区分数据来源，
-            # 不会误当成真实板块行情。
-            # 灵活配置且无法确定关联板块时，不写板块列，当日走重仓估算。
+            # 真实板块行情才写回 sector_return_percent。无主题灵活配置不写板块列，
+            # 当日走循环结束后的季报重仓加权。
             if not hide_research_board:
                 update["sector_return_percent"] = result.change_percent
                 update["sector_return_percent_source"] = sector_source
@@ -449,25 +399,15 @@ def refresh_holdings_sector_quotes(
                     amount_includes_today=_amount_includes_today_return(holding),
                 )
                 update["daily_return_percent_source"] = "official_nav"
-            elif estimate_quote is not None and not is_profit_accrual_deferred(profile):
-                update["daily_return_percent"] = result.change_percent
-                update["daily_profit"] = compute_daily_profit_from_rate(
-                    amount,
-                    result.change_percent,
-                    amount_includes_today=_amount_includes_today_return(holding),
-                )
-                update["daily_return_percent_source"] = "sector_estimate"
             else:
                 update["daily_return_percent"] = None
                 update["daily_profit"] = None
                 update["daily_return_percent_source"] = None
-            new_holding = holding.model_copy(update=update)
+            new_holding = new_holding.model_copy(update=update)
             meta.source = "live"
             meta.delta_vs_previous = round(result.change_percent - previous, 4) if previous is not None else None
             matched += 1
-            if estimate_quote is not None:
-                estimate_fallback += 1
-            elif used_secid_quote:
+            if used_secid_quote:
                 secid_matched += 1
             record = mapping_record_from_result(lookup_label, result)
             if record is not None:
@@ -476,7 +416,6 @@ def refresh_holdings_sector_quotes(
                     mapping_cache[label_key] = saved_mapping or record
             if (
                 nav_return is None
-                and estimate_quote is None
                 and result.source_type in {"index", "concept", "industry"}
                 and previous is not None
                 and meta.delta_vs_previous is not None
@@ -545,10 +484,10 @@ def refresh_holdings_sector_quotes(
         accurate=accurate,
         profiles=profiles,
     )
-    provider_path = _effective_provider_path(fetch_result, estimate_fallback=estimate_fallback)
+    provider_path = fetch_result.provider_path
     return {
         "ok": True,
-        "message": _refresh_message(fetch_result, matched, estimate_fallback, needs_mapping, unresolved),
+        "message": _refresh_message(fetch_result, matched, needs_mapping, unresolved),
         "holdings": [holding.model_dump() for holding in updated],
         "items": items,
         "holding_warnings": [warning.model_dump() for warning in warnings],
@@ -556,8 +495,8 @@ def refresh_holdings_sector_quotes(
             "matched": matched,
             "unresolved": unresolved,
             "needs_mapping": needs_mapping,
-            "estimate_fallback": estimate_fallback,
-            "board_matched": max(0, matched - estimate_fallback),
+            "estimate_fallback": 0,
+            "board_matched": matched,
             "secid_matched": secid_matched,
             "provider_path": provider_path,
             "from_stale_cache": fetch_result.from_stale_cache,
@@ -616,52 +555,11 @@ def _provider_meta(fetch_result: SpotBoardFetchResult, *, provider_path: str) ->
 def _refresh_message(
     fetch_result: SpotBoardFetchResult,
     matched: int,
-    estimate_fallback: int,
     needs_mapping: int,
     unresolved: int,
 ) -> str:
     prefix = "已用上次快照更新" if fetch_result.from_stale_cache else "已刷新"
-    suffix = f"，{estimate_fallback} 只用天天基金估值兜底" if estimate_fallback else ""
-    return f"{prefix} {matched} 只{suffix}，{needs_mapping} 只需选择映射，{unresolved} 只未匹配"
-
-
-def _maybe_fetch_estimate_quotes(
-    holdings: list[Holding],
-    *,
-    boards: dict[str, dict[str, float]],
-    fetch_result: SpotBoardFetchResult,
-    timeout_seconds: float | None,
-) -> dict[str, dict]:
-    if timeout_seconds is None:
-        return {}
-    entry_count = _board_entry_count(boards)
-    if entry_count >= 8:
-        return {}
-    if entry_count > 0 and fetch_result.provider_path in {
-        "eastmoney_live",
-        "relay_live",
-        "browser_live",
-        "fresh_cache",
-        "stale_cache",
-    }:
-        return {}
-    if entry_count > 0:
-        return {}
-    return fetch_fund_estimate_quotes(holdings, timeout_seconds=timeout_seconds)
-
-
-def _effective_provider_path(
-    fetch_result: SpotBoardFetchResult,
-    *,
-    estimate_fallback: int,
-) -> str:
-    if estimate_fallback > 0 and _board_entry_count(fetch_result.boards) == 0:
-        return "fund_estimate_live"
-    return fetch_result.provider_path
-
-
-def _board_entry_count(boards: dict[str, dict[str, float]]) -> int:
-    return sum(len(board or {}) for board in boards.values())
+    return f"{prefix} {matched} 只，{needs_mapping} 只需选择映射，{unresolved} 只未匹配"
 
 
 def _merge_spot_board_under_canonical(
@@ -717,22 +615,13 @@ def _overlay_holdings_daily_estimates(
     accurate: bool,
     profiles: list | None = None,
 ) -> list[Holding]:
-    """主动基金当日：季报重仓加权优先于板块/天天基金估值；官方净值仍锁定。"""
+    """主动基金当日：季报重仓加权优先于板块估算；官方净值仍锁定。"""
 
-    from app.services.fund_holdings_return_estimate import (
-        apply_holdings_daily_estimates,
-        estimate_holdings_weighted_returns,
+    from app.services.fund_holdings_return_estimate import overlay_holdings_daily_estimates
+
+    return overlay_holdings_daily_estimates(
+        holdings,
+        allow_fetch=not cache_only,
+        allow_live_snapshot=not cache_only and accurate,
+        profiles=profiles,
     )
-
-    try:
-        estimates = estimate_holdings_weighted_returns(
-            holdings,
-            allow_fetch=not cache_only,
-            allow_live_snapshot=not cache_only and accurate,
-        )
-    except Exception:
-        logger.exception("holdings-weighted daily estimate failed")
-        return holdings
-    if not estimates:
-        return holdings
-    return apply_holdings_daily_estimates(holdings, estimates, profiles=profiles)

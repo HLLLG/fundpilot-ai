@@ -2160,7 +2160,6 @@ export type RefreshSectorQuotesResult = {
     | "relay_live"
     | "browser_live"
     | "akshare_live"
-    | "fund_estimate_live"
     | "fresh_cache"
     | "stale_cache"
     | "empty"

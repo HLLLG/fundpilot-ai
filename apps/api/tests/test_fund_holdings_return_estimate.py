@@ -7,6 +7,7 @@ from app.services.fund_holdings_return_estimate import (
     compute_holdings_weighted_return,
     estimate_holdings_weighted_returns,
     holding_row_secid,
+    overlay_holdings_daily_estimates,
     should_use_holdings_weighted_daily,
 )
 from app.services.holding_estimates import (
@@ -180,7 +181,7 @@ def test_apply_does_not_override_official_nav() -> None:
     assert updated[0].daily_return_percent_source == "official_nav"
 
 
-def test_apply_overrides_fundgz_sector_estimate() -> None:
+def test_apply_overrides_existing_sector_estimate() -> None:
     holding = Holding(
         fund_code="012200",
         fund_name="新华鑫科技3个月滚动持有灵活配置混合A",
@@ -240,3 +241,38 @@ def test_enrich_preserves_holdings_estimate() -> None:
         )
         == 10.17
     )
+
+
+def test_overlay_writes_holdings_estimate(monkeypatch) -> None:
+    holding = Holding(
+        fund_code="012200",
+        fund_name="新华鑫科技3个月滚动持有灵活配置混合A",
+        holding_amount=10000,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_holdings_return_estimate.estimate_holdings_weighted_returns",
+        lambda *args, **kwargs: {
+            "012200": HoldingsReturnEstimate(0.17, 72.24, 72.24, 10)
+        },
+    )
+    updated = overlay_holdings_daily_estimates([holding])
+    assert updated[0].daily_return_percent == 0.17
+    assert updated[0].daily_return_percent_source == "holdings_estimate"
+    assert updated[0].daily_profit == 17.0
+
+
+def test_sector_quote_service_does_not_import_fundgz_fallback() -> None:
+    import ast
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "app" / "services" / "sector_quote_service.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    imported: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+    assert "app.services.fund_estimate_provider" not in imported
+    assert "fetch_fund_estimate_quotes" not in imported

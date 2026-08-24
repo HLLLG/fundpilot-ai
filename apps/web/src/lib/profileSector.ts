@@ -1,5 +1,4 @@
 import type { Holding, SectorQuoteMeta } from "@/lib/api";
-import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 
 const FUND_NAME_TOPIC_TOKENS = [
   "国防军工",
@@ -140,10 +139,10 @@ function inferSectorLabelFromFundName(fundName: string | null | undefined): stri
   return null;
 }
 
-/** 持仓列表「板块」列展示名：档案/OCR → 基金名推断 → 估值兜底提示 */
+/** 持仓列表「板块」列展示名：档案/OCR → 基金名推断 */
 export function holdingDisplaySectorLabel(
   holding: Pick<Holding, "fund_code" | "fund_name" | "sector_name" | "intraday_index_name">,
-  sectorMeta?: SectorQuoteMeta | null,
+  _sectorMeta?: SectorQuoteMeta | null,
 ): string {
   if (isUnthemedAllocationFund(holding.fund_name)) {
     return "—";
@@ -159,9 +158,6 @@ export function holdingDisplaySectorLabel(
   const inferred = inferSectorLabelFromFundName(holding.fund_name);
   if (inferred) {
     return inferred;
-  }
-  if (isEstimateFallbackMeta(sectorMeta)) {
-    return "基金估值";
   }
   return "—";
 }
@@ -362,7 +358,6 @@ export function resolveIntradayQuery(
     metaType &&
     metaName &&
     !isInvalidSectorLabel(metaName) &&
-    !isEstimateFallbackMeta(sectorMeta) &&
     !metaLooksLikeFund &&
     metaType !== "concept"
   ) {

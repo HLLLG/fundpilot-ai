@@ -68,7 +68,6 @@ import {
   resolveIntradayFallbackQuery,
   resolveIntradayQuery,
 } from "@/lib/profileSector";
-import { isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 import { formatTradeDateShort } from "@/lib/tradeDateLabel";
 import { useDialogA11y } from "@/lib/useDialogA11y";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
@@ -299,9 +298,8 @@ export function YangjibaoFundDetail({
     () => (sectorReturn != null ? buildFlatIntradayPoints(sectorReturn) : null),
     [sectorReturn],
   );
-  const dataSourceLabel = isEstimateFallbackMeta(sectorMeta)
-    ? "估值兜底"
-    : sectorMeta?.provider === "eastmoney-kline" || sectorMeta?.source === "live"
+  const dataSourceLabel =
+    sectorMeta?.provider === "eastmoney-kline" || sectorMeta?.source === "live"
       ? "东财"
       : "数据源";
   const displayDailyReturn =

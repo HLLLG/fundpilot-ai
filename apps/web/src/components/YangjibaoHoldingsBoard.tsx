@@ -20,7 +20,6 @@ import { readTradingSessionCache } from "@/lib/holdingDetailCache";
 import { SectorMappingModal } from "@/components/SectorMappingModal";
 import { HoldingsTransactionLedgerModal } from "@/components/HoldingsTransactionLedgerModal";
 import { InlineNotice } from "@/components/InlineNotice";
-import { MethodologyNote } from "@/components/MethodologyNote";
 import {
   cnProfitClass,
   computeHoldingWeight,
@@ -56,7 +55,6 @@ import {
 } from "@/lib/holdingDisplay";
 import type { SectorQuoteMeta } from "@/lib/api";
 import { holdingDisplaySectorLabel } from "@/lib/profileSector";
-import { buildSectorRefreshNotice, isEstimateFallbackMeta } from "@/lib/sectorQuoteStatus";
 import { loadAmountsHidden, saveAmountsHidden } from "@/lib/storage";
 import { formatHoldingsColumnDateShort, formatTradeDateShort } from "@/lib/tradeDateLabel";
 import type { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
@@ -276,7 +274,6 @@ export function YangjibaoHoldingsBoard({
     refresh,
     selectMapping,
     dismissMapping,
-    lastRefreshResult,
     sectorMetaByFundCode,
   } = sectorRefresh;
 
@@ -304,8 +301,6 @@ export function YangjibaoHoldingsBoard({
       ),
     [displayHoldings],
   );
-  const refreshNotice = buildSectorRefreshNotice(lastRefreshResult);
-
   const computedTotal = sumPortfolioTotalAssets(settledHoldings);
   const computedDaily = sumDailyProfit(settledHoldings);
   const totalAssets = computedTotal || portfolioSummary?.total_assets || null;
@@ -540,13 +535,6 @@ export function YangjibaoHoldingsBoard({
                 <div role="alert" className="mt-2 text-xs text-rose-700">
                   {refreshError}
                 </div>
-              ) : refreshNotice?.tone === "amber" ? (
-                // 每一行已经带「估值」角标了，这里再用两行文字复述一遍同一件事纯属噪音。
-                // 收成一个可展开的口径说明：需要知道来源的人点开就有，其他人不被打扰。
-                <MethodologyNote label="部分为估值" className="mt-2">
-                  这些基金没有匹配到真实关联板块行情，当日涨跌改用天天基金净值估值补位，
-                  行内以「估值」角标标出。估值刷新更快但不等同于真实板块行情。
-                </MethodologyNote>
               ) : null}
             </div>
             <div className="flex w-full items-start justify-between sm:w-auto sm:justify-self-end">
@@ -789,24 +777,13 @@ export function YangjibaoHoldingsBoard({
 
                       <div
                         className="holdings-metric-cell"
-                        title={
-                          sectorLabel !== "—"
-                            ? isEstimateFallbackMeta(sectorMeta)
-                              ? `${sectorLabel}（无真实关联板块行情，当前用天天基金净值估值代替）`
-                              : sectorLabel
-                            : undefined
-                        }
+                        title={sectorLabel !== "—" ? sectorLabel : undefined}
                       >
                         <div className={`whitespace-nowrap text-xs font-black tabular-nums sm:text-[13px] ${cnProfitClass(sectorReturn)}`}>
                           {formatSignedPercent(sectorReturn)}
                         </div>
                         {sectorLabel !== "—" ? (
                           <div className="mt-0.5 flex min-w-0 items-center justify-center gap-1">
-                            {isEstimateFallbackMeta(sectorMeta) ? (
-                              <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-1 py-0 text-[8px] font-bold leading-4 text-amber-600">
-                                估值
-                              </span>
-                            ) : null}
                             <span className="truncate text-[10px] font-semibold text-slate-500">{sectorLabel}</span>
                           </div>
                         ) : null}

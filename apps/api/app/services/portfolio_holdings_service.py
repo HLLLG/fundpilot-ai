@@ -23,6 +23,7 @@ from app.services.fund_profile import (
 from app.services.holding_amount_sync import sync_holding_amounts_from_shares
 from app.services.holding_estimates import (
     _amount_includes_today_return,
+    apply_sector_daily_estimates,
     compute_daily_profit_from_rate,
     compute_portfolio_total_assets,
     enrich_holdings_estimates,
@@ -328,9 +329,26 @@ def build_fast_snapshot_holdings_response() -> dict | None:
         _fast_overlay_cached_official_nav(holding, trade_date, session_kind=session_kind)
         for holding in holdings
     ]
+    from app.services.fund_holdings_return_estimate import overlay_holdings_daily_estimates
+    from app.services.fund_primary_sector_service import (
+        strip_unthemed_allocation_associated_sector,
+    )
     from app.services.pending_holding_preview import overlay_pending_transaction_previews
 
     matched_profiles = match_profiles_to_holdings(holdings, list_fund_profiles())
+    holdings = [
+        apply_sector_daily_estimates(
+            strip_unthemed_allocation_associated_sector(holding),
+            profile=profile,
+        )
+        for holding, profile in zip(holdings, matched_profiles, strict=True)
+    ]
+    holdings = overlay_holdings_daily_estimates(
+        holdings,
+        allow_fetch=False,
+        allow_live_snapshot=False,
+        profiles=matched_profiles,
+    )
     serialized = overlay_pending_transaction_previews(
         [
             _fast_serialize_holding_for_client(holding, profile=profile)
@@ -397,8 +415,15 @@ def load_dashboard_holdings() -> tuple[list[Holding], str, str | None, datetime 
         _fast_overlay_cached_official_nav(holding, trade_date, session_kind=session_kind)
         for holding in holdings
     ]
+    from app.services.fund_holdings_return_estimate import overlay_holdings_daily_estimates
     from app.services.holding_estimates import enrich_holdings_estimates
 
+    holdings = overlay_holdings_daily_estimates(
+        holdings,
+        allow_fetch=False,
+        allow_live_snapshot=False,
+        profiles=match_profiles_to_holdings(holdings, list_fund_profiles()),
+    )
     enriched = enrich_holdings_estimates(holdings)
     captured_at = _coerce_utc_datetime(snapshot.get("captured_at"))
     return (

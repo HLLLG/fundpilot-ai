@@ -221,6 +221,29 @@ def apply_holdings_daily_estimates(
     return updated
 
 
+def overlay_holdings_daily_estimates(
+    holdings: Sequence[Holding],
+    *,
+    allow_fetch: bool = True,
+    allow_live_snapshot: bool = False,
+    profiles: Sequence[FundProfile | None] | None = None,
+) -> list[Holding]:
+    """主动基金当日：季报重仓加权；官方净值 / 待确认份额仍锁定。"""
+
+    try:
+        estimates = estimate_holdings_weighted_returns(
+            holdings,
+            allow_fetch=allow_fetch,
+            allow_live_snapshot=allow_live_snapshot,
+        )
+    except Exception:
+        logger.exception("holdings-weighted daily estimate failed")
+        return list(holdings)
+    if not estimates:
+        return list(holdings)
+    return apply_holdings_daily_estimates(holdings, estimates, profiles=profiles)
+
+
 def _load_qualified_snapshot(
     fund_code: str,
     *,
@@ -372,5 +395,6 @@ __all__ = [
     "compute_holdings_weighted_return",
     "estimate_holdings_weighted_returns",
     "holding_row_secid",
+    "overlay_holdings_daily_estimates",
     "should_use_holdings_weighted_daily",
 ]
