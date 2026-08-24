@@ -1,10 +1,8 @@
-"""端到端 smoke：跑一次真实 stream_discovery()，打印 stage 计时与 TTFB。
+"""端到端 smoke：跑一次真实 run_discovery()，打印 stage 计时。
 
 用法（需 .env 配 FUND_AI_DEEPSEEK_API_KEY 与正常 AkShare 环境）：
     cd apps/api && ./.venv/Scripts/python.exe scripts/smoke_run_discovery.py
-    cd apps/api && ./.venv/Scripts/python.exe scripts/smoke_run_discovery.py --label stream
-
-输出：每个 stage 进入时间戳、TTFB、skeleton、首条 recommendation partial、总耗时。
+    cd apps/api && ./.venv/Scripts/python.exe scripts/smoke_run_discovery.py --label job
 """
 from __future__ import annotations
 
@@ -19,8 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.models import DiscoveryRequest, Holding, InvestorProfile
 from app.request_context import set_request_user_id
-from app.services import discovery_streaming as discovery_streaming_mod
-from app.services.discovery_streaming import stream_discovery
+from app.services import discovery_pipeline as discovery_pipeline_mod
+from app.services.discovery_pipeline import run_discovery
 
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -58,38 +56,32 @@ def _install_inner_timers() -> None:
         return ""
 
     _wrap(
-        discovery_streaming_mod,
+        discovery_pipeline_mod,
         "fetch_discovery_fund_universe_cached",
         lambda result, *_a, **_k: f"  rows={len(result or [])}",
     )
-    _wrap(discovery_streaming_mod, "build_sector_heat_ranking")
-    _wrap(discovery_streaming_mod, "build_candidate_pool", _pool_note)
-    _wrap(discovery_streaming_mod, "enrich_candidates", _pool_note)
-    _wrap(discovery_streaming_mod, "finalize_candidate_pool", _pool_note)
-    _wrap(discovery_streaming_mod, "attach_descriptive_peer_research", _pool_note)
+    _wrap(discovery_pipeline_mod, "build_sector_heat_ranking")
+    _wrap(discovery_pipeline_mod, "build_candidate_pool", _pool_note)
+    _wrap(discovery_pipeline_mod, "enrich_candidates", _pool_note)
+    _wrap(discovery_pipeline_mod, "finalize_candidate_pool", _pool_note)
+    _wrap(discovery_pipeline_mod, "attach_descriptive_peer_research", _pool_note)
     _wrap(
-        discovery_streaming_mod,
+        discovery_pipeline_mod,
         "prepare_finalist_research_context",
         lambda result, *_a, **_k: (
             f"  n={len(result[0])}" if isinstance(result, tuple) else ""
         ),
     )
-    _wrap(discovery_streaming_mod, "judge_parsed_discovery_report")
     _wrap(
-        discovery_streaming_mod,
+        discovery_pipeline_mod,
         "_prepare_candidate_benchmark_context",
         lambda result, *_a, **_k: (
             f"  n={len(result[0])}" if isinstance(result, tuple) else ""
         ),
     )
-    _wrap(
-        discovery_streaming_mod,
-        "build_user_payload",
-        lambda result, *_a, **_k: _payload_note(result),
-    )
-    _wrap(discovery_streaming_mod, "save_discovery_report")
+    _wrap(discovery_pipeline_mod, "save_discovery_report")
 
-    original_targets = discovery_streaming_mod.select_target_sectors
+    original_targets = discovery_pipeline_mod.select_target_sectors
 
     def _capture_targets(*args, **kwargs):
         started = time.monotonic()
@@ -105,9 +97,9 @@ def _install_inner_timers() -> None:
         )
         return result
 
-    discovery_streaming_mod.select_target_sectors = _capture_targets
+    discovery_pipeline_mod.select_target_sectors = _capture_targets
 
-    original_score = discovery_streaming_mod._score_select_and_persist_directions
+    original_score = discovery_pipeline_mod._score_select_and_persist_directions
 
     def _capture_score(*args, **kwargs):
         started = time.monotonic()
@@ -124,22 +116,7 @@ def _install_inner_timers() -> None:
         )
         return result
 
-    discovery_streaming_mod._score_select_and_persist_directions = _capture_score
-
-
-def _payload_note(result, *_args, **_kwargs) -> str:
-    import json
-
-    if not isinstance(result, dict):
-        return ""
-    encoded = json.dumps(result, ensure_ascii=False)
-    facts = result.get("discovery_facts") if isinstance(result.get("discovery_facts"), dict) else {}
-    pool = facts.get("candidate_pool") if isinstance(facts.get("candidate_pool"), list) else []
-    return (
-        f"  chars={len(encoded)}  pool={len(pool)}  "
-        f"peer={'candidate_peer_summary' in facts}  "
-        f"bench={'benchmark_research_contract' in facts}"
-    )
+    discovery_pipeline_mod._score_select_and_persist_directions = _capture_score
 
 
 def main() -> None:
@@ -149,7 +126,7 @@ def main() -> None:
         "--mode",
         choices=["fast", "deep"],
         default="fast",
-        help="analysis_mode，fast / deep 均走流式",
+        help="analysis_mode，fast / deep",
     )
     args = parser.parse_args()
     _install_inner_timers()
@@ -192,71 +169,21 @@ def main() -> None:
     stage_log: list[tuple[str, float]] = []
     t0_wall = time.monotonic()
 
+    def progress(stage: str, label: str) -> None:
+        elapsed = time.monotonic() - t0_wall
+        stage_log.append((stage, elapsed))
+        print(f"[{_now()}]  +{elapsed:6.2f}s   {stage:18s}  {label}", flush=True)
+
     print(
-        f"\n=== stream_discovery smoke trial={args.label} mode={args.mode} "
+        f"\n=== run_discovery smoke trial={args.label} mode={args.mode} "
         f"holdings={len(holdings)} ==="
     )
     print(f"[{_now()}]  +  0.00s   {'start':18s}  开始计时")
 
     set_request_user_id(1)
 
-    first_byte_at: float | None = None
-    skeleton_at: float | None = None
-    first_partial_at: float | None = None
-    first_rec_partial_at: float | None = None
-    token_count = 0
-
     try:
-        report = None
-        for event in stream_discovery(request, user_id=1):
-            elapsed = time.monotonic() - t0_wall
-            etype = event.get("type", "?")
-            if first_byte_at is None:
-                first_byte_at = elapsed
-            if etype == "stage":
-                stage = str(event.get("stage", ""))
-                label = str(event.get("label", ""))
-                stage_log.append((stage, elapsed))
-                print(f"[{_now()}]  +{elapsed:6.2f}s   {stage:18s}  {label}", flush=True)
-            elif etype == "skeleton":
-                skeleton_at = elapsed
-                codes = event.get("fund_codes") or []
-                print(
-                    f"[{_now()}]  +{elapsed:6.2f}s   {'skeleton':18s}  candidates={len(codes)}",
-                    flush=True,
-                )
-            elif etype == "token":
-                token_count += 1
-            elif etype == "report_partial":
-                field = str(event.get("field", ""))
-                if first_partial_at is None:
-                    first_partial_at = elapsed
-                if field == "recommendation" and first_rec_partial_at is None:
-                    first_rec_partial_at = elapsed
-                    value = event.get("value") or {}
-                    code = value.get("fund_code", "?")
-                    print(
-                        f"[{_now()}]  +{elapsed:6.2f}s   {'partial':18s}  recommendation {code}",
-                        flush=True,
-                    )
-                else:
-                    print(
-                        f"[{_now()}]  +{elapsed:6.2f}s   {'partial':18s}  {field}",
-                        flush=True,
-                    )
-            elif etype == "done":
-                payload = event.get("report") or {}
-                print(
-                    f"[{_now()}]  +{elapsed:6.2f}s   {'done':18s}  report_id={event.get('report_id')}",
-                    flush=True,
-                )
-                from app.models import FundDiscoveryReport
-
-                report = FundDiscoveryReport.model_validate(payload)
-            elif etype == "error":
-                raise RuntimeError(str(event.get("message", "stream error")))
-        if report is None:
-            raise RuntimeError("stream 未返回 done 事件")
+        report = run_discovery(request, on_progress=progress)
     except Exception as exc:  # noqa: BLE001
         elapsed = time.monotonic() - t0_wall
         print(f"\n!! 失败 @ +{elapsed:.2f}s: {type(exc).__name__}: {exc}")
@@ -279,20 +206,6 @@ def main() -> None:
         print("\n=== inner steps ===")
         for name, elapsed, note in _INNER:
             print(f"  {name:36s}  {elapsed:6.2f}s{note}")
-
-    print(f"\n=== stream 感知指标 ===")
-    if first_byte_at is not None:
-        print(f"  首字节 (TTFB):         {first_byte_at:.2f}s")
-    if skeleton_at is not None:
-        print(f"  skeleton:              {skeleton_at:.2f}s")
-    if first_partial_at is not None:
-        print(f"  首条 partial:            {first_partial_at:.2f}s")
-    if first_rec_partial_at is not None:
-        print(f"  首条 recommendation:   {first_rec_partial_at:.2f}s")
-    else:
-        print(f"  首条 recommendation:   n/a")
-    if token_count:
-        print(f"  LLM token chunks:      {token_count}")
 
     print(f"\n=== report 概要 ===")
     print(f"  provider:           {report.provider}")

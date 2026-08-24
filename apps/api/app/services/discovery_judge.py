@@ -7,7 +7,7 @@ from __future__ import annotations
 确定性 allocator 统一计算，任何 LLM 复核金额都会被忽略。
 
 与日报 M3.1 相同的产品定位：fast 模式完全不调用本模块（零新增 LLM 调用）；调用方
-（`DiscoveryClient.generate_report` / `discovery_streaming.stream_discovery`）只在
+（`DiscoveryClient.generate_report`）只在
 `analysis_mode == "deep"` 时才调用 `judge_parsed_discovery_report`。
 
 无论这层 LLM 复核是否生效（超时/失败/未纠正到位），`apply_discovery_guards()`（M4

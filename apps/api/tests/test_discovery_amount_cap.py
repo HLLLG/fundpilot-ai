@@ -153,14 +153,76 @@ def test_amount_cap_uses_scan_budget_when_legacy_cash_is_unknown() -> None:
     assert result.reasons == ()
 
 
-def test_amount_cap_fails_closed_when_existing_sector_is_unknown() -> None:
+def test_amount_cap_skips_unclassified_holdings_instead_of_fail_closed() -> None:
+    result = resolve_discovery_amount_cap(
+        portfolio_truth=_position_truth(),
+        holdings_slim=[
+            {
+                "fund_code": "012200",
+                "sector_name": None,
+                "holding_amount": 2_227.19,
+            },
+            {
+                "fund_code": "017787",
+                "sector_name": "",
+                "holding_amount": 2_267.18,
+            },
+            {
+                "fund_code": "000960",
+                "sector_name": "未分类",
+                "holding_amount": 499.25,
+            },
+        ],
+        candidate_sector="电子",
+        allocated_by_sector={},
+        allocated_total_yuan=0,
+        request_budget_yuan=50_000,
+        concentration_limit_percent=30,
+        weight_denominator_yuan=100_000,
+    )
+
+    assert result.available is True
+    assert result.existing_sector_amount_yuan == 0
+    assert result.cap_yuan == 15_000
+    assert result.reasons == ()
+
+
+def test_amount_cap_still_counts_classified_exposure_beside_unclassified() -> None:
+    result = resolve_discovery_amount_cap(
+        portfolio_truth=_position_truth(),
+        holdings_slim=[
+            {
+                "fund_code": "012200",
+                "sector_name": None,
+                "holding_amount": 2_227.19,
+            },
+            {
+                "fund_code": "000001",
+                "sector_name": "半导体",
+                "holding_amount": 25_000,
+            },
+        ],
+        candidate_sector="半导体",
+        allocated_by_sector={},
+        allocated_total_yuan=0,
+        request_budget_yuan=50_000,
+        concentration_limit_percent=30,
+        weight_denominator_yuan=100_000,
+    )
+
+    assert result.available is True
+    assert result.existing_sector_amount_yuan == 25_000
+    assert result.cap_yuan == 5_000
+
+
+def test_amount_cap_fails_closed_when_classified_holding_amount_is_unknown() -> None:
     result = resolve_discovery_amount_cap(
         portfolio_truth=_position_truth(),
         holdings_slim=[
             {
                 "fund_code": "000001",
-                "sector_name": None,
-                "holding_amount": 20_000,
+                "sector_name": "电子",
+                "holding_amount": None,
             }
         ],
         candidate_sector="电子",
@@ -349,6 +411,41 @@ def test_guard_ignores_legacy_cash_and_uses_scan_budget_for_empty_portfolio() ->
                 "holdings_slim": [],
             },
             "sector_opportunities": [],
+        },
+        amount=100_000,
+    )
+
+    assert rec.action == "分批买入"
+    assert rec.suggested_amount_yuan == 15_000
+
+
+def test_guard_keeps_amount_when_other_holdings_are_unclassified() -> None:
+    rec = _apply_single_guard(
+        facts={
+            "portfolio_snapshot": {
+                "stale": False,
+                "authoritative": True,
+                "position_complete": True,
+                "pending_transaction_count": 0,
+            },
+            "portfolio_position_truth": _position_truth(),
+            "portfolio_gap": {
+                "weight_denominator_yuan": 100_000,
+                "holdings_slim": [
+                    {
+                        "fund_code": "012200",
+                        "fund_name": "新华鑫科技3个月滚动持有灵活配置混合A",
+                        "sector_name": None,
+                        "holding_amount": 2_227.19,
+                    },
+                    {
+                        "fund_code": "017787",
+                        "fund_name": "万家宏观择时多策略混合C",
+                        "sector_name": "",
+                        "holding_amount": 2_267.18,
+                    },
+                ],
+            },
         },
         amount=100_000,
     )

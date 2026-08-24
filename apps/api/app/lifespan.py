@@ -27,11 +27,9 @@ def _initialize_runtime(app: FastAPI, shutdown_event: threading.Event) -> None:
     maybe_auto_import_database()
     from app.services.discovery_job_store import cleanup_stale_discovery_jobs
     from app.services.job_store import cleanup_stale_analysis_jobs
-    from app.services.stream_session_store import cleanup_expired_stream_sessions
 
     cleanup_stale_analysis_jobs()
     cleanup_stale_discovery_jobs()
-    cleanup_expired_stream_sessions()
     try:
         from app.services.sector_quote_cache import prune_durable_caches
 

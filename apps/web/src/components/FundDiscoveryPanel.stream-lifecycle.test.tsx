@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ComponentProps, MutableRefObject } from "react";
+import type { ComponentProps } from "react";
 import "@testing-library/jest-dom/vitest";
 
 import type {
@@ -10,15 +10,14 @@ import type {
   Holding,
   InvestorProfile,
 } from "@/lib/api";
-import type { StreamingDiscoveryState } from "@/lib/discoveryStreamApi";
 import { FundDiscoveryPanel } from "@/components/FundDiscoveryPanel";
 import {
   fetchDiscoveryPrompt,
   fetchDiscoveryReportDetail,
   listDiscoveryReports,
   saveDiscoveryPromptRemote,
+  startDiscoveryJob,
 } from "@/lib/api";
-import { streamDiscovery } from "@/lib/discoveryStreamApi";
 import { deleteClientCachesWhere } from "@/lib/clientCache";
 import { resetDiscoveryReportCacheForTests } from "@/lib/discoveryReportCache";
 
@@ -44,17 +43,8 @@ vi.mock("@/lib/api", () => ({
     provider: "test",
   })),
   saveDiscoveryPromptRemote: vi.fn().mockResolvedValue({}),
+  startDiscoveryJob: vi.fn().mockResolvedValue("job-scan-1"),
 }));
-
-vi.mock("@/lib/discoveryStreamApi", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/discoveryStreamApi")>(
-    "@/lib/discoveryStreamApi",
-  );
-  return {
-    ...actual,
-    streamDiscovery: vi.fn(),
-  };
-});
 
 vi.mock("@/components/DiscoveryReportPanel", () => ({
   DiscoveryReportPanel: ({ report }: { report: FundDiscoveryReport }) => (
@@ -65,6 +55,7 @@ vi.mock("@/components/DiscoveryReportPanel", () => ({
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.mocked(startDiscoveryJob).mockResolvedValue("job-scan-1");
   window.localStorage.clear();
   window.sessionStorage.clear();
   resetDiscoveryReportCacheForTests();
@@ -94,19 +85,6 @@ function profile(): InvestorProfile {
   };
 }
 
-function streamingDiscovery(): StreamingDiscoveryState {
-  return {
-    stage: "news",
-    stageLabel: "拉取市场要闻…",
-    fundCodes: ["161725"],
-    fundNames: ["招商中证白酒"],
-    partialByCode: {},
-    stageLog: [{ stage: "news", label: "拉取市场要闻…", at: Date.now() }],
-    tokenBuffer: "",
-    startedAt: Date.now() - 1000,
-  };
-}
-
 function discoveryReport(): FundDiscoveryReport {
   return {
     id: "discovery-1",
@@ -133,10 +111,7 @@ function panelProps(
     pendingDiscoveryReport: null,
     onPendingDiscoveryReportApplied: vi.fn(),
     onRegisterDiscoveryScanRetry: vi.fn(),
-    streamingDiscovery: null,
-    onStreamingDiscoveryChange: vi.fn(),
     onDiscoveryStreamComplete: vi.fn(),
-    discoveryStreamAbortRef: { current: null },
     ...overrides,
   };
 }
@@ -146,34 +121,6 @@ function renderPanel(overrides: Partial<ComponentProps<typeof FundDiscoveryPanel
 }
 
 describe("FundDiscoveryPanel stream lifecycle", () => {
-  it("does not abort an active discovery stream when the tab unmounts", () => {
-    const abort = vi.fn();
-    const abortRef = {
-      current: { abort },
-    } as unknown as MutableRefObject<AbortController | null>;
-
-    const view = render(
-      <FundDiscoveryPanel
-        userId={101}
-        holdings={[holding()]}
-        profile={profile()}
-        discoveryJobId={null}
-        onDiscoveryJobIdChange={vi.fn()}
-        pendingDiscoveryReport={null as FundDiscoveryReport | null}
-        onPendingDiscoveryReportApplied={vi.fn()}
-        onRegisterDiscoveryScanRetry={vi.fn()}
-        streamingDiscovery={streamingDiscovery()}
-        onStreamingDiscoveryChange={vi.fn()}
-        onDiscoveryStreamComplete={vi.fn()}
-        discoveryStreamAbortRef={abortRef}
-      />,
-    );
-
-    view.unmount();
-
-    expect(abort).not.toHaveBeenCalled();
-  });
-
   it("does not save the discovery prompt back while loading the initial remote value", async () => {
     render(
       <FundDiscoveryPanel
@@ -185,10 +132,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
         pendingDiscoveryReport={null as FundDiscoveryReport | null}
         onPendingDiscoveryReportApplied={vi.fn()}
         onRegisterDiscoveryScanRetry={vi.fn()}
-        streamingDiscovery={null}
-        onStreamingDiscoveryChange={vi.fn()}
         onDiscoveryStreamComplete={vi.fn()}
-        discoveryStreamAbortRef={{ current: null }}
       />,
     );
 
@@ -251,10 +195,7 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
         pendingDiscoveryReport={null as FundDiscoveryReport | null}
         onPendingDiscoveryReportApplied={vi.fn()}
         onRegisterDiscoveryScanRetry={vi.fn()}
-        streamingDiscovery={null}
-        onStreamingDiscoveryChange={vi.fn()}
         onDiscoveryStreamComplete={vi.fn()}
-        discoveryStreamAbortRef={{ current: null }}
       />,
     );
 
@@ -316,8 +257,8 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.getByRole("spinbutton", { name: /本次可投入预算/ })).toHaveValue(8000);
 
     fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
-    await waitFor(() => expect(streamDiscovery).toHaveBeenCalled());
-    expect(vi.mocked(streamDiscovery).mock.calls[0]?.[3]).toMatchObject({
+    await waitFor(() => expect(startDiscoveryJob).toHaveBeenCalled());
+    expect(vi.mocked(startDiscoveryJob).mock.calls[0]?.[2]).toMatchObject({
       budgetYuan: 8000,
     });
 
@@ -334,8 +275,8 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     fireEvent.change(input, { target: { value: "0" } });
     fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
 
-    await waitFor(() => expect(streamDiscovery).toHaveBeenCalled());
-    expect(vi.mocked(streamDiscovery).mock.calls[0]?.[3]).toMatchObject({
+    await waitFor(() => expect(startDiscoveryJob).toHaveBeenCalled());
+    expect(vi.mocked(startDiscoveryJob).mock.calls[0]?.[2]).toMatchObject({
       budgetYuan: 0,
     });
   });
@@ -345,8 +286,8 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
 
-    await waitFor(() => expect(streamDiscovery).toHaveBeenCalled());
-    const options = vi.mocked(streamDiscovery).mock.calls[0]?.[3];
+    await waitFor(() => expect(startDiscoveryJob).toHaveBeenCalled());
+    const options = vi.mocked(startDiscoveryJob).mock.calls[0]?.[2];
     expect(options).toMatchObject({
       scanMode: "full_market",
       selectionStrategy: "balanced",
@@ -382,10 +323,10 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(await screen.findByTestId("discovery-config-summary")).toHaveTextContent("历史模式");
   });
 
-  it("collapses completed reports to a run summary and keeps the old report after a stream failure", async () => {
-    vi.mocked(streamDiscovery)
-      .mockRejectedValueOnce(new Error("流式连接波动"))
-      .mockRejectedValueOnce(new Error("流式连接波动"));
+  it("collapses completed reports to a run summary and keeps the old report after a job submit failure", async () => {
+    vi.mocked(startDiscoveryJob)
+      .mockRejectedValueOnce(new Error("队列已满"))
+      .mockRejectedValueOnce(new Error("队列已满"));
     renderPanel({
       pendingDiscoveryReport: {
         ...discoveryReport(),
@@ -409,9 +350,8 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.getByRole("button", { name: "高级设置" })).toHaveClass("min-h-11");
 
     fireEvent.click(screen.getByRole("button", { name: "重新扫描" }));
-    await waitFor(() => expect(streamDiscovery).toHaveBeenCalledTimes(2));
-    const failureMessage = await screen.findByText(/没有转入后台任务，请再点一次重新扫描/);
-    expect(failureMessage).toHaveTextContent("流式连接波动");
+    await waitFor(() => expect(startDiscoveryJob).toHaveBeenCalledTimes(2));
+    const failureMessage = await screen.findByText("队列已满");
     expect(failureMessage.closest('[role="alert"]')).toHaveClass("inline-notice-error");
     expect(screen.getByTestId("discovery-report-stub")).toHaveTextContent("上一份机会报告");
 
@@ -419,8 +359,8 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.getByRole("group", { name: "荐基决策策略" })).toBeInTheDocument();
   });
 
-  it("does not mention a background job when the API is still starting", async () => {
-    vi.mocked(streamDiscovery).mockRejectedValue(
+  it("does not mention a leftover stream handoff when the API is still starting", async () => {
+    vi.mocked(startDiscoveryJob).mockRejectedValue(
       new Error("服务正在启动，请稍后再点一次。"),
     );
     renderPanel();
@@ -432,20 +372,21 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.queryByText(/initialization in progress/)).not.toBeInTheDocument();
   });
 
-  it("retries a transient stream failure once and does not start a background job", async () => {
-    vi.mocked(streamDiscovery)
+  it("retries a transient job submit failure once", async () => {
+    vi.mocked(startDiscoveryJob)
       .mockRejectedValueOnce(new Error("Failed to fetch"))
-      .mockResolvedValueOnce(undefined);
-    renderPanel();
+      .mockResolvedValueOnce("job-retry-1");
+    const onDiscoveryJobIdChange = vi.fn();
+    renderPanel({ onDiscoveryJobIdChange });
 
     fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
-    await waitFor(() => expect(streamDiscovery).toHaveBeenCalledTimes(2));
-    expect(screen.queryByText(/后台扫描/)).not.toBeInTheDocument();
+    await waitFor(() => expect(startDiscoveryJob).toHaveBeenCalledTimes(2));
+    expect(onDiscoveryJobIdChange).toHaveBeenCalledWith("job-retry-1");
   });
 
-  it("loads a report that was saved after the stream dropped", async () => {
+  it("loads a report that was saved after the job submit dropped", async () => {
     vi.mocked(listDiscoveryReports).mockImplementation(async () => {
-      if (vi.mocked(streamDiscovery).mock.calls.length === 0) {
+      if (vi.mocked(startDiscoveryJob).mock.calls.length === 0) {
         return [{ ...discoveryReport(), id: "old", created_at: "2026-08-01T00:00:00Z" }];
       }
       return [
@@ -458,8 +399,8 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
       id: reportId,
       title: `detail:${reportId}`,
     }));
-    vi.mocked(streamDiscovery).mockRejectedValue(
-      new Error("流式扫描异常结束，未收到完成状态。"),
+    vi.mocked(startDiscoveryJob).mockRejectedValue(
+      new Error("提交扫描失败"),
     );
     const onDiscoveryStreamComplete = vi.fn();
     renderPanel({ userId: 701, onDiscoveryStreamComplete });
@@ -474,35 +415,91 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
         expect.objectContaining({ id: "fresh", title: "detail:fresh" }),
       ),
     );
-    expect(streamDiscovery).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText(/没有转入后台任务/)).not.toBeInTheDocument();
+    expect(startDiscoveryJob).toHaveBeenCalledTimes(1);
   });
 
-  it("does not start a discovery stream when a daily report is already running", async () => {
-    vi.mocked(streamDiscovery).mockResolvedValue(undefined);
+  it("does not start a discovery job when a daily report is already running", async () => {
     renderPanel({ analysisBusy: true });
 
     expect(screen.getByRole("button", { name: "扫描今日机会" })).toBeDisabled();
     expect(screen.getByText("日报正在生成，完成后即可扫描。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
-    expect(streamDiscovery).not.toHaveBeenCalled();
+    expect(startDiscoveryJob).not.toHaveBeenCalled();
   });
 
   it("keeps the previous report visible while a new stream is running", async () => {
     renderPanel({
       pendingDiscoveryReport: discoveryReport(),
-      streamingDiscovery: streamingDiscovery(),
+      discoveryJobId: "job-stream-legacy",
     });
 
     expect(await screen.findByTestId("discovery-report-stub")).toHaveTextContent("上一份机会报告");
-    expect(screen.getByTestId("discovery-streaming")).toBeInTheDocument();
     expect(screen.getByText("新扫描正在进行，下方继续显示上次报告，完成后会自动替换。")).toBeInTheDocument();
   });
 
-  it("announces an intentional cancellation as information instead of an error", () => {
-    renderPanel({ streamingDiscovery: streamingDiscovery() });
+  it("registers a background job id when the user starts a scan", async () => {
+    const onDiscoveryJobIdChange = vi.fn();
+    renderPanel({ onDiscoveryJobIdChange });
 
-    const cancel = screen.getByTestId("discovery-stream-cancel-btn");
+    fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
+    await waitFor(() => expect(startDiscoveryJob).toHaveBeenCalled());
+    expect(onDiscoveryJobIdChange).toHaveBeenCalledWith("job-scan-1");
+  });
+
+  it("keeps the previous report visible while a background job is running", async () => {
+    renderPanel({
+      pendingDiscoveryReport: discoveryReport(),
+      discoveryJobId: "job-9",
+    });
+
+    expect(await screen.findByTestId("discovery-report-stub")).toHaveTextContent("上一份机会报告");
+    expect(screen.getByText("新扫描正在进行，下方继续显示上次报告，完成后会自动替换。")).toBeInTheDocument();
+  });
+
+  it("renders the full scan chart while a background job is running", () => {
+    renderPanel({
+      discoveryJobId: "job-9",
+      scanProgress: {
+        stage: "candidate_pool",
+        stageLabel: "构建候选基金池…",
+        status: "running",
+      },
+    });
+
+    expect(screen.getByTestId("discovery-scan-progress")).toHaveTextContent("构建候选基金池…");
+    expect(screen.getByTestId("discovery-scan-step-start")).toHaveAttribute("data-state", "done");
+    expect(screen.getByTestId("discovery-scan-step-candidate_pool")).toHaveAttribute("data-state", "current");
+    expect(screen.getByTestId("discovery-scan-step-saving")).toHaveAttribute("data-state", "pending");
+    expect(screen.queryByLabelText("基金扫描流程")).not.toBeInTheDocument();
+  });
+
+  it("marks the broken station and lets the user retry after a failed job", () => {
+    const onDiscoveryJobIdChange = vi.fn();
+    renderPanel({
+      discoveryJobId: "job-9",
+      onDiscoveryJobIdChange,
+      scanProgress: {
+        stage: "generating",
+        stageLabel: "AI 分析中…",
+        status: "failed",
+        error: "模型超时",
+      },
+    });
+
+    expect(screen.getByTestId("discovery-scan-step-generating")).toHaveAttribute("data-state", "failed");
+    expect(screen.getByTestId("discovery-scan-step-saving")).toHaveAttribute("data-state", "pending");
+    expect(screen.getByText("模型超时")).toBeInTheDocument();
+
+    const retry = screen.getByRole("button", { name: "重试扫描" });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    expect(onDiscoveryJobIdChange).toHaveBeenCalledWith(null);
+  });
+
+  it("announces an intentional cancellation as information instead of an error", () => {
+    renderPanel({ discoveryJobId: "job-9" });
+
+    const cancel = screen.getByTestId("discovery-stop-button");
     expect(cancel).toHaveClass("min-h-11");
     fireEvent.click(cancel);
 
@@ -553,7 +550,19 @@ describe("FundDiscoveryPanel latest-report autoload", () => {
       { ...discoveryReport(), id: "newest", created_at: "2026-08-08T00:00:00Z" },
     ]);
 
-    renderPanel({ userId: 503, streamingDiscovery: streamingDiscovery() });
+    renderPanel({ userId: 503, discoveryJobId: "job-autoload-stream" });
+    await waitFor(() => expect(listDiscoveryReports).toHaveBeenCalled());
+    await new Promise((resolve) => window.setTimeout(resolve, 10));
+
+    expect(fetchDiscoveryReportDetail).not.toHaveBeenCalled();
+  });
+
+  it("leaves an in-flight background job alone when autoloading history", async () => {
+    vi.mocked(listDiscoveryReports).mockResolvedValue([
+      { ...discoveryReport(), id: "newest", created_at: "2026-08-08T00:00:00Z" },
+    ]);
+
+    renderPanel({ userId: 508, discoveryJobId: "job-autoload" });
     await waitFor(() => expect(listDiscoveryReports).toHaveBeenCalled());
     await new Promise((resolve) => window.setTimeout(resolve, 10));
 
@@ -596,7 +605,7 @@ describe("FundDiscoveryPanel latest-report autoload", () => {
 
   it("offers a stop control while a scan is running so the user is never trapped", () => {
     // 手机切走再回来时流可能已被系统挂起，主按钮是禁用态；没有这个出口页面就死住。
-    renderPanel({ userId: 505, streamingDiscovery: streamingDiscovery() });
+    renderPanel({ userId: 505, discoveryJobId: "job-stop" });
 
     expect(screen.getByTestId("discovery-scan-button")).toBeDisabled();
     expect(screen.getByTestId("discovery-stop-button")).toBeEnabled();
@@ -608,7 +617,6 @@ describe("FundDiscoveryPanel latest-report autoload", () => {
     renderPanel({
       userId: 506,
       discoveryJobId: "job-9",
-      streamingDiscovery: streamingDiscovery(),
       onDiscoveryJobIdChange,
     });
 

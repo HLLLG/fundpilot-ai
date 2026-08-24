@@ -43,22 +43,15 @@ import {
   saveAnalysisPromptRemote,
   saveInvestorProfileRemote,
   settleOfficialNav,
+  startAnalyzeJob,
   type PortfolioSummary,
 } from "@/lib/api";
-import {
-  streamAnalysis,
-  submitStreamFollowup,
-  appendStreamTokenBuffer,
-  streamTimestamp,
-  type FundRecommendationPartial,
-  type StreamingReportState,
-} from "@/lib/streamApi";
 import { DISCOVERY_BLOCKS_ANALYZE } from "@/lib/researchStreamMutex";
-import type { StreamingDiscoveryState } from "@/lib/discoveryStreamApi";
+import type { AnalysisScanProgress } from "@/lib/analysisScanProgress";
+import type { DiscoveryScanProgress } from "@/lib/discoveryScanProgress";
 import { useAuth } from "@/components/AuthProvider";
 import { notifyDesktop, ensureNotificationPermission } from "@/lib/notifications";
 import { BRAND } from "@/lib/brand";
-import { formatThinkingNote } from "@/lib/streamingStageMeta";
 import {
   loadAnalysisPrompt,
   loadDashboardTab,
@@ -96,8 +89,6 @@ import { clearCachedPortfolioHoldings } from "@/lib/portfolioHoldingsCache";
 import { useSectorQuoteRefresh } from "@/lib/useSectorQuoteRefresh";
 import { buildWorkflowBlockers, hasBlockingErrors } from "@/lib/workflowBlockers";
 import { TradingSessionBar } from "@/components/TradingSessionBar";
-import { StreamingAnalysisFloat } from "@/components/StreamingAnalysisFloat";
-import { DiscoveryStreamingFloat } from "@/components/DiscoveryStreamingFloat";
 import {
   YangjibaoHoldingsBoard,
   type PortfolioLoadState,
@@ -112,14 +103,12 @@ import { MePage } from "@/components/MePage";
 import { InlineNotice } from "@/components/InlineNotice";
 import { activeAnalysisRolePrompt } from "@/lib/analysisPrompt";
 import { resolveReportProviderStatus } from "@/lib/reportPresentation";
-import { streamHandoffFailureMessage } from "@/lib/streamHttpError";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
 import { subscribeAgentJobStarted } from "@/lib/agentJobEvents";
 import {
   DISCOVERY_RECOVERY_POLL_MS,
   detectCompletedScan,
   sortReportsByCreatedAtDesc,
-  streamLooksDead,
 } from "@/lib/discoveryScanRecovery";
 import { startVisibilityAwarePolling } from "@/lib/visibilityPolling";
 import {
@@ -304,21 +293,13 @@ export function Dashboard() {
   const [profileReady, setProfileReady] = useState(false);
   const [promptReady, setPromptReady] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
-  const [streamingReport, setStreamingReport] = useState<StreamingReportState | null>(null);
+  const [analysisScanProgress, setAnalysisScanProgress] = useState<AnalysisScanProgress | null>(null);
   const [reportTabUnread, setReportTabUnread] = useState(false);
   const [discoveryTabUnread, setDiscoveryTabUnread] = useState(false);
-  const streamAbortRef = useRef<AbortController | null>(null);
-  const userLeftReportDuringStreamRef = useRef(false);
-  const lastAnalysisStageRef = useRef<{
-    stage: string;
-    label: string;
-    at: number;
-    startedAt: number;
-  } | null>(null);
   const [discoveryJobId, setDiscoveryJobId] = useState<string | null>(null);
-  const [streamingDiscovery, setStreamingDiscovery] = useState<StreamingDiscoveryState | null>(null);
-  const discoveryStreamAbortRef = useRef<AbortController | null>(null);
-  const userLeftDiscoveryDuringStreamRef = useRef(false);
+  const [discoveryScanProgress, setDiscoveryScanProgress] = useState<DiscoveryScanProgress | null>(
+    null,
+  );
   const [pendingDiscoveryReport, setPendingDiscoveryReport] = useState<FundDiscoveryReport | null>(
     null,
   );
@@ -356,7 +337,6 @@ export function Dashboard() {
   );
   const reportSectionRef = useRef<HTMLDivElement>(null);
   const latestAnalysisReportIdRef = useRef<string | null>(null);
-  const lastAnalysisStreamActivityRef = useRef(0);
   const refreshAfterApplyRef = useRef<"sector" | null>(null);
   const initialSectorRefreshDoneRef = useRef(false);
   const holdingsMutationVersionRef = useRef(0);
@@ -641,18 +621,6 @@ export function Dashboard() {
     });
   }, []);
 
-  useEffect(() => {
-    if (streamingReport && activeTab !== "report") {
-      userLeftReportDuringStreamRef.current = true;
-    }
-  }, [activeTab, streamingReport]);
-
-  useEffect(() => {
-    if (streamingDiscovery && activeTab !== "discovery") {
-      userLeftDiscoveryDuringStreamRef.current = true;
-    }
-  }, [activeTab, streamingDiscovery]);
-
   useLayoutEffect(() => {
     const stored = loadDashboardTab();
     const urlReportId = new URLSearchParams(window.location.search).get("report");
@@ -915,9 +883,9 @@ export function Dashboard() {
 
   useEffect(() => {
     backgroundJobActiveRef.current = Boolean(
-      streamingReport || streamingDiscovery || discoveryJobId || activeJobId,
+      discoveryJobId || activeJobId,
     );
-  }, [streamingReport, streamingDiscovery, discoveryJobId, activeJobId]);
+  }, [discoveryJobId, activeJobId]);
 
   useEffect(() => {
     if (refreshAfterApplyRef.current !== "sector" || holdings.length === 0) {
@@ -959,33 +927,14 @@ export function Dashboard() {
     });
   }, [analysisPrompt, promptReady, user?.id]);
 
-  const handleCancelStream = useCallback(() => {
-    streamAbortRef.current?.abort();
-    streamAbortRef.current = null;
-    userLeftReportDuringStreamRef.current = false;
-    setStreamingReport(null);
+  const handleCancelAnalysis = useCallback(() => {
+    setActiveJobId(null);
+    setAnalysisScanProgress(null);
     setIsSubmitting(false);
-    // 不再提示"已停止生成。"：流式浮层与骨架屏同时消失，界面已经说明了。
   }, []);
 
-  const handleStreamFollowup = useCallback(
-    async (message: string) => {
-      const sessionId = streamingReport?.sessionId;
-      if (!sessionId) {
-        throw new Error("流式会话未就绪");
-      }
-      await submitStreamFollowup(sessionId, message);
-      setStreamingReport((current) =>
-        current
-          ? { ...current, followupNotes: [...current.followupNotes, message] }
-          : current,
-      );
-    },
-    [streamingReport?.sessionId],
-  );
-
   const runAnalyze = async (targetHoldings: Holding[]) => {
-    if (streamingDiscovery || discoveryJobId) {
+    if (discoveryJobId) {
       setAnalyzeError(DISCOVERY_BLOCKS_ANALYZE);
       return;
     }
@@ -997,37 +946,11 @@ export function Dashboard() {
     const systemRolePrompt = activeAnalysisRolePrompt(analysisPrompt);
     setIsSubmitting(true);
     setAnalyzeError(null);
-
-    const beginStreamUi = () => {
-      const abortController = new AbortController();
-      streamAbortRef.current = abortController;
-      userLeftReportDuringStreamRef.current = false;
-      latestAnalysisReportIdRef.current = orderedReports[0]?.id ?? null;
-      const startedAt = streamTimestamp();
-      lastAnalysisStageRef.current = {
-        stage: "fund_data",
-        label: "正在连接流式分析...",
-        at: startedAt,
-        startedAt,
-      };
-      setStreamingReport({
-        stage: "fund_data",
-        stageLabel: "正在连接流式分析…",
-        fundCodes: targetHoldings.map((holding) => holding.fund_code),
-        fundNames: targetHoldings.map((holding) => holding.fund_name),
-        partialByCode: {},
-        stageLog: [],
-        thinkingNotes: [],
-        startedAt,
-        tokenBuffer: "",
-        followupNotes: [],
-      });
-      setActiveTab("report");
-      requestAnimationFrame(() => {
-        reportSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
-      return abortController;
-    };
+    latestAnalysisReportIdRef.current = orderedReports[0]?.id ?? null;
+    setActiveTab("report");
+    requestAnimationFrame(() => {
+      reportSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
 
     try {
       void ensureNotificationPermission();
@@ -1036,128 +959,30 @@ export function Dashboard() {
         if (attempt > 0) {
           await new Promise((resolve) => window.setTimeout(resolve, 300));
         }
-        const abortController = beginStreamUi();
         try {
-          await streamAnalysis(
+          const jobId = await startAnalyzeJob(
             targetHoldings,
             profile,
-            {
-              onSession: (sessionId) =>
-                setStreamingReport((current) =>
-                  current ? { ...current, sessionId } : current,
-                ),
-              onStage: (stage, label) =>
-                setStreamingReport((current) => {
-                  if (!current) {
-                    return current;
-                  }
-                  const at = streamTimestamp();
-                  lastAnalysisStageRef.current = {
-                    stage,
-                    label,
-                    at,
-                    startedAt: current.startedAt,
-                  };
-                  const entry = { stage, label, at };
-                  const stageLog = [
-                    ...current.stageLog.filter((item) => item.stage !== stage),
-                    entry,
-                  ];
-                  return { ...current, stage, stageLabel: label, stageLog };
-                }),
-              onSkeleton: (fundCodes, fundNames) =>
-                setStreamingReport((current) =>
-                  current ? { ...current, fundCodes, fundNames } : current,
-                ),
-              onToken: (content) =>
-                setStreamingReport((current) =>
-                  current
-                    ? {
-                        ...current,
-                        tokenBuffer: appendStreamTokenBuffer(current.tokenBuffer, content),
-                      }
-                    : current,
-                ),
-              onPartial: (field, value) => {
-                setStreamingReport((current) => {
-                  if (!current) {
-                    return current;
-                  }
-                  const note = formatThinkingNote(field, value);
-                  const thinkingNotes =
-                    note && !current.thinkingNotes.includes(note)
-                      ? [...current.thinkingNotes, note]
-                      : current.thinkingNotes;
-                  if (field === "title") {
-                    return { ...current, title: String(value), thinkingNotes };
-                  }
-                  if (field === "summary") {
-                    return { ...current, summary: String(value), thinkingNotes };
-                  }
-                  if (field === "caveats" && Array.isArray(value)) {
-                    return {
-                      ...current,
-                      caveats: value.map(String),
-                      thinkingNotes,
-                    };
-                  }
-                  if (field === "fund_recommendation" && value && typeof value === "object") {
-                    const rec = value as FundRecommendationPartial;
-                    const code = rec.fund_code;
-                    if (!code) {
-                      return current;
-                    }
-                    return {
-                      ...current,
-                      thinkingNotes,
-                      partialByCode: {
-                        ...current.partialByCode,
-                        [code]: { ...current.partialByCode[code], ...rec },
-                      },
-                    };
-                  }
-                  return current;
-                });
-              },
-              onDone: (completedReport) => {
-                const stayOnCurrentTab = userLeftReportDuringStreamRef.current;
-                userLeftReportDuringStreamRef.current = false;
-                streamAbortRef.current = null;
-                setStreamingReport(null);
-                void handleJobComplete(completedReport, {
-                  navigateToReport: !stayOnCurrentTab,
-                });
-              },
-              onError: (message) => {
-                throw new Error(message);
-              },
-            },
-            {
-              systemRolePrompt,
-              signal: abortController.signal,
-            },
+            undefined,
+            systemRolePrompt,
           );
+          setActiveJobId(jobId);
+          setAnalysisScanProgress({
+            stage: "queued",
+            stageLabel: "排队中…",
+            status: "running",
+          });
           return;
-        } catch (streamError) {
-          streamAbortRef.current = null;
-          userLeftReportDuringStreamRef.current = false;
-          if (streamError instanceof DOMException && streamError.name === "AbortError") {
-            setStreamingReport(null);
-            lastAnalysisStageRef.current = null;
-            return;
-          }
+        } catch (submitError) {
           try {
             const reports = await listReports();
-            const recovered = detectCompletedScan({
+            const recovered: Report | null = detectCompletedScan({
               reports: sortReportsByCreatedAtDesc(reports),
               knownLatestId: latestAnalysisReportIdRef.current,
             });
             if (recovered) {
-              streamAbortRef.current = null;
-              userLeftReportDuringStreamRef.current = false;
-              setStreamingReport(null);
               setActiveJobId(null);
-              setIsSubmitting(false);
+              setAnalysisScanProgress(null);
               latestAnalysisReportIdRef.current = recovered.id;
               writeDailyReportsListCache(user?.id, reports);
               setReports(reports);
@@ -1167,24 +992,14 @@ export function Dashboard() {
               return;
             }
           } catch {
-            // The stream dropped; keep retrying / surface the original error.
+            // keep retrying / surface the original error
           }
-          lastError = streamError;
+          lastError = submitError;
         }
       }
-      setStreamingReport(null);
-      lastAnalysisStageRef.current = null;
-      setAnalyzeError(
-        streamHandoffFailureMessage(
-          lastError,
-          "流式生成中断",
-          "没有转入后台任务，请再点一次生成日报。",
-        ),
-      );
+      setAnalyzeError(userFacingErrorMessage(lastError, "提交日报失败，请稍后重试。"));
     } catch (error) {
-      setStreamingReport(null);
-      lastAnalysisStageRef.current = null;
-      setAnalyzeError(userFacingErrorMessage(error, "流式生成失败，请稍后重试。"));
+      setAnalyzeError(userFacingErrorMessage(error, "提交日报失败，请稍后重试。"));
     } finally {
       setIsSubmitting(false);
     }
@@ -1198,9 +1013,7 @@ export function Dashboard() {
     completedReport: Report,
     options?: { navigateToReport?: boolean },
   ) => {
-    setStreamingReport(null);
-    streamAbortRef.current = null;
-    lastAnalysisStageRef.current = null;
+    setAnalysisScanProgress(null);
     // 生成完成的 completedReport 已含完整正文，无需再走 hydrateReport 拉一次；
     // 但仍要更新 lastHydratedId，避免随后 URL 恢复触发重复请求。
     lastHydratedIdRef.current = completedReport.id;
@@ -1237,37 +1050,25 @@ export function Dashboard() {
 
   const handleJobClose = () => {
     setActiveJobId(null);
-    setStreamingReport(null);
+    setAnalysisScanProgress(null);
   };
 
-  useEffect(() => {
-    if (streamingReport) {
-      lastAnalysisStreamActivityRef.current = streamTimestamp();
-    }
-  }, [streamingReport]);
-
   const recoverStuckAnalysis = useCallback(async () => {
-    if (!streamLooksDead(lastAnalysisStreamActivityRef.current, streamTimestamp())) {
-      return;
-    }
     let reports: Report[];
     try {
       reports = await listReports();
     } catch {
       return;
     }
-    const recovered = detectCompletedScan({
+    const recovered: Report | null = detectCompletedScan({
       reports: sortReportsByCreatedAtDesc(reports),
       knownLatestId: latestAnalysisReportIdRef.current,
     });
     if (!recovered) {
       return;
     }
-    streamAbortRef.current?.abort();
-    streamAbortRef.current = null;
-    userLeftReportDuringStreamRef.current = false;
-    setStreamingReport(null);
     setActiveJobId(null);
+    setAnalysisScanProgress(null);
     setIsSubmitting(false);
     latestAnalysisReportIdRef.current = recovered.id;
     writeDailyReportsListCache(user?.id, reports);
@@ -1277,9 +1078,8 @@ export function Dashboard() {
     updateReportUrl(null, "replace");
   }, [hydrateReport, setActiveTab, updateReportUrl, user?.id]);
 
-  const analysisStreamStartedAt = streamingReport?.startedAt ?? null;
   useEffect(() => {
-    if (analysisStreamStartedAt == null || activeJobId || user?.id == null) {
+    if (!activeJobId || user?.id == null) {
       return;
     }
     return startVisibilityAwarePolling({
@@ -1288,57 +1088,52 @@ export function Dashboard() {
         void recoverStuckAnalysis();
       },
     });
-  }, [activeJobId, analysisStreamStartedAt, recoverStuckAnalysis, user?.id]);
+  }, [activeJobId, recoverStuckAnalysis, user?.id]);
 
   const handleJobRetry = async () => {
     setActiveJobId(null);
+    setAnalysisScanProgress(null);
     await runAnalyze(displayableHoldings(holdings));
   };
+
+  const handleAnalysisJobProgress = useCallback((progress: AnalysisScanProgress) => {
+    setAnalysisScanProgress(progress);
+  }, []);
+
+  useEffect(() => {
+    if (!activeJobId) {
+      setAnalysisScanProgress(null);
+    }
+  }, [activeJobId]);
 
   const handleDiscoveryJobComplete = (completedReport: FundDiscoveryReport) => {
     setPendingDiscoveryReport(completedReport);
     setDiscoveryJobId(null);
+    setDiscoveryScanProgress(null);
     setActiveTab("discovery");
     notifyDesktop(`${BRAND.name}推荐报告已生成`, {
       body: completedReport.title ?? "推荐基金扫描已完成",
     });
   };
 
-  const handleDiscoveryStreamComplete = useCallback(
-    (completedReport: FundDiscoveryReport) => {
-      const stayOnCurrentTab = userLeftDiscoveryDuringStreamRef.current;
-      userLeftDiscoveryDuringStreamRef.current = false;
-      setStreamingDiscovery(null);
-      discoveryStreamAbortRef.current = null;
-      setPendingDiscoveryReport(completedReport);
-
-      if (!stayOnCurrentTab) {
-        setActiveTab("discovery");
-      } else {
-        setDiscoveryTabUnread(true);
-      }
-
-      notifyDesktop(`${BRAND.name}推荐报告已生成`, {
-        body: completedReport.title ?? "推荐基金扫描已完成",
-      });
-    },
-    [setActiveTab],
-  );
-
-  const handleCancelDiscoveryStream = useCallback(() => {
-    discoveryStreamAbortRef.current?.abort();
-    discoveryStreamAbortRef.current = null;
-    userLeftDiscoveryDuringStreamRef.current = false;
-    setStreamingDiscovery(null);
-    // 同上：扫描浮层与骨架屏消失即反馈。
+  const handleDiscoveryJobProgress = useCallback((progress: DiscoveryScanProgress) => {
+    setDiscoveryScanProgress(progress);
   }, []);
+
+  useEffect(() => {
+    if (!discoveryJobId) {
+      setDiscoveryScanProgress(null);
+    }
+  }, [discoveryJobId]);
 
   const handleDiscoveryJobClose = () => {
     setDiscoveryJobId(null);
+    setDiscoveryScanProgress(null);
   };
 
   const handleDiscoveryJobRetry = () => {
     setDiscoveryJobId(null);
+    setDiscoveryScanProgress(null);
     discoveryScanRetryRef.current?.();
   };
 
@@ -1840,18 +1635,29 @@ export function Dashboard() {
                 onChange={handleProfileChange}
                 onRolePromptChange={handleRolePromptChange}
                 onRolePromptReset={handleRolePromptReset}
-                onAnalyze={() => void handleAnalyze()}
-                isBusy={isSubmitting}
-                busyLabel={streamingReport?.stageLabel}
+                onAnalyze={() => {
+                  if (analysisScanProgress?.status === "failed") {
+                    setActiveJobId(null);
+                    setAnalysisScanProgress(null);
+                  }
+                  void handleAnalyze();
+                }}
+                isBusy={isSubmitting || Boolean(activeJobId)}
+                scanProgress={analysisScanProgress}
+                onCancel={handleCancelAnalysis}
                 hasBlockingErrors={blockingErrors}
                 blockingMessage={blockingMessage}
                 errorMessage={analyzeError}
-                peerBusyMessage={
-                  streamingDiscovery || discoveryJobId ? DISCOVERY_BLOCKS_ANALYZE : null
-                }
+                peerBusyMessage={discoveryJobId ? DISCOVERY_BLOCKS_ANALYZE : null}
                 readingModeKey={report?.id ?? null}
               />
-              {report || streamingReport ? (
+              {report && (isSubmitting || activeJobId) ? (
+                <InlineNotice
+                  tone="info"
+                  message="新日报正在生成，下方继续显示上次报告，完成后会自动替换。"
+                />
+              ) : null}
+              {report ? (
                 <div
                   ref={reportSectionRef}
                   tabIndex={-1}
@@ -1879,9 +1685,6 @@ export function Dashboard() {
                   ) : null}
                   <ReportPanel
                     report={report}
-                    streaming={streamingReport}
-                    onCancelStream={activeJobId ? undefined : handleCancelStream}
-                    onStreamFollowup={activeJobId ? undefined : handleStreamFollowup}
                     currentHoldings={
                       report?.id === todayReport?.id ? displayableHoldings(holdings) : undefined
                     }
@@ -1921,18 +1724,13 @@ export function Dashboard() {
               holdings={holdings}
               profile={profile}
               discoveryJobId={discoveryJobId}
+              scanProgress={discoveryScanProgress}
               onDiscoveryJobIdChange={setDiscoveryJobId}
               pendingDiscoveryReport={pendingDiscoveryReport}
               onPendingDiscoveryReportApplied={clearPendingDiscoveryReport}
               onRegisterDiscoveryScanRetry={registerDiscoveryScanRetry}
-              streamingDiscovery={streamingDiscovery}
-              analysisBusy={Boolean(streamingReport || activeJobId || isSubmitting)}
-              onStreamingDiscoveryChange={setStreamingDiscovery}
-              onDiscoveryStreamComplete={handleDiscoveryStreamComplete}
-              onDiscoveryStreamStart={() => {
-                userLeftDiscoveryDuringStreamRef.current = false;
-              }}
-              discoveryStreamAbortRef={discoveryStreamAbortRef}
+              analysisBusy={Boolean(activeJobId || isSubmitting)}
+              onDiscoveryStreamComplete={handleDiscoveryJobComplete}
             />
           ) : null}
 
@@ -1954,24 +1752,12 @@ export function Dashboard() {
       </div>
 
       <BackgroundJobsStack>
-        {streamingDiscovery && activeTab !== "discovery" ? (
-          <DiscoveryStreamingFloat
-            streaming={streamingDiscovery}
-            onOpenDiscovery={() => setActiveTab("discovery")}
-            onCancel={handleCancelDiscoveryStream}
-          />
-        ) : null}
-        {streamingReport && activeTab !== "report" && !activeJobId ? (
-          <StreamingAnalysisFloat
-            streaming={streamingReport}
-            onOpenReport={() => setActiveTab("report")}
-            onCancel={handleCancelStream}
-          />
-        ) : null}
         {activeJobId ? (
           <JobStatusFloat
             key={`analysis-${activeJobId}`}
             jobId={activeJobId}
+            hideCard={activeTab === "report"}
+            onProgress={handleAnalysisJobProgress}
             onComplete={(completedReport) => void handleJobComplete(completedReport)}
             onClose={handleJobClose}
             onRetry={() => void handleJobRetry()}
@@ -1981,6 +1767,8 @@ export function Dashboard() {
           <DiscoveryJobStatusFloat
             key={`discovery-${discoveryJobId}`}
             jobId={discoveryJobId}
+            hideCard={activeTab === "discovery"}
+            onProgress={handleDiscoveryJobProgress}
             onComplete={handleDiscoveryJobComplete}
             onClose={handleDiscoveryJobClose}
             onRetry={handleDiscoveryJobRetry}

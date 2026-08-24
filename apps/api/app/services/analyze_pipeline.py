@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 
 from app.models import AnalysisRequest, Report
 from app.services.deepseek_client import DeepSeekClient, JOB_STAGES
@@ -12,6 +13,7 @@ from app.database import save_report
 from app.services.decision_clock import capture_decision_clock
 from app.services.provider_lane import LANE_ANALYSIS, provider_lane
 
+logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, str], None]
 
 
@@ -23,10 +25,23 @@ def run_analysis(
 
     with provider_lane(LANE_ANALYSIS):
         if getattr(get_settings(), "langgraph_enabled", True):
-            from app.services.graphs.daily_report import run_daily_report_graph
-
-            return run_daily_report_graph(request, on_progress)
+            try:
+                return _run_analysis_via_graph(request, on_progress)
+            except ImportError:
+                logger.warning(
+                    "langgraph is enabled but not installed; "
+                    "falling back to the linear daily-report pipeline"
+                )
         return run_analysis_linear(request, on_progress)
+
+
+def _run_analysis_via_graph(
+    request: AnalysisRequest,
+    on_progress: ProgressCallback | None,
+) -> Report:
+    from app.services.graphs.daily_report import run_daily_report_graph
+
+    return run_daily_report_graph(request, on_progress)
 
 
 def run_analysis_linear(

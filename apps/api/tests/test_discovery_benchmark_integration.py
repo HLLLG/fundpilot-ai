@@ -327,35 +327,3 @@ def test_sync_discovery_writes_benchmark_research_contract_without_network(
     assert captured["benchmark_batch_calls"] == 1
     _assert_integrated_contract(captured["facts"])
 
-
-def test_sse_discovery_writes_benchmark_research_contract_without_network(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from app.services import discovery_streaming
-
-    captured = _patch_path(
-        monkeypatch,
-        module_name="app.services.discovery_streaming",
-    )
-    monkeypatch.setattr(discovery_streaming, "build_pipeline_metadata", lambda **_kwargs: {})
-
-    def fake_offline_report(**kwargs: Any) -> FundDiscoveryReport:
-        captured["facts"] = kwargs["discovery_facts"]
-        return FundDiscoveryReport(
-            title="SSE 测试",
-            discovery_facts=kwargs["discovery_facts"],
-            candidate_pool=kwargs["candidate_pool"],
-        )
-
-    monkeypatch.setattr(
-        discovery_streaming,
-        "build_offline_discovery_report",
-        fake_offline_report,
-    )
-
-    events = list(discovery_streaming.stream_discovery(_request(), user_id=1))
-
-    assert events[-1]["type"] == "done"
-    assert events[-1]["report"]["title"] == "SSE 测试"
-    assert captured["benchmark_batch_calls"] == 1
-    _assert_integrated_contract(captured["facts"])

@@ -828,7 +828,9 @@ export type AnalysisJob = {
   created_at: string;
   updated_at: string;
   report?: Report;
+  report_id?: string | null;
   job_kind?: "analysis" | "discovery";
+  discovery_report_id?: string | null;
   discovery_report?: FundDiscoveryReport;
   transient_unavailable?: boolean;
 };
@@ -2036,6 +2038,7 @@ type ReportChatStreamEvent =
 import { getAccessToken, type AuthSession, type AuthUser } from "@/lib/auth";
 import { API_BASE, ApiError, apiFetch } from "@/lib/api/core";
 import { CN_INDEX_SPECS, overviewFromDailyRows, parseApiErrorDetail } from "@/lib/cnIndexOverview";
+import { formatStreamHttpError } from "@/lib/streamHttpError";
 
 /** Merge concurrent GETs within one ownership scope, avoiding Strict Mode duplicates. */
 function dedupeConcurrentGet<T>(
@@ -2418,7 +2421,9 @@ export async function startAnalyzeJob(
     ),
   });
   if (!response.ok) {
-    throw new Error(await response.text());
+    throw new Error(
+      formatStreamHttpError(await response.text(), response.status, "提交日报失败"),
+    );
   }
   const body = await response.json();
   return body.job_id as string;
@@ -2581,7 +2586,9 @@ export async function startDiscoveryJob(
     }),
   });
   if (!response.ok) {
-    throw new Error(await response.text());
+    throw new Error(
+      formatStreamHttpError(await response.text(), response.status, "提交扫描失败"),
+    );
   }
   const body = await response.json();
   return body.job_id as string;
@@ -3785,10 +3792,3 @@ export async function fetchIndexDailyHistory(
   }
   return response.json();
 }
-
-export {
-  type FundRecommendationPartial,
-  type StreamingPartialField,
-  type StreamingReportEvents,
-  type StreamingReportState,
-} from "@/lib/streamApi";

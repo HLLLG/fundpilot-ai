@@ -10,7 +10,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from app.config import get_settings
-from app.database import _connect, get_discovery_report
+from app.database import _connect, get_discovery_report_summary
 from app.models import DiscoveryRequest
 from app.request_context import (
     get_request_user_id,
@@ -402,8 +402,11 @@ def get_discovery_job_response(job_id: str) -> dict[str, Any] | None:
         "updated_at": job["updated_at"],
         "job_kind": "discovery",
     }
-    if job["status"] == "completed" and job.get("discovery_report_id"):
-        report = get_discovery_report(job["discovery_report_id"])
-        if report is not None:
-            response["discovery_report"] = report
+    report_id = job.get("discovery_report_id")
+    if report_id:
+        response["discovery_report_id"] = report_id
+    if job["status"] == "completed" and report_id:
+        summary = get_discovery_report_summary(str(report_id))
+        if summary is not None:
+            response["discovery_report"] = summary
     return response

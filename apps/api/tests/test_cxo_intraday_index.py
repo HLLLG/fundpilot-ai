@@ -1,4 +1,7 @@
-"""主动医药基金（000960）应对齐养基宝：持仓穿透出 CXO，分时走国证CXO。"""
+"""名字已点明 CXO 的基金：持仓穿透出 CXO 时，分时走国证CXO。
+
+医疗/医药合同主题基金不再被 CXO 细分改写，见 healthcare_parent_lock。
+"""
 
 from __future__ import annotations
 
@@ -45,13 +48,13 @@ def test_detail_resolution_applies_holdings_infer_cxo(monkeypatch) -> None:
 
     holding = Holding(
         fund_code="000960",
-        fund_name="招商医疗保健股票A",
+        fund_name="某CXO主题股票A",
         holding_amount=1000,
     )
     profile = FundProfile(
         fund_code="000960",
-        fund_name="招商医疗保健股票A",
-        aliases=["招商医疗保健股票A"],
+        fund_name="某CXO主题股票A",
+        aliases=["某CXO主题股票A"],
         holding_amount=1000,
         source="alipay-overview",
     )
@@ -109,7 +112,7 @@ def test_holding_detail_requests_holdings_infer(monkeypatch) -> None:
     context._snapshots = []
     holding = Holding(
         fund_code="000960",
-        fund_name="招商医疗保健股票A",
+        fund_name="某CXO主题股票A",
         holding_amount=1000,
     )
     build_holding_detail([holding], 0, data_context=context)
@@ -171,7 +174,7 @@ def test_fast_refresh_infers_only_missing_sectors(monkeypatch) -> None:
     )
     missing = Holding(
         fund_code="000960",
-        fund_name="招商医疗保健股票A",
+        fund_name="某CXO主题股票A",
         holding_amount=1000,
     )
     refreshed = refresh_benchmark_sectors_for_holdings(

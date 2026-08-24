@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.database import _connect, get_discovery_report
+from app.database import _connect, get_discovery_report_summary
 from app.request_context import get_request_user_id
 from app.services.discovery_job_store import _ensure_discovery_jobs_table
 from app.services.job_store import _ensure_jobs_table
@@ -75,16 +75,17 @@ def _discovery_response_from_row(row: Any) -> dict[str, Any]:
         "updated_at": _row_get(row, "updated_at"),
         "job_kind": "discovery",
     }
-    if response["status"] == "completed" and _row_get(row, "discovery_report_id"):
-        report = get_discovery_report(str(_row_get(row, "discovery_report_id")))
-        if report is not None:
-            response["discovery_report"] = report
+    report_id = _row_get(row, "discovery_report_id")
+    if report_id:
+        response["discovery_report_id"] = str(report_id)
+    if response["status"] == "completed" and report_id:
+        summary = get_discovery_report_summary(str(report_id))
+        if summary is not None:
+            response["discovery_report"] = summary
     return response
 
 
 def _analysis_response_from_row(row: Any) -> dict[str, Any]:
-    from app.database import get_report
-
     request = json.loads(_row_get(row, "request_payload") or "{}")
     response: dict[str, Any] = {
         "id": _row_get(row, "id"),
@@ -95,9 +96,9 @@ def _analysis_response_from_row(row: Any) -> dict[str, Any]:
         "analysis_mode": request.get("analysis_mode", "fast"),
         "created_at": _row_get(row, "created_at"),
         "updated_at": _row_get(row, "updated_at"),
+        "job_kind": "analysis",
     }
-    if response["status"] == "completed" and _row_get(row, "report_id"):
-        report = get_report(str(_row_get(row, "report_id")))
-        if report is not None:
-            response["report"] = report
+    report_id = _row_get(row, "report_id")
+    if report_id:
+        response["report_id"] = str(report_id)
     return response

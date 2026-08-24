@@ -164,20 +164,34 @@ describe("profileSector", () => {
     ).toBe("半导体材料");
   });
 
-  it("keeps holdings-inferred theme for industry equity funds", () => {
+  it("keeps the medical board for healthcare industry funds", () => {
     const holding = {
-      fund_code: "000960",
-      fund_name: "招商医疗保健股票A",
-      sector_name: "CXO",
+      fund_code: "011373",
+      fund_name: "招商前沿医疗保健股票A",
+      sector_name: "医疗",
       intraday_index_name: null,
     };
-    expect(holdingDisplaySectorLabel(holding)).toBe("CXO");
+    expect(holdingDisplaySectorLabel(holding)).toBe("医疗");
+  });
+
+  it("does not let CXO overlay a named healthcare fund", () => {
+    const holding = {
+      fund_code: "011373",
+      fund_name: "招商前沿医疗保健股票A",
+      sector_name: "CXO",
+      intraday_index_name: "国证CXO",
+    };
+    expect(holdingDisplaySectorLabel(holding)).toBe("医疗");
+    expect(resolveIntradayQuery(holding)).toEqual({
+      source_type: "concept",
+      source_name: "医疗",
+    });
   });
 
   it("charts 国证CXO when the related board is CXO", () => {
     const holding = {
-      fund_code: "011373",
-      fund_name: "招商前沿医疗保健股票A",
+      fund_code: "019901",
+      fund_name: "某CXO主题股票A",
       sector_name: "CXO",
       intraday_index_name: null,
     };

@@ -142,8 +142,10 @@ def build_candidate_pool(
     # 赢家偏差；冷启动失败时再降级到前500名排行。注入 fetch_rank 仍保留给测试。
     universe_mode = "injected"
     if prepared_universe_rows is not None:
+        # Catalogue rows are a shared PIT snapshot. Do not dict() the 20k
+        # universe; candidate builders copy only the rows they keep.
         rank_rows = [
-            dict(row) for row in prepared_universe_rows if isinstance(row, dict)
+            row for row in prepared_universe_rows if isinstance(row, dict)
         ]
         universe_mode = "full" if rank_rows else "top_500_fallback"
         if not rank_rows:
@@ -317,7 +319,7 @@ def attach_descriptive_peer_research(
     避免对桶内几千只重复 ``build_fund_peer_group``。
     """
 
-    rows = [dict(row) for row in (universe or []) if isinstance(row, dict)]
+    rows = [row for row in (universe or []) if isinstance(row, dict)]
     if not rows:
         rows = fetch_discovery_fund_universe_cached(limit=20_000) or []
     _attach_descriptive_peer_research(

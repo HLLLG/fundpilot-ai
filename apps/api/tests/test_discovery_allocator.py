@@ -16,9 +16,11 @@ from app.services.discovery_allocator import (
 )
 from app.services.discovery_allocation_service import (
     _entry_maturity_tranche_ratio_cap,
+    _sector_exposures,
+    apply_deterministic_discovery_allocation,
 )
+from app.models import DiscoveryRecommendation, InvestorProfile
 from app.services.fund_tradeability import TRADEABILITY_GATE_SCHEMA_VERSION
-from app.models import DiscoveryRecommendation
 from app.services.sector_opportunity_scoring import (
     ENTRY_POLICY_VERSION,
     ENTRY_POLICY_VERSION_V3,
@@ -649,3 +651,129 @@ def test_plan_is_exactly_permutation_invariant() -> None:
             priority_inputs=priority,
         )
         assert actual == expected
+
+
+def test_unclassified_exposure_keys_are_skipped_not_blocking() -> None:
+    plan = _allocate(
+        [_candidate("000001", "科技")],
+        exposures={"未分类": 4_494.37, "科技": 1_000},
+        budget=10_000,
+        cash=10_000,
+        denominator=30_000,
+        concentration=35,
+    )
+
+    assert plan["status"] != "blocked"
+    assert plan["allocations"]
+    assert plan["allocations"][0]["suggested_amount_yuan"] > 0
+
+
+def test_sector_exposures_skip_unclassified_holdings() -> None:
+    exposures = _sector_exposures(
+        [
+            {
+                "fund_code": "012200",
+                "sector_name": None,
+                "holding_amount": 2_227.19,
+            },
+            {
+                "fund_code": "017787",
+                "sector_name": "",
+                "holding_amount": 2_267.18,
+            },
+            {
+                "fund_code": "002610",
+                "sector_name": "黄金",
+                "holding_amount": 2_105.25,
+            },
+            {
+                "fund_code": "021959",
+                "sector_name": "未分类",
+                "holding_amount": 1_660.24,
+            },
+        ]
+    )
+
+    assert exposures == {"黄金": 2_105.25}
+
+
+def test_sector_exposures_still_fail_closed_on_classified_missing_amount() -> None:
+    assert (
+        _sector_exposures(
+            [
+                {
+                    "fund_code": "002610",
+                    "sector_name": "黄金",
+                    "holding_amount": None,
+                }
+            ]
+        )
+        is None
+    )
+
+
+def test_allocation_keeps_other_sectors_when_holdings_are_unclassified() -> None:
+    recommendations = [
+        DiscoveryRecommendation(
+            fund_code="021362",
+            fund_name="易方达黄金股指数发起式A",
+            sector_name="黄金股",
+            action="分批买入",
+            suggested_amount_yuan=100,
+            points=["候选质量通过"],
+            risks=["波动风险"],
+        )
+    ]
+    projected, plan, _, caveats = apply_deterministic_discovery_allocation(
+        recommendations,
+        candidate_pool=[
+            {
+                "fund_code": "021362",
+                "fund_name": "易方达黄金股指数发起式A",
+                "sector_name": "黄金股",
+                "quality_action": "eligible",
+                "quality_gate": {"status": "eligible", "eligible": True, "reasons": []},
+            }
+        ],
+        discovery_facts={
+            "portfolio_gap": {
+                "weight_denominator_yuan": 30_000,
+                "holdings_slim": [
+                    {
+                        "fund_code": "012200",
+                        "fund_name": "新华鑫科技3个月滚动持有灵活配置混合A",
+                        "sector_name": None,
+                        "holding_amount": 2_227.19,
+                    },
+                    {
+                        "fund_code": "017787",
+                        "fund_name": "万家宏观择时多策略混合C",
+                        "sector_name": "",
+                        "holding_amount": 2_267.18,
+                    },
+                    {
+                        "fund_code": "002610",
+                        "fund_name": "博时黄金ETF联接A",
+                        "sector_name": "黄金",
+                        "holding_amount": 2_105.25,
+                    },
+                ],
+            }
+        },
+        profile=InvestorProfile(
+            avoid_chasing=False,
+            prefer_dca=True,
+            concentration_limit_percent=35,
+            expected_investment_amount=30_000,
+        ),
+        budget_yuan=10_000,
+        decision_at=None,
+    )
+
+    assert plan["status"] != "blocked"
+    assert "sector_exposure_unavailable" not in (
+        (plan.get("unallocated_budget") or {}).get("reason_codes") or []
+    )
+    assert projected[0].action == "分批买入"
+    assert (projected[0].suggested_amount_yuan or 0) > 0
+    assert not any("清除全部买入金额" in item for item in caveats)

@@ -57,7 +57,7 @@ def test_authoritative_labels_do_not_restamp_unthemed_allocation(monkeypatch) ->
     )
     assert holdings[0].sector_name is None
     assert holdings[0].sector_return_percent is None
-    assert holdings[1].sector_name == "CXO"
+    assert holdings[1].sector_name == "医疗"
 
 
 def test_serialize_strips_unthemed_allocation_research_board() -> None:
@@ -118,11 +118,56 @@ def test_industry_equity_fund_keeps_holdings_infer_theme() -> None:
     assert (
         associated_sector_is_page_visible(
             fund_name="招商医疗保健股票A",
-            sector_name="CXO",
+            sector_name="医疗",
             source="holdings_infer",
         )
         is True
     )
+
+
+def test_repair_named_healthcare_cxo_row_rewrites_parent() -> None:
+    from app.services.fund_primary_sector_service import _repair_named_healthcare_cxo_row
+
+    record = _repair_named_healthcare_cxo_row(
+        {
+            "fund_code": "011373",
+            "sector_name": "CXO",
+            "intraday_index_name": "国证CXO",
+            "source": "holdings_infer",
+            "confidence": 0.92,
+            "detail": {
+                "scores": {"CXO": 41.85, "医疗": 5.0},
+                "fund_name": "招商前沿医疗保健股票A",
+            },
+        },
+        code="011373",
+        fund_name="招商前沿医疗保健股票A",
+        persist=False,
+    )
+    assert record is not None
+    assert record.sector_name == "医疗"
+    assert record.intraday_index_name != "国证CXO"
+
+
+def test_named_healthcare_fund_does_not_display_cxo_override() -> None:
+    holding = apply_page_associated_sector(
+        Holding(
+            fund_code="011373",
+            fund_name="招商前沿医疗保健股票A",
+            holding_amount=1000,
+            sector_name="CXO",
+            intraday_index_name="国证CXO",
+        ),
+        PrimarySectorRecord(
+            fund_code="011373",
+            sector_name="CXO",
+            intraday_index_name="国证CXO",
+            source="holdings_infer",
+            confidence=0.92,
+        ),
+    )
+    assert holding.sector_name == "医疗"
+    assert holding.intraday_index_name != "国证CXO"
 
 
 def test_named_theme_fund_keeps_matching_holdings_infer() -> None:

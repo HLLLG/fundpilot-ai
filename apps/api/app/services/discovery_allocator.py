@@ -20,6 +20,13 @@ RISK_AWARE_MODE = "qualified_risk_context"
 QUALIFIED_RISK_ONLY_MODE = "qualified_equal_risk_only"
 BLOCKED_MODE = "blocked_fail_closed"
 
+# Mixed / macro / look-through holdings often have no sector label. That is a
+# normal portfolio fact, not missing concentration data. These keys never form
+# a sector bucket and must not fail-close allocation for classified sectors.
+_UNCLASSIFIED_SECTOR_KEYS = frozenset(
+    {"", "unknown", "unclassified", "未知", "未分类"}
+)
+
 # 单批动用预算比例（2026-08 决策风格收敛后不再按风格分档）：信号强度已由概率分段/
 # 趋势档位/入场成熟度 cap 决定单方向投多少，这里只管预算节奏。偏定投时留更多子弹。
 _TRANCHE_RATIO_PREFER_DCA = 0.25
@@ -946,6 +953,13 @@ def _preallocation_blocked_plan(
     }
 
 
+def is_unclassified_sector_key(value: Any) -> bool:
+    """Return True when a label is empty / unknown rather than a sector bucket."""
+
+    label = " ".join(str(value or "").strip().split()).casefold()
+    return label in _UNCLASSIFIED_SECTOR_KEYS
+
+
 def _normalize_exposures(
     value: Mapping[str, float | int] | None,
 ) -> tuple[dict[str, float] | None, list[str]]:
@@ -954,8 +968,10 @@ def _normalize_exposures(
     result: dict[str, float] = {}
     for raw_sector, raw_amount in value.items():
         sector = _sector_key(raw_sector)
+        if not sector:
+            continue
         amount = _finite_nonnegative(raw_amount)
-        if not sector or amount is None:
+        if amount is None:
             return None, ["sector_exposure_invalid"]
         result[sector] = result.get(sector, 0.0) + amount
     return result, []
@@ -968,9 +984,7 @@ def _candidate_code(row: Mapping[str, Any]) -> str:
 
 def _sector_key(value: Any) -> str:
     label = " ".join(str(value or "").strip().split()).casefold()
-    if label in {"", "unknown", "unclassified", "未知", "未分类"}:
-        return ""
-    return label
+    return "" if is_unclassified_sector_key(label) else label
 
 
 def _excluded_candidate(row: Mapping[str, Any], reasons: list[str]) -> dict[str, Any]:

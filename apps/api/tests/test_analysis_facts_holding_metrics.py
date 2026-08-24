@@ -2,7 +2,7 @@
 
 回归背景：`analysis_facts` 曾为规避「每只持仓一次 profile 单点查询」而内联了一份
 无 profile 的展示指标简化实现，并且只在 `budget_enhancements=True` 时使用——而两条
-LLM 路径（同步 `run_analysis` 与流式 `stream_analysis`）都是 `budget_enhancements=True`，
+LLM 路径（`run_analysis` / 异步 Job）都是 `budget_enhancements=True`，
 所以线上一直走的是那份简化版。`resolve_matched_profiles` 引入批量读之后性能理由已经
 消失，但简化版仍然丢掉真实行为。盘中支付宝 OCR 仍是上一交易日官方净值，持有收益
 必须叠加上当日板块估算；仅当官方净值已公布时才把 OCR 当作已含当日，避免重复加。

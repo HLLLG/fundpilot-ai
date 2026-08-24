@@ -530,7 +530,11 @@ def classify_peer_catalogue_rows(
     """
 
     decision = _decision_instant(decision_at)
-    raw_rows = [dict(row) for row in universe if isinstance(row, Mapping)]
+    raw_rows = [
+        row if isinstance(row, dict) else dict(row)
+        for row in universe
+        if isinstance(row, Mapping)
+    ]
     point_in_time_rows: list[dict[str, Any]] = []
     rows_by_group_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
     future_or_unknown_membership = 0

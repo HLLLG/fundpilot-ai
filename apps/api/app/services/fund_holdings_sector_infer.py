@@ -20,7 +20,10 @@ from app.services.fund_holdings_snapshot_repository import (
     resolve_fund_holdings_snapshot_at_decision,
 )
 from app.services.fund_industry_theme_map import map_industry_to_theme_label
-from app.services.sector_labels import normalize_sector_label
+from app.services.sector_labels import (
+    healthcare_parent_lock_against_cxo,
+    normalize_sector_label,
+)
 from app.services.stock_classification_evidence import (
     fetch_current_board_constituent_evidence,
     fetch_current_stock_industry_evidence,
@@ -193,6 +196,8 @@ def fetch_portfolio_stocks_with_industry_evidence(
     *,
     decision_at: str | datetime | None = None,
     force_refresh: bool = False,
+    fund_name: str | None = None,
+    contract_text: str | None = None,
 ) -> dict[str, Any]:
     """Return selected stocks plus disclosure lineage and eligibility."""
 
@@ -240,7 +245,12 @@ def fetch_portfolio_stocks_with_industry_evidence(
 
     raw_holdings = snapshot.get("holdings")
     selected = _select_disclosed_holdings(raw_holdings)
-    enriched = _fetch_current_industries(selected, force_refresh=force_refresh)
+    enriched = _fetch_current_industries(
+        selected,
+        force_refresh=force_refresh,
+        fund_name=fund_name,
+        contract_text=contract_text,
+    )
     association_evaluated_at = datetime.now(CN_TZ)
     metadata = _snapshot_metadata(snapshot)
     stocks: list[HoldingStockRow] = []
@@ -250,15 +260,15 @@ def fetch_portfolio_stocks_with_industry_evidence(
             enriched.get(code),
             decision=association_evaluated_at,
         )
-        stocks.append(
-            HoldingStockRow(
-                name=str(row.get("security_name") or "").strip(),
-                weight=float(row["weight_percent"]),
-                stock_code=code or None,
-                **industry_fields,
-                **metadata,
-            )
+    stocks.append(
+        HoldingStockRow(
+            name=str(row.get("security_name") or "").strip(),
+            weight=float(row["weight_percent"]),
+            stock_code=code or None,
+            **industry_fields,
+            **metadata,
         )
+    )
     has_industry = any(row.industry for row in stocks)
     return _sector_payload(
         resolution=resolution,
@@ -267,7 +277,68 @@ def fetch_portfolio_stocks_with_industry_evidence(
         status="qualified" if has_industry else "unavailable",
         reasons=[] if has_industry else ["current_industry_unavailable"],
         association_evaluated_at=association_evaluated_at,
+        fund_name=fund_name,
+        contract_text=contract_text,
     )
+
+
+def apply_healthcare_parent_lock_to_assessment(
+    assessment: dict[str, Any],
+    *,
+    fund_name: str | None,
+    contract_text: str | None = None,
+) -> dict[str, Any]:
+    """名字/合同已是医疗或医药时，CXO 投票胜者退回锁定的父主题。"""
+
+    locked = healthcare_parent_lock_against_cxo(
+        fund_name, contract_text=contract_text
+    )
+    if not locked:
+        return assessment
+    winner = normalize_sector_label(str(assessment.get("sector_name") or ""))
+    if winner != "CXO":
+        return assessment
+    raw_scores = assessment.get("scores")
+    if not isinstance(raw_scores, Mapping):
+        return {
+            **assessment,
+            "sector_name": locked,
+            "display_sector": locked,
+            "display": {"sector_name": locked, "method": "named_healthcare_parent_lock"},
+        }
+    scores = {
+        str(key): float(value)
+        for key, value in raw_scores.items()
+        if isinstance(value, (int, float))
+    }
+    cxo_mass = float(scores.pop("CXO", 0.0) or 0.0)
+    scores[locked] = float(scores.get(locked) or 0.0) + cxo_mass
+    if not scores:
+        scores = {locked: cxo_mass}
+    sector_name = min(scores, key=lambda key: (-scores[key], key))
+    qualification = assessment.get("qualification")
+    eligible = bool(
+        isinstance(qualification, Mapping)
+        and qualification.get("sector_inference_eligible") is True
+    )
+    display = resolve_display_sector(
+        sector_name=sector_name,
+        scores=scores,
+        eligible=eligible,
+    )
+    display = {
+        **display,
+        "method": "named_healthcare_parent_lock",
+        "locked_parent": locked,
+        "blocked_theme": "CXO",
+    }
+    return {
+        **assessment,
+        "sector_name": sector_name,
+        "scores": dict(sorted(scores.items())),
+        "display_sector": display.get("sector_name"),
+        "display": display,
+    }
 
 
 def infer_sector_from_portfolio_stocks(
@@ -297,6 +368,9 @@ def infer_sector_from_portfolio_stocks(
 
 def assess_sector_from_portfolio_stocks(
     stocks: list[HoldingStockRow],
+    *,
+    fund_name: str | None = None,
+    contract_text: str | None = None,
 ) -> dict[str, Any]:
     """Build a research clue and a separate primary-sector eligibility gate."""
 
@@ -425,7 +499,7 @@ def assess_sector_from_portfolio_stocks(
         scores=scores,
         eligible=eligible,
     )
-    return {
+    assessment = {
         "status": "qualified" if eligible else "research_only",
         "sector_name": sector_name,
         "display_sector": display["sector_name"],
@@ -457,6 +531,11 @@ def assess_sector_from_portfolio_stocks(
             "reason_codes": reasons,
         },
     }
+    return apply_healthcare_parent_lock_to_assessment(
+        assessment,
+        fund_name=fund_name,
+        contract_text=contract_text,
+    )
 
 
 def resolve_display_sector(
@@ -518,6 +597,8 @@ def _fetch_current_industries(
     rows: list[dict[str, Any]],
     *,
     force_refresh: bool = False,
+    fund_name: str | None = None,
+    contract_text: str | None = None,
 ) -> dict[str, Any]:
     targets = [
         {
@@ -539,6 +620,8 @@ def _fetch_current_industries(
             rows,
             broad_evidence,
             force_refresh=force_refresh,
+            fund_name=fund_name,
+            contract_text=contract_text,
         )
     except Exception:  # noqa: BLE001 - the caller fails closed on missing evidence
         logger.exception("current stock classification enrichment failed")
@@ -550,6 +633,8 @@ def _refine_current_portfolio_themes(
     broad_evidence: Mapping[str, Any],
     *,
     force_refresh: bool,
+    fund_name: str | None = None,
+    contract_text: str | None = None,
 ) -> dict[str, Any]:
     """Refine broad industries when a fine theme explains the portfolio.
 
@@ -570,7 +655,12 @@ def _refine_current_portfolio_themes(
             continue
         if weight > 0:
             disclosed_mass += weight
+    locked_healthcare = healthcare_parent_lock_against_cxo(
+        fund_name, contract_text=contract_text
+    )
     for rule in _PORTFOLIO_THEME_REFINEMENT_RULES:
+        if rule.target_theme == "CXO" and locked_healthcare:
+            continue
         parent_labels = {
             normalized
             for raw in rule.parent_industries
@@ -828,8 +918,14 @@ def _sector_payload(
     status: str,
     reasons: list[str],
     association_evaluated_at: datetime | None = None,
+    fund_name: str | None = None,
+    contract_text: str | None = None,
 ) -> dict[str, Any]:
-    sector_clue = assess_sector_from_portfolio_stocks(stocks)
+    sector_clue = assess_sector_from_portfolio_stocks(
+        stocks,
+        fund_name=fund_name,
+        contract_text=contract_text,
+    )
     clue_qualification = sector_clue.get("qualification")
     clue_qualification = (
         dict(clue_qualification) if isinstance(clue_qualification, Mapping) else {}
@@ -913,6 +1009,7 @@ def _classification_ref(value: Mapping[str, Any]) -> str:
 
 __all__ = [
     "HoldingStockRow",
+    "apply_healthcare_parent_lock_to_assessment",
     "assess_sector_from_portfolio_stocks",
     "fetch_portfolio_stocks_with_industry",
     "fetch_portfolio_stocks_with_industry_evidence",

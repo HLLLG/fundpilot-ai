@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+import logging
 import threading
 from typing import Any
 
@@ -15,6 +16,7 @@ from app.services.deepseek_client import DeepSeekClient
 from app.services.streaming_heartbeat import raise_if_stream_cancelled
 
 # 追问要求 800 字内；预留思考/列表后 2048 足够，再大只会增加调度延迟。
+logger = logging.getLogger(__name__)
 CHAT_AGENT_MAX_TOKENS = 2048
 
 
@@ -41,19 +43,25 @@ def iter_chat_agent_events(
     from app.services.deepseek_streaming import stream_chat_completion
 
     if getattr(get_settings(), "langgraph_enabled", True):
-        from app.services.graphs.chat_followup import iter_chat_followup_events
-
-        yield from iter_chat_followup_events(
-            messages=messages,
-            tools=tools,
-            context=context,
-            model=model,
-            max_rounds=max_rounds,
-            max_tokens=max_tokens,
-            stop_event=stop_event,
-            deadline_monotonic=deadline_monotonic,
-        )
-        return
+        try:
+            from app.services.graphs.chat_followup import iter_chat_followup_events
+        except ImportError:
+            logger.warning(
+                "langgraph is enabled but not installed; "
+                "falling back to the linear chat follow-up loop"
+            )
+        else:
+            yield from iter_chat_followup_events(
+                messages=messages,
+                tools=tools,
+                context=context,
+                model=model,
+                max_rounds=max_rounds,
+                max_tokens=max_tokens,
+                stop_event=stop_event,
+                deadline_monotonic=deadline_monotonic,
+            )
+            return
 
     def stream_tokens() -> Iterator[dict[str, Any]]:
         for chunk in stream_chat_completion(

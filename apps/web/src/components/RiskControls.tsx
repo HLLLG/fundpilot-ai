@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronDown, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles } from "lucide-react";
+import { ChevronDown, Loader2, RotateCcw, ShieldCheck, SlidersHorizontal, Sparkles } from "lucide-react";
 import type { InvestorProfile } from "@/lib/api";
+import { AnalysisScanProgress } from "@/components/AnalysisScanProgress";
+import type { AnalysisScanProgress as AnalysisScanProgressState } from "@/lib/analysisScanProgress";
 import { RolePromptEditor } from "@/components/RolePromptEditor";
 
 const EXPECTED_INVESTMENT_MIN = 10_000;
@@ -45,9 +47,11 @@ type RiskControlsProps = {
    */
   errorMessage?: string | null;
   readingModeKey?: string | null;
-  /** 流式生成时的当前阶段，替代按钮上的笼统「正在生成...」。 */
+  /** 兼容旧调用：没有航线数据时，按钮上仍可显示当前阶段。 */
   busyLabel?: string | null;
-  /** 发现基金正在跑时禁止再开日报，避免两台设备/两个 Tab 叠两条长流。 */
+  scanProgress?: AnalysisScanProgressState | null;
+  onCancel?: () => void;
+  /** 发现基金正在跑时禁止再开日报，避免两台设备/两个 Tab 叠两条长任务。 */
   peerBusyMessage?: string | null;
 };
 
@@ -65,6 +69,8 @@ export function RiskControls({
   errorMessage = null,
   readingModeKey = null,
   busyLabel = null,
+  scanProgress = null,
+  onCancel,
   peerBusyMessage = null,
 }: RiskControlsProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -75,10 +81,17 @@ export function RiskControls({
     setSettingsOpen(readingModeKey == null);
   }, [readingModeKey]);
 
-  const busyButtonLabel = isBusy ? busyLabel?.trim() || "正在生成..." : null;
-  const blockedByPeer = Boolean(peerBusyMessage) && !isBusy;
+  const scanFailed = scanProgress?.status === "failed";
+  const showScanTrack = Boolean(scanProgress) && scanProgress?.status !== "completed";
+  const busyButtonLabel = scanFailed
+    ? "重试生成"
+    : isBusy
+      ? busyLabel?.trim() || scanProgress?.stageLabel || "正在生成..."
+      : null;
+  const blockedByPeer = Boolean(peerBusyMessage) && !isBusy && !scanFailed;
+  const generateDisabled = (!scanFailed && isBusy) || hasBlockingErrors || blockedByPeer;
 
-  if (readingModeKey && !settingsOpen) {
+  if (readingModeKey && !settingsOpen && !showScanTrack) {
     return (
       <section className="report-control-card section-card min-w-0 overflow-hidden">
         <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -117,7 +130,7 @@ export function RiskControls({
             <button
               type="button"
               onClick={onAnalyze}
-              disabled={isBusy || hasBlockingErrors || blockedByPeer}
+              disabled={generateDisabled}
               className="btn-primary min-h-11"
             >
               {busyButtonLabel ?? (hasBlockingErrors ? "请先处理严重项" : "重新生成")}
@@ -155,6 +168,10 @@ export function RiskControls({
         </div>
       </div>
       </div>
+
+      {showScanTrack && scanProgress ? (
+        <AnalysisScanProgress progress={scanProgress} />
+      ) : null}
 
       <div className="p-4 sm:p-5">
       <div className="overflow-hidden rounded-xl border border-slate-100">
@@ -225,17 +242,35 @@ export function RiskControls({
         </p>
       ) : null}
 
-      <button
-        type="button"
-        onClick={onAnalyze}
-        disabled={isBusy || hasBlockingErrors || blockedByPeer}
-        data-testid="analyze"
-        className="btn-primary mt-4 w-full !rounded-xl"
-      >
-        <SlidersHorizontal size={17} />
-        {busyButtonLabel ??
-          (hasBlockingErrors ? "请先处理严重项" : "生成今日操作建议")}
-      </button>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onAnalyze}
+          disabled={generateDisabled}
+          data-testid="analyze"
+          className="btn-primary min-h-11 w-full !rounded-xl sm:w-auto"
+        >
+          {scanFailed ? (
+            <RotateCcw size={17} />
+          ) : isBusy ? (
+            <Loader2 size={17} className="animate-spin" />
+          ) : (
+            <SlidersHorizontal size={17} />
+          )}
+          {busyButtonLabel ??
+            (hasBlockingErrors ? "请先处理严重项" : "生成今日操作建议")}
+        </button>
+        {isBusy || scanFailed ? (
+          <button
+            type="button"
+            data-testid="analysis-stop-button"
+            onClick={onCancel}
+            className="btn-ghost min-h-11 w-full !rounded-xl border border-[var(--line)] sm:w-auto"
+          >
+            {scanFailed ? "关闭" : "停止生成"}
+          </button>
+        ) : null}
+      </div>
 
       <div className="mt-3 overflow-hidden rounded-xl border border-slate-100">
         <button

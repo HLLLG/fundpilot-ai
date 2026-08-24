@@ -90,6 +90,29 @@ it("shows the current stream stage while generating a report", () => {
   expect(screen.getByRole("button", { name: "正在审校报告…" })).toBeDisabled();
 });
 
+it("shows the daily scan track while a job is running", () => {
+  render(
+    <RiskControls
+      {...props()}
+      readingModeKey="report-1"
+      isBusy
+      scanProgress={{
+        stage: "generating",
+        stageLabel: "正在生成 AI 日报…",
+        status: "running",
+      }}
+    />,
+  );
+  expect(screen.getByTestId("analysis-scan-progress")).toBeInTheDocument();
+  expect(screen.getByLabelText(/日报航线/)).toBeInTheDocument();
+  expect(screen.getByText("Daily Chart · 日报航线")).toBeInTheDocument();
+  expect(screen.getByTestId("analysis-scan-step-generating")).toHaveAttribute(
+    "data-state",
+    "current",
+  );
+  expect(screen.getByRole("button", { name: "停止生成" })).toBeInTheDocument();
+});
+
 it("disables generate while discovery is running", () => {
   const onAnalyze = vi.fn();
   render(

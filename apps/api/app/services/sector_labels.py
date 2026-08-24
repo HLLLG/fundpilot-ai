@@ -380,3 +380,34 @@ def infer_sector_label_from_fund_name(fund_name: str | None) -> str | None:
         if token in normalized:
             return token
     return None
+
+
+_HEALTHCARE_PARENT_LOCKS = ("医药", "医疗")
+
+
+def healthcare_parent_lock_against_cxo(
+    fund_name: str | None,
+    *,
+    contract_text: str | None = None,
+) -> str | None:
+    """名字或合同已点明医疗/医药时，返回锁定的父主题。
+
+    医疗保健行业基金重仓药明康德是常态，不能因此改写成 CXO 基金。
+    名称或合同自己写了 CXO 的，不锁父主题，细分仍可生效。
+    """
+
+    name = normalize_sector_label((fund_name or "").replace("...", ""))
+    contract = normalize_sector_label((contract_text or "").replace("...", ""))
+    haystack = f"{name}{contract}"
+    if not haystack:
+        return None
+    if "cxo" in haystack.lower():
+        return None
+    if fund_name:
+        semantic = infer_semantic_sector_from_fund_name(fund_name)
+        if semantic is not None and semantic.sector_name in _HEALTHCARE_PARENT_LOCKS:
+            return semantic.sector_name
+    for token in _HEALTHCARE_PARENT_LOCKS:
+        if token in name or token in contract:
+            return token
+    return None

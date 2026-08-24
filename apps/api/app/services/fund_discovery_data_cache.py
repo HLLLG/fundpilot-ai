@@ -18,6 +18,14 @@ from app.services.shared_executors import get_shared_io_executor
 
 _UNIVERSE_CACHE_KEY = "fund:discovery_universe:v4:pit:20000"
 _PROFILE_CACHE_KEY = "fund:discovery_profiles:v5:tracking-reference"
+_UNIVERSE_SNAPSHOT_SOURCE = "eastmoney_fund_catalogue_with_optional_rank_enrichment"
+_UNIVERSE_STAMPED_METRIC_FIELDS = (
+    "return_3m_percent",
+    "return_6m_percent",
+    "return_1y_percent",
+    "max_drawdown_1y_percent",
+    "fund_scale_yi",
+)
 _UNIVERSE_TTL_SECONDS = 24 * 60 * 60
 # 只读路径向持久行复验的间隔。目录是日粒度数据，60s 足够，且是单行主键查询。
 _UNIVERSE_MEMORY_REVALIDATE_SECONDS = 60.0
@@ -123,11 +131,17 @@ def _universe_snapshot_is_fresh(
 
 
 def _build_universe_snapshot(rows: list[dict]) -> dict:
+    available_at = datetime.now(timezone.utc).isoformat()
+    source = _UNIVERSE_SNAPSHOT_SOURCE
     return {
         "schema_version": "fund_universe_snapshot.v1",
-        "snapshot_available_at": datetime.now(timezone.utc).isoformat(),
-        "source": "eastmoney_fund_catalogue_with_optional_rank_enrichment",
-        "rows": rows,
+        "snapshot_available_at": available_at,
+        "source": source,
+        "rows": [
+            _stamp_universe_row(row, available_at=available_at, source=source)
+            for row in rows
+            if isinstance(row, dict)
+        ],
     }
 
 
@@ -225,34 +239,62 @@ def _run_scheduled_discovery_universe_refresh(*, limit: int) -> None:
             _UNIVERSE_REFRESH_IN_FLIGHT = False
 
 
-def _universe_rows_with_snapshot_contract(payload: dict) -> list[dict]:
-    """Expose one frozen availability instant for catalogue and rank fields."""
+def _stamp_universe_row(
+    raw: dict,
+    *,
+    available_at: str,
+    source: str,
+) -> dict:
+    """Copy one catalogue row and freeze its PIT timestamps."""
 
+    row = dict(raw)
+    row["membership_available_at"] = available_at
+    row["snapshot_available_at"] = available_at
+    for field in _UNIVERSE_STAMPED_METRIC_FIELDS:
+        if row.get(field) is not None:
+            row[f"{field}_available_at"] = available_at
+            row.setdefault(f"{field}_source", source)
+    row.setdefault("source", source)
+    return row
+
+
+def _universe_rows_already_stamped(payload: dict) -> bool:
     available_at = payload.get("snapshot_available_at")
-    source = str(payload.get("source") or "fund_universe_snapshot")
-    result: list[dict] = []
+    if not available_at:
+        return False
     for raw in payload.get("rows") or []:
         if not isinstance(raw, dict):
             continue
-        row = dict(raw)
-        if available_at:
-            # The catalogue is one atomic snapshot. Provider-row timestamps
-            # cannot supersede the conservative instant at which the complete
-            # payload became available to this process.
-            row["membership_available_at"] = available_at
-            row["snapshot_available_at"] = available_at
-            for field in (
-                "return_3m_percent",
-                "return_6m_percent",
-                "return_1y_percent",
-                "max_drawdown_1y_percent",
-                "fund_scale_yi",
-            ):
-                if row.get(field) is not None:
-                    row[f"{field}_available_at"] = available_at
-                    row.setdefault(f"{field}_source", source)
-        row.setdefault("source", source)
-        result.append(row)
+        return (
+            raw.get("membership_available_at") == available_at
+            and raw.get("snapshot_available_at") == available_at
+        )
+    return False
+
+
+def _universe_rows_with_snapshot_contract(payload: dict) -> list[dict]:
+    """Expose one frozen availability instant for catalogue and rank fields.
+
+    Fresh snapshots are stamped once at write time. Callers must treat the
+    returned rows as read-only: they may be the same dicts held by the
+    process cache.
+    """
+
+    raw_rows = payload.get("rows") or []
+    if _universe_rows_already_stamped(payload):
+        return [row for row in raw_rows if isinstance(row, dict)]
+
+    available_at = str(payload.get("snapshot_available_at") or "")
+    source = str(payload.get("source") or "fund_universe_snapshot")
+    result: list[dict] = []
+    for raw in raw_rows:
+        if not isinstance(raw, dict):
+            continue
+        result.append(
+            _stamp_universe_row(raw, available_at=available_at, source=source)
+            if available_at
+            else dict(raw)
+        )
     return result
 
 

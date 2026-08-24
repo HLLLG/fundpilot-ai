@@ -32,6 +32,7 @@ from app.services.fund_type_classification import has_positive_qdii_marker
 from app.services.sector_canonical import get_canonical_sector
 from app.services.sector_labels import (
     fund_name_has_registered_theme,
+    healthcare_parent_lock_against_cxo,
     infer_sector_label_from_fund_name,
     infer_semantic_sector_from_fund_name,
     normalize_sector_label,
@@ -399,10 +400,127 @@ def _is_fund_name_residue_label(fund_name: str | None, sector_name: str | None) 
     )
 
 
-def _is_trustworthy_sector_label(fund_name: str | None, sector_name: str | None) -> bool:
-    return bool(_is_valid_sector_label(sector_name)) and not _is_fund_name_residue_label(
-        fund_name, sector_name
+def _contract_text_from_detail(detail: Mapping[str, Any] | None) -> str | None:
+    if not isinstance(detail, Mapping):
+        return None
+    for key in ("benchmark_text", "index_name", "tracking_index_name"):
+        value = str(detail.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _repair_named_healthcare_cxo_row(
+    row: Mapping[str, Any] | None,
+    *,
+    code: str,
+    fund_name: str | None,
+    persist: bool,
+    batch_context: PrimarySectorBatchContext | None = None,
+) -> PrimarySectorRecord | None:
+    """身份表里的 CXO 若盖掉了医疗/医药合同主题，改回父主题。"""
+
+    if not row:
+        return None
+    if normalize_sector_label(str(row.get("sector_name") or "")) != "CXO":
+        return None
+    detail = dict(_row_detail(row) or {})
+    locked = healthcare_parent_lock_against_cxo(
+        fund_name,
+        contract_text=_contract_text_from_detail(detail),
     )
+    if not locked:
+        return None
+    from app.database import get_fund_sector_current_primary_by_codes
+    from app.services.fund_holdings_sector_infer import (
+        apply_healthcare_parent_lock_to_assessment,
+    )
+    from app.services.fund_profile import infer_intraday_index_from_sector
+
+    current = get_fund_sector_current_primary_by_codes([code]).get(code)
+    if (
+        current
+        and current.get("identity_status") == "verified"
+        and not isinstance(detail.get("qualification"), Mapping)
+    ):
+        detail["qualification"] = {
+            "sector_inference_eligible": True,
+            "research_only": False,
+        }
+
+    scores = detail.get("scores") if isinstance(detail.get("scores"), Mapping) else {}
+    assessment = apply_healthcare_parent_lock_to_assessment(
+        {
+            "sector_name": "CXO",
+            "scores": dict(scores),
+            "display": detail.get("display"),
+            "qualification": detail.get("qualification"),
+        },
+        fund_name=fund_name,
+        contract_text=_contract_text_from_detail(detail),
+    )
+    sector_name = str(assessment.get("sector_name") or locked).strip() or locked
+    record = PrimarySectorRecord(
+        fund_code=code,
+        sector_name=sector_name,
+        intraday_index_name=infer_intraday_index_from_sector(sector_name),
+        source=str(row.get("source") or "holdings_infer"),
+        confidence=row.get("confidence"),
+        detail={
+            **detail,
+            "scores": assessment.get("scores") or scores,
+            "display": assessment.get("display"),
+            "cxo_override_blocked": True,
+            "locked_healthcare_parent": locked,
+        },
+    )
+    if persist:
+        from app.database import (
+            rewrite_fund_profile_associated_sector_for_code,
+            update_fund_primary_sectors_for_code,
+        )
+
+        saved = update_fund_primary_sectors_for_code(
+            code,
+            sector_name=record.sector_name,
+            intraday_index_name=record.intraday_index_name,
+            source=record.source,
+            confidence=record.confidence,
+            detail=record.detail,
+        )
+        if batch_context is not None and saved and try_get_request_user_id() is not None:
+            batch_context.remember_user_row(
+                {
+                    "fund_code": code,
+                    "sector_name": record.sector_name,
+                    "intraday_index_name": record.intraday_index_name,
+                    "source": record.source,
+                    "confidence": record.confidence,
+                    "detail": record.detail,
+                }
+            )
+        global_saved = promote_record_to_global(record)
+        if batch_context is not None:
+            batch_context.remember_global_row(global_saved)
+        rewrite_fund_profile_associated_sector_for_code(
+            code,
+            sector_name=record.sector_name,
+            intraday_index_name=record.intraday_index_name,
+        )
+    return record
+
+
+def _is_trustworthy_sector_label(fund_name: str | None, sector_name: str | None) -> bool:
+    if not _is_valid_sector_label(sector_name):
+        return False
+    if _is_fund_name_residue_label(fund_name, sector_name):
+        return False
+    if (
+        normalize_sector_label(sector_name) == "CXO"
+        and healthcare_parent_lock_against_cxo(fund_name)
+    ):
+        return False
+    return True
 
 
 def _semantic_record_from_candidate(
@@ -753,6 +871,15 @@ def resolve_primary_sector(
         and str(row.get("source") or "") in _HOLDINGS_INFER_SOURCES
         and not passive
     ):
+        repaired = _repair_named_healthcare_cxo_row(
+            row,
+            code=code,
+            fund_name=resolved_name,
+            persist=True,
+            batch_context=batch_context,
+        )
+        if repaired is not None:
+            return repaired
         if _is_trustworthy_sector_label(fund_name, row.get("sector_name")):
             return _record_from_row(row)
 
@@ -766,7 +893,17 @@ def resolve_primary_sector(
         and str(global_row.get("source") or "") in _HOLDINGS_INFER_SOURCES
         and not passive
     ):
-        return _record_from_row({**global_row, "fund_code": code})
+        repaired = _repair_named_healthcare_cxo_row(
+            global_row,
+            code=code,
+            fund_name=resolved_name,
+            persist=True,
+            batch_context=batch_context,
+        )
+        if repaired is not None:
+            return repaired
+        if _is_trustworthy_sector_label(resolved_name, global_row.get("sector_name")):
+            return _record_from_row({**global_row, "fund_code": code})
 
     if passive:
         benchmark_record = _resolve_from_benchmark_index(
@@ -1148,6 +1285,61 @@ def repair_uncertain_inferred_sector_identities() -> dict[str, str]:
     return cleared
 
 
+def repair_named_healthcare_cxo_overrides() -> dict[str, str]:
+    """把名字/合同已是医疗、医药、却被写成 CXO 的身份行改回父主题。"""
+
+    from app.database import (
+        list_fund_primary_sectors_all_users_by_sector_name,
+        list_fund_primary_sectors_global_by_sector_name,
+        list_fund_profiles,
+    )
+
+    names: dict[str, str] = {}
+    try:
+        for profile in list_fund_profiles():
+            if profile.fund_code and profile.fund_name:
+                names[profile.fund_code.strip().zfill(6)] = profile.fund_name
+    except Exception:
+        logger.debug("repair healthcare cxo: skip user profiles", exc_info=True)
+
+    repaired: dict[str, str] = {}
+    rows: list[Mapping[str, Any]] = []
+    try:
+        rows.extend(list_fund_primary_sectors_global_by_sector_name("CXO"))
+    except Exception:
+        logger.debug("repair healthcare cxo: skip global rows", exc_info=True)
+    try:
+        rows.extend(list_fund_primary_sectors_all_users_by_sector_name("CXO"))
+    except Exception:
+        logger.debug("repair healthcare cxo: skip user rows", exc_info=True)
+    for row in rows:
+        code = str(row.get("fund_code") or "").strip().zfill(6)
+        if not code or code == "000000":
+            continue
+        detail = _row_detail(row) or {}
+        name = (
+            names.get(code)
+            or str(detail.get("fund_name") or "").strip()
+            or None
+        )
+        if not name:
+            try:
+                from app.services.fund_primary_sector_precompute import _lookup_fund_name
+
+                name = _lookup_fund_name(code)
+            except Exception:
+                name = None
+        record = _repair_named_healthcare_cxo_row(
+            row,
+            code=code,
+            fund_name=name,
+            persist=True,
+        )
+        if record is not None:
+            repaired[code] = record.sector_name
+    return repaired
+
+
 def strip_unthemed_allocation_associated_sector(holding: Holding) -> Holding:
     """灵活配置/滚动持有且无名称主题：持仓页不展示重仓研究标签。"""
 
@@ -1259,6 +1451,18 @@ def apply_page_associated_sector(
 
     if record is None:
         return holding
+    locked = healthcare_parent_lock_against_cxo(holding.fund_name)
+    if locked and normalize_sector_label(record.sector_name) == "CXO":
+        from app.services.fund_profile import infer_intraday_index_from_sector
+
+        record = PrimarySectorRecord(
+            fund_code=record.fund_code,
+            sector_name=locked,
+            intraday_index_name=infer_intraday_index_from_sector(locked),
+            source=record.source,
+            confidence=record.confidence,
+            detail=record.detail,
+        )
     if associated_sector_is_page_visible(
         fund_name=holding.fund_name,
         sector_name=record.sector_name,
@@ -1496,19 +1700,39 @@ def _resolve_from_holdings_infer(
             )
         return None
     if evidence_payload is None and stocks is None:
-        evidence_payload = fetch_portfolio_stocks_with_industry_evidence(code)
+        evidence_payload = fetch_portfolio_stocks_with_industry_evidence(
+            code,
+            fund_name=resolved_name,
+        )
         raw_stocks = evidence_payload.get("stocks")
         stocks = list(raw_stocks) if isinstance(raw_stocks, list) else []
     if not stocks:
         return None
 
+    contract_text = _contract_text_from_detail(
+        evidence_payload if isinstance(evidence_payload, Mapping) else None
+    )
     sector_clue = (
         evidence_payload.get("sector_clue")
         if isinstance(evidence_payload, Mapping)
         else None
     )
     if not isinstance(sector_clue, Mapping):
-        sector_clue = assess_sector_from_portfolio_stocks(stocks)
+        sector_clue = assess_sector_from_portfolio_stocks(
+            stocks,
+            fund_name=resolved_name,
+            contract_text=contract_text,
+        )
+    else:
+        from app.services.fund_holdings_sector_infer import (
+            apply_healthcare_parent_lock_to_assessment,
+        )
+
+        sector_clue = apply_healthcare_parent_lock_to_assessment(
+            dict(sector_clue),
+            fund_name=resolved_name,
+            contract_text=contract_text,
+        )
     qualification = sector_clue.get("qualification")
     scores = sector_clue.get("scores")
     evidence = sector_clue.get("evidence")

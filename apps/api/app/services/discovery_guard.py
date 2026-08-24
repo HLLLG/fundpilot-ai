@@ -21,6 +21,7 @@ from app.services.news_citation import _collect_citable_titles, _matches_known_t
 from app.services.sector_canonical import get_canonical_sector, get_intraday_canonical_sector
 from app.services.sector_labels import normalize_sector_label
 from app.services.sector_registry import resolve_theme_sector_label
+from app.services.discovery_allocator import is_unclassified_sector_key
 from app.services.discovery_sector_context import execution_qualified_fund_codes
 from app.services.discovery_recommendation_scope import (
     held_sector_labels_from_discovery_facts,
@@ -234,11 +235,17 @@ def resolve_discovery_amount_cap(
     budget, concentration budget, and the portfolio's estimated existing
     exposure. Discovery deliberately has no separate cash input: the configured
     per-scan budget is its only funding ceiling.
+
+    Holdings without a classified sector are skipped, not treated as unknown
+    concentration. Mixed and macro funds commonly have no sector label and use
+    holdings look-through for return estimates; they must not wipe amounts for
+    other funds or sectors. A missing amount on a classified holding still
+    fail-closes.
     """
 
     reasons: list[str] = []
     sector_key = _normalized_sector_key(candidate_sector)
-    if not sector_key or sector_key in {"未分类", "未知", "unknown"}:
+    if is_unclassified_sector_key(sector_key):
         reasons.append("sector_exposure_unknown")
 
     allocated_total = _finite_nonnegative(allocated_total_yuan)
@@ -266,16 +273,17 @@ def resolve_discovery_amount_cap(
         if not isinstance(row, dict):
             reasons.append("sector_exposure_unknown")
             continue
+        holding_sector = _normalized_sector_key(row.get("sector_name"))
         amount = _finite_nonnegative(row.get("holding_amount"))
+        if is_unclassified_sector_key(holding_sector):
+            if amount is not None:
+                existing_total += amount
+            continue
         if amount is None:
             reasons.append("sector_exposure_unknown")
             continue
         existing_total += amount
         if amount <= 0:
-            continue
-        holding_sector = _normalized_sector_key(row.get("sector_name"))
-        if not holding_sector or holding_sector in {"未分类", "未知", "unknown"}:
-            reasons.append("sector_exposure_unknown")
             continue
         if holding_sector == sector_key:
             existing_sector_amount += amount

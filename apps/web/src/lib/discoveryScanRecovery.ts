@@ -17,10 +17,8 @@ export function sortReportsByCreatedAtDesc<T extends ReportLike>(reports: readon
 /**
  * 判断后台是否已经产出了一份新报告。
  *
- * 手机浏览器切到后台时会挂起 fetch 的 reader，`streamDiscovery` 那个 promise 可能永远
- * 不 settle（`finally` 不执行，`isSubmitting` 和 `streamingDiscovery` 就一直留着），
- * 而流式路径又从不登记 `discoveryJobId`，所以没有任何轮询会去问服务端"到底完了没"。
- * 结果就是页面永远停在「扫描进行中…」，而报告其实早就生成了（换台设备就能看到）。
+ * Job 轮询在页面切到后台时会被浏览器节流。任务其实可能已经在服务端完成并落库，
+ * 但前端还停在「扫描进行中…」。换台设备就能看到新报告。
  *
  * 这里刻意**不**比较时间戳：`created_at` 来自服务端时钟，`startedAt` 来自浏览器时钟，
  * 两者有偏差时会既漏判也误判。改成比较"扫描开始那一刻最新报告的 id"——只要列表最前面

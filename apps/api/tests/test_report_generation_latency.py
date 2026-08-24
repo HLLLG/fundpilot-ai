@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from threading import Event
 from types import SimpleNamespace
 
@@ -308,39 +307,6 @@ def test_system_prompt_stays_stable_across_session_minutes() -> None:
 
     assert early == late
     assert "当前分析时点约为" not in early
-
-
-def test_context_heartbeat_keeps_context_stage(monkeypatch) -> None:
-    """整理上下文的心跳必须留在 context，不能提前跳到 generating。"""
-    from app.services import analyze_streaming as module
-
-    def slow_bundle(*_args, **_kwargs):
-        time.sleep(1.15)
-        return SimpleNamespace(facts={})
-
-    monkeypatch.setattr(module, "prepare_analysis_bundle", slow_bundle)
-    events: list[dict] = []
-    iterator = module._prepare_analysis_bundle_with_progress(
-        "session-1",
-        2,
-        SimpleNamespace(),
-        None,
-        [],
-        [],
-        [],
-        {},
-        SimpleNamespace(mode="deep"),
-        started_at=time.monotonic(),
-        stop_event=Event(),
-    )
-    try:
-        while True:
-            events.append(next(iterator))
-    except StopIteration:
-        pass
-
-    assert events
-    assert {item.get("stage") for item in events} == {"context"}
 
 
 def test_map_holdings_releases_a_slot_before_the_slowest_item_finishes() -> None:

@@ -139,6 +139,46 @@ function inferSectorLabelFromFundName(fundName: string | null | undefined): stri
   return null;
 }
 
+const HEALTHCARE_PARENT_LOCKS = ["医药", "医疗"] as const;
+
+function healthcareParentLockAgainstCxo(
+  fundName: string | null | undefined,
+): "医疗" | "医药" | null {
+  const normalized = (fundName || "").replace("...", "").replace(/\s+/g, "");
+  if (!normalized || /cxo/i.test(normalized)) {
+    return null;
+  }
+  const inferred = inferSectorLabelFromFundName(fundName);
+  if (inferred === "医疗" || inferred === "医药") {
+    return inferred;
+  }
+  for (const token of HEALTHCARE_PARENT_LOCKS) {
+    if (normalized.includes(token)) {
+      return token;
+    }
+  }
+  return null;
+}
+
+function applyHealthcareParentLock<
+  T extends Pick<Holding, "fund_name" | "sector_name" | "intraday_index_name">,
+>(holding: T): T {
+  const locked = healthcareParentLockAgainstCxo(holding.fund_name);
+  if (!locked) {
+    return holding;
+  }
+  const sector = holding.sector_name?.trim() || "";
+  const index = holding.intraday_index_name?.trim() || "";
+  if (sector !== "CXO" && index !== "国证CXO") {
+    return holding;
+  }
+  return {
+    ...holding,
+    sector_name: sector === "CXO" ? locked : holding.sector_name,
+    intraday_index_name: index === "国证CXO" ? null : holding.intraday_index_name,
+  };
+}
+
 /** 持仓列表「板块」列展示名：档案/OCR → 基金名推断 */
 export function holdingDisplaySectorLabel(
   holding: Pick<Holding, "fund_code" | "fund_name" | "sector_name" | "intraday_index_name">,
@@ -146,7 +186,8 @@ export function holdingDisplaySectorLabel(
   if (isUnthemedAllocationFund(holding.fund_name)) {
     return "—";
   }
-  const base = holdingRelatedBoardLabel(holding);
+  const remapped = applyHealthcareParentLock(holding);
+  const base = holdingRelatedBoardLabel(remapped);
   if (base !== "—") {
     return base;
   }
@@ -322,14 +363,15 @@ export function resolveIntradayQuery(
   if (isUnthemedAllocationFund(holding.fund_name)) {
     return null;
   }
-  const seeded = seededSectorFields(holding);
+  const remapped = applyHealthcareParentLock(holding);
+  const seeded = seededSectorFields(remapped);
   const effectiveHolding = seeded
     ? {
-        ...holding,
+        ...remapped,
         sector_name: seeded.sector_name,
-        intraday_index_name: seeded.intraday_index_name ?? holding.intraday_index_name,
+        intraday_index_name: seeded.intraday_index_name ?? remapped.intraday_index_name,
       }
-    : holding;
+    : remapped;
 
   const indexName = canonicalTrackingDisplayName(effectiveHolding.intraday_index_name);
   if (indexName && !isInvalidSectorLabel(indexName)) {
@@ -394,8 +436,9 @@ export function resolveIntradayFallbackQuery(
   if (isUnthemedAllocationFund(holding.fund_name)) {
     return null;
   }
-  const seeded = seededSectorFields(holding);
-  const boardName = (seeded?.sector_name ?? holding.sector_name)?.trim();
+  const remapped = applyHealthcareParentLock(holding);
+  const seeded = seededSectorFields(remapped);
+  const boardName = (seeded?.sector_name ?? remapped.sector_name)?.trim();
   if (!boardName || isInvalidSectorLabel(boardName)) {
     return null;
   }

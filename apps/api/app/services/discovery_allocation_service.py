@@ -7,7 +7,10 @@ from typing import Any
 
 from app.models import DiscoveryRecommendation, InvestorProfile
 from app.services.discovery_allocation_risk import build_discovery_risk_context
-from app.services.discovery_allocator import allocate_discovery_candidates
+from app.services.discovery_allocator import (
+    allocate_discovery_candidates,
+    is_unclassified_sector_key,
+)
 from app.services.discovery_guard import finalize_discovery_allocation_projection
 from app.services.discovery_selection_strategy import (
     fund_entry_opens_v3_improving_flow_probe,
@@ -312,6 +315,14 @@ def _allocator_candidate(
 
 
 def _sector_exposures(value: Any) -> dict[str, float] | None:
+    """Sum holding amounts by classified sector.
+
+    Funds without a sector (mixed, macro, look-through vehicles) are skipped.
+    They remain in the portfolio denominator and do not abort other sectors.
+    A missing amount on a classified holding still fail-closes, because that
+    sector's existing exposure cannot be verified.
+    """
+
     if not isinstance(value, list):
         return None
     result: dict[str, float] = {}
@@ -319,8 +330,10 @@ def _sector_exposures(value: Any) -> dict[str, float] | None:
         if not isinstance(row, Mapping):
             return None
         sector = " ".join(str(row.get("sector_name") or "").strip().split()).casefold()
+        if is_unclassified_sector_key(sector):
+            continue
         amount = _nonnegative_number(row.get("holding_amount"))
-        if not sector or sector in {"unknown", "未知", "未分类"} or amount is None:
+        if amount is None:
             return None
         result[sector] = result.get(sector, 0.0) + amount
     return result

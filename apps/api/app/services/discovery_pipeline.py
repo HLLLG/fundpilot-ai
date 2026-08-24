@@ -122,10 +122,23 @@ def run_discovery(
 
     with provider_lane(LANE_DISCOVERY):
         if getattr(get_settings(), "langgraph_enabled", True):
-            from app.services.graphs.discovery_scan import run_discovery_graph
-
-            return run_discovery_graph(request, on_progress)
+            try:
+                return _run_discovery_via_graph(request, on_progress)
+            except ImportError:
+                logger.warning(
+                    "langgraph is enabled but not installed; "
+                    "falling back to the linear discovery pipeline"
+                )
         return run_discovery_impl(request, on_progress)
+
+
+def _run_discovery_via_graph(
+    request: DiscoveryRequest,
+    on_progress: ProgressCallback | None,
+) -> FundDiscoveryReport:
+    from app.services.graphs.discovery_scan import run_discovery_graph
+
+    return run_discovery_graph(request, on_progress)
 
 
 def run_discovery_impl(

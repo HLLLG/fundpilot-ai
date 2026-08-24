@@ -298,10 +298,10 @@ def _patch_path(monkeypatch: pytest.MonkeyPatch, module, captured: dict) -> None
     monkeypatch.setattr(module, "save_discovery_report", lambda report: report)
 
 
-def test_sync_and_sse_persist_identical_v2_without_sending_it_to_llm(
+def test_sync_persists_v2_without_sending_it_to_llm(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.services import discovery_pipeline, discovery_streaming
+    from app.services import discovery_pipeline
 
     sync: dict = {}
     _patch_path(monkeypatch, discovery_pipeline, sync)
@@ -317,29 +317,11 @@ def test_sync_and_sse_persist_identical_v2_without_sending_it_to_llm(
     monkeypatch.setattr(discovery_pipeline, "DiscoveryClient", Client)
     discovery_pipeline.run_discovery(_request())
 
-    sse: dict = {}
-    _patch_path(monkeypatch, discovery_streaming, sse)
-    monkeypatch.setattr(discovery_streaming, "build_pipeline_metadata", lambda **_kwargs: {})
-
-    def offline(**kwargs):
-        sse["facts"] = kwargs["discovery_facts"]
-        return FundDiscoveryReport(
-            id="audit-sse",
-            title="sse audit",
-            discovery_facts=kwargs["discovery_facts"],
-        )
-
-    monkeypatch.setattr(discovery_streaming, "build_offline_discovery_report", offline)
-    list(discovery_streaming.stream_discovery(_request(), user_id=1))
-
     sync_audit = sync["facts"]["candidate_selection_audit"]
-    sse_audit = sse["facts"]["candidate_selection_audit"]
-    assert sync_audit == sse_audit
     assert sync_audit["schema_version"] == "discovery_candidate_selection_audit.v2"
     assert sync_audit["stage_counts"] == {"recall": 3, "gate": 3, "prescreen": 2, "final": 2}
     assert sync["facts"]["candidate_selection_audit_v1"]["schema_version"].endswith(".v1")
     assert "fund_lookthrough" not in sync["facts"]
-    assert "fund_lookthrough" not in sse["facts"]
 
     payload = build_user_payload(
         discovery_facts=sync["facts"],

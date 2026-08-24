@@ -2323,6 +2323,134 @@ def count_fund_primary_sectors_global() -> int:
     return int(_row_to_dict(row).get("cnt") or 0)
 
 
+def list_fund_primary_sectors_global_by_sector_name(
+    sector_name: str,
+) -> list[dict[str, Any]]:
+    label = str(sector_name or "").strip()
+    if not label:
+        return []
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT fund_code, sector_name, intraday_index_name, source, confidence, detail, resolved_at
+            FROM fund_primary_sectors_global
+            WHERE sector_name = ?
+            ORDER BY resolved_at DESC
+            """,
+            (label,),
+        ).fetchall()
+    result = []
+    for row in rows:
+        payload = _row_to_dict(row)
+        payload["updated_at"] = payload.get("resolved_at")
+        result.append(payload)
+    return result
+
+
+def list_fund_primary_sectors_all_users_by_sector_name(
+    sector_name: str,
+) -> list[dict[str, Any]]:
+    label = str(sector_name or "").strip()
+    if not label:
+        return []
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT userId, fund_code, sector_name, intraday_index_name, source, confidence, detail, updated_at
+            FROM fund_primary_sectors
+            WHERE sector_name = ?
+            ORDER BY updated_at DESC
+            """,
+            (label,),
+        ).fetchall()
+    return [_row_to_dict(row) for row in rows]
+
+
+def update_fund_primary_sectors_for_code(
+    fund_code: str,
+    *,
+    sector_name: str,
+    intraday_index_name: str | None,
+    source: str,
+    confidence: float | None,
+    detail: dict | None,
+) -> int:
+    """把一只基金在所有用户下的身份行改成同一板块。"""
+
+    now = datetime.now(timezone.utc).isoformat()
+    code = fund_code.strip().zfill(6)
+    detail_json = json.dumps(detail, ensure_ascii=False) if detail else None
+    with _connect() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE fund_primary_sectors
+            SET sector_name = ?,
+                intraday_index_name = ?,
+                source = ?,
+                confidence = ?,
+                detail = ?,
+                updated_at = ?
+            WHERE fund_code = ?
+            """,
+            (
+                sector_name,
+                intraday_index_name,
+                source,
+                confidence,
+                detail_json,
+                now,
+                code,
+            ),
+        )
+        connection.commit()
+    return int(cursor.rowcount or 0)
+
+
+def rewrite_fund_profile_associated_sector_for_code(
+    fund_code: str,
+    *,
+    sector_name: str,
+    intraday_index_name: str | None,
+) -> int:
+    """同步档案副本里的关联板块，避免详情页继续读到国证CXO。"""
+
+    from app.services.fund_profile import invalidate_fund_profile_cache
+
+    code = fund_code.strip().zfill(6)
+    updated = 0
+    user_ids: list[int] = []
+    with _connect() as connection:
+        rows = connection.execute(
+            "SELECT userId, payload FROM fund_profiles WHERE fund_code = ?",
+            (code,),
+        ).fetchall()
+        for row in rows:
+            item = _row_to_dict(row)
+            raw = item.get("payload")
+            payload = json.loads(raw) if isinstance(raw, str) else raw
+            if not isinstance(payload, dict):
+                continue
+            payload["sector_name"] = sector_name
+            current_index = str(payload.get("intraday_index_name") or "").strip()
+            if current_index == "国证CXO" or intraday_index_name:
+                payload["intraday_index_name"] = intraday_index_name
+            user_id = int(item.get("userId") or 0)
+            connection.execute(
+                """
+                UPDATE fund_profiles
+                SET payload = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE userId = ? AND fund_code = ?
+                """,
+                (json.dumps(payload, ensure_ascii=False), user_id, code),
+            )
+            user_ids.append(user_id)
+            updated += 1
+        connection.commit()
+    for user_id in user_ids:
+        invalidate_fund_profile_cache(user_id)
+    return updated
+
+
 def list_fund_primary_sectors_global(*, limit: int = 5000) -> list[dict[str, Any]]:
     with _connect() as connection:
         rows = connection.execute(
@@ -2609,6 +2737,37 @@ def get_discovery_report(report_id: str) -> dict[str, Any] | None:
     if row is None:
         return None
     return json.loads(row["payload"])
+
+
+def get_discovery_report_summary(report_id: str) -> dict[str, Any] | None:
+    """只读摘要，不加载 decision_events / discovery_facts / candidate_pool。"""
+    user_id = _uid()
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT summary_payload
+            FROM fund_discovery_report_summaries
+            WHERE userId = ? AND report_id = ?
+            """,
+            (user_id, report_id),
+        ).fetchone()
+        if row is not None:
+            summary = _parse_stored_summary(row["summary_payload"])
+            if summary is not None:
+                return summary
+        fallback = connection.execute(
+            """
+            SELECT payload FROM fund_discovery_reports
+            WHERE id = ? AND userId = ?
+            """,
+            (report_id, user_id),
+        ).fetchone()
+    if fallback is None:
+        return None
+    payload = json.loads(fallback["payload"])
+    if not isinstance(payload, dict):
+        return None
+    return project_discovery_report_summary(payload)
 
 
 def delete_discovery_report(report_id: str) -> bool:

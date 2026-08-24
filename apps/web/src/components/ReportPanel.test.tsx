@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 
 import type { Report } from "@/lib/api";
-import type { StreamingReportState } from "@/lib/streamApi";
 import { ReportPanel } from "@/components/ReportPanel";
 
 // 这两个子面板挂载即发请求；本文件只验证结论与证据的渲染，替换成占位。
@@ -515,38 +514,3 @@ describe("ReportPanel 组合穿透", () => {
   });
 });
 
-function sampleStreaming(
-  overrides: Partial<StreamingReportState> = {},
-): StreamingReportState {
-  return {
-    stage: "judging",
-    stageLabel: "正在审校报告…",
-    fundCodes: ["519674"],
-    fundNames: ["银河创新成长"],
-    partialByCode: {},
-    stageLog: [],
-    thinkingNotes: [],
-    startedAt: Date.now(),
-    tokenBuffer: "",
-    followupNotes: [],
-    ...overrides,
-  };
-}
-
-describe("ReportPanel 流式阶段", () => {
-  it("已有日报时仍展示当前生成阶段，并保留上次报告", () => {
-    render(
-      <ReportPanel report={sampleReport()} streaming={sampleStreaming()} />,
-    );
-
-    expect(screen.getByTestId("report-streaming")).toBeInTheDocument();
-    expect(screen.getByText("正在审校报告…")).toBeInTheDocument();
-    expect(screen.getByTestId("report-stream-stage")).toHaveTextContent(
-      "报告审校 · 持仓 0/1",
-    );
-    expect(
-      screen.getByText("新日报正在生成，下方继续显示上次报告，完成后会自动替换。"),
-    ).toBeInTheDocument();
-    expect(screen.getByTestId("report-ready")).toBeInTheDocument();
-  });
-});

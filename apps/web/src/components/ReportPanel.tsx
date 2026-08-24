@@ -2,12 +2,10 @@
 
 import { useState } from "react";
 
-import { InlineNotice } from "@/components/InlineNotice";
 import { ReportCaveatsNotice } from "@/components/ReportCaveatsNotice";
 import { ReportChatDrawer } from "@/components/ReportChatDrawer";
 import { ReportDetailsHub } from "@/components/ReportDetailsHub";
 import { ReportRecommendationList } from "@/components/ReportRecommendationList";
-import { ReportSkeleton } from "@/components/ReportSkeleton";
 import { ReportSummaryHero } from "@/components/ReportSummaryHero";
 import { StatusPill } from "@/components/StatusPill";
 import type { Holding, Report } from "@/lib/api";
@@ -21,9 +19,6 @@ import {
 
 type ReportPanelProps = {
   report: Report | null;
-  streaming?: import("@/lib/streamApi").StreamingReportState | null;
-  onCancelStream?: () => void;
-  onStreamFollowup?: (message: string) => Promise<void>;
   diagnostics?: () => React.ReactNode;
   currentHoldings?: Holding[];
   onOpenHolding?: (holding: HoldingIdentity) => void;
@@ -31,9 +26,6 @@ type ReportPanelProps = {
 
 export function ReportPanel({
   report,
-  streaming,
-  onCancelStream,
-  onStreamFollowup,
   diagnostics,
   currentHoldings,
   onOpenHolding,
@@ -57,16 +49,6 @@ export function ReportPanel({
       setIsExporting(false);
     }
   };
-
-  if (streaming && !report) {
-    return (
-      <ReportSkeleton
-        streaming={streaming}
-        onCancel={onCancelStream}
-        onFollowup={onStreamFollowup}
-      />
-    );
-  }
 
   if (!report) {
     return (
@@ -104,19 +86,6 @@ export function ReportPanel({
 
   return (
     <div className="report-workspace min-w-0" data-testid="report-workspace">
-      {streaming ? (
-        <div className="mb-4 space-y-3">
-          <ReportSkeleton
-            streaming={streaming}
-            onCancel={onCancelStream}
-            onFollowup={onStreamFollowup}
-          />
-          <InlineNotice
-            tone="info"
-            message="新日报正在生成，下方继续显示上次报告，完成后会自动替换。"
-          />
-        </div>
-      ) : null}
       <section
         className="report-shell min-w-0 space-y-4 animate-fade-up"
         data-testid="report-ready"

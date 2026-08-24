@@ -427,7 +427,7 @@ class DiscoveryClient:
                 timeout=deepseek_timeout(
                     self.settings,
                     deadline_monotonic=self._provider_deadline,
-                    first_byte_watchdog=True,
+                    first_byte_watchdog=False,
                 ),
             )
             if trace_collector is not None:
@@ -534,7 +534,7 @@ class DiscoveryClient:
             timeout=deepseek_timeout(
                 self.settings,
                 deadline_monotonic=self._provider_deadline,
-                first_byte_watchdog=True,
+                first_byte_watchdog=False,
             ),
         )
         response.raise_for_status()

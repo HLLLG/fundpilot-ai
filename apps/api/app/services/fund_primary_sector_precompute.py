@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -30,6 +31,7 @@ from app.services.fund_primary_sector_global import (
     promote_record_to_global,
 )
 from app.services.fund_universe_sampler import canonical_portfolio_name
+from app.services.fund_benchmark_sector import resolve_sector_from_benchmark
 from app.services.fund_primary_sector_service import (
     _is_passive_index_fund_name,
     _resolve_from_benchmark_index,
@@ -54,6 +56,84 @@ _BULK_PROFILE_STAGE = "bulk_benchmark_profile"
 _HOLDINGS_RESOLUTION_STAGE = "holdings_resolution"
 _NON_SECTOR_CATEGORY_TOKENS = ("债券", "货币", "FOF", "理财", "固收")
 _EQUITY_CATEGORY_TOKENS = ("股票", "混合", "指数", "QDII")
+_GOLD_EQUITY_NAME_MARKERS = ("黄金股", "黄金产业股票")
+_GOLD_SPOT_VEHICLE_MARKERS = ("ETF", "联接")
+_GOLD_EQUITY_VEHICLE_MARKERS = ("ETF", "联接", "指数", "LOF")
+_GOLD_EQUITY_SHARE_CLASS_RE = re.compile(r"黄金股[ACEH]?$", flags=re.IGNORECASE)
+_GOLD_SPOT_CANONICAL_BENCHMARK = "上海黄金交易所AU99.99"
+_GOLD_EQUITY_CANONICAL_BENCHMARK = "中证沪深港黄金产业股票指数"
+_GOLD_GAP_RECLASSIFY_REASON_CODES = frozenset(
+    {
+        "tracking_index_sector_catalog_research_only",
+        "overseas_holdings_classifier_unavailable",
+        "profile_row_unavailable",
+    }
+)
+
+
+def _is_commodity_price_proxy_category(category: str | None) -> bool:
+    """商品型/QDII-商品的价格基准可以充当身份，不要求名称带 ETF。"""
+    return "商品" in str(category or "")
+
+
+def _gold_vehicle_identity_from_name(fund_name: str | None) -> str | None:
+    """无场外档案时，只给场内黄金/黄金股专项载体补身份。
+
+    嘉实黄金这类无 ETF/联接简称不能只靠名称核验；白银、贵金属主动混合也不走这里。
+    """
+    name = str(fund_name or "").strip()
+    if not name:
+        return None
+    compact = re.sub(r"\s+", "", name)
+    upper = compact.upper()
+    if any(marker in name for marker in _GOLD_EQUITY_NAME_MARKERS):
+        if (
+            any(marker in upper for marker in _GOLD_EQUITY_VEHICLE_MARKERS)
+            or _GOLD_EQUITY_SHARE_CLASS_RE.search(compact)
+        ):
+            return "黄金股"
+        return None
+    if "黄金ETF" in upper:
+        return "黄金"
+    if "黄金" in name and any(marker in upper for marker in _GOLD_SPOT_VEHICLE_MARKERS):
+        return "黄金"
+    return None
+
+
+def _gold_vehicle_record_from_name(
+    fund_code: str,
+    fund_name: str | None,
+) -> PrimarySectorRecord | None:
+    sector = _gold_vehicle_identity_from_name(fund_name)
+    if sector is None:
+        return None
+    benchmark_text = (
+        _GOLD_EQUITY_CANONICAL_BENCHMARK
+        if sector == "黄金股"
+        else _GOLD_SPOT_CANONICAL_BENCHMARK
+    )
+    resolved = resolve_sector_from_benchmark(benchmark_text)
+    if resolved is None:
+        return None
+    sector_name, intraday_index_name, match = resolved
+    if sector_name != sector:
+        return None
+    return PrimarySectorRecord(
+        fund_code=fund_code,
+        sector_name=sector_name,
+        intraday_index_name=intraday_index_name,
+        source="precompute_benchmark",
+        confidence=0.62,
+        detail={
+            "index_code": match.index_code,
+            "index_name": match.index_name,
+            "benchmark_text": match.benchmark_text,
+            "relation_kind": "tracking_reference",
+            "price_proxy_eligible": True,
+            "identity_from_vehicle_name": True,
+            "fund_name": fund_name,
+        },
+    )
 
 
 def _lookup_fund_name(fund_code: str) -> str | None:
@@ -767,6 +847,7 @@ def _profile_sector_resolution(
         or passive_category
         or passive_name
     )
+    commodity_price_proxy = _is_commodity_price_proxy_category(category)
     resolved = resolve_sector_from_benchmark(benchmark_text) if benchmark_text else None
     detail: dict[str, object] = {
         "profile_source": profile.get("profile_source"),
@@ -776,6 +857,7 @@ def _profile_sector_resolution(
         "benchmark_text_source_kind": source_kind,
         "passive_index_name_gate": passive_name,
         "passive_index_category_gate": passive_category,
+        "commodity_price_proxy_category_gate": commodity_price_proxy,
         "tracking_target_gate": benchmark_kind == "tracking_target",
         "semantic_recall_sector": semantic.sector_name if semantic_hint else None,
         "holdings_classifier_scope": (
@@ -789,7 +871,7 @@ def _profile_sector_resolution(
     if any(token in category for token in _NON_SECTOR_CATEGORY_TOKENS):
         return None, "unmapped", "non_sector_fund_category", detail
 
-    if resolved is not None and passive:
+    if resolved is not None and (passive or commodity_price_proxy):
         sector_name, intraday_index_name, match = resolved
         record = PrimarySectorRecord(
             fund_code=fund_code,
@@ -901,31 +983,52 @@ def reclassify_stored_profile_resolutions(
             detail = raw_detail if isinstance(raw_detail, Mapping) else {}
         benchmark_text = str(detail.get("benchmark_text") or "").strip()
         category = str(detail.get("fund_category") or "").strip()
-        if not benchmark_text and not category:
-            result.skipped += 1
-            continue
-        profile = {
-            "fund_code": code,
-            "fund_name": previous.get("fund_name"),
-            "fund_category": category or None,
-            "tracking_reference_text": (
-                benchmark_text
-                if str(detail.get("benchmark_text_kind") or "")
-                == "tracking_target"
-                else None
-            ),
-            "benchmark_text": benchmark_text or None,
-            "benchmark_text_kind": detail.get("benchmark_text_kind"),
-            "benchmark_text_source_kind": detail.get(
-                "benchmark_text_source_kind"
-            ),
-            "profile_source": detail.get("profile_source"),
-        }
-        record, status, reason_code, refreshed_detail = _profile_sector_resolution(
-            fund_code=code,
-            fallback_name=str(previous.get("fund_name") or "") or None,
-            profile=profile,
+        fund_name = str(previous.get("fund_name") or "") or None
+        category_blocks_identity = any(
+            token in category for token in _NON_SECTOR_CATEGORY_TOKENS
         )
+        record = None
+        status = "unmapped"
+        reason_code = "no_sector_identity_expected"
+        refreshed_detail: dict[str, object] = {}
+        if benchmark_text or category:
+            profile = {
+                "fund_code": code,
+                "fund_name": previous.get("fund_name"),
+                "fund_category": category or None,
+                "tracking_reference_text": (
+                    benchmark_text
+                    if str(detail.get("benchmark_text_kind") or "")
+                    == "tracking_target"
+                    else None
+                ),
+                "benchmark_text": benchmark_text or None,
+                "benchmark_text_kind": detail.get("benchmark_text_kind"),
+                "benchmark_text_source_kind": detail.get(
+                    "benchmark_text_source_kind"
+                ),
+                "profile_source": detail.get("profile_source"),
+            }
+            record, status, reason_code, refreshed_detail = (
+                _profile_sector_resolution(
+                    fund_code=code,
+                    fallback_name=fund_name,
+                    profile=profile,
+                )
+            )
+        if record is None and not category_blocks_identity:
+            name_record = _gold_vehicle_record_from_name(code, fund_name)
+            if name_record is not None:
+                record = name_record
+                status = "verified"
+                reason_code = "vehicle_name_identity_verified"
+                refreshed_detail = {
+                    **refreshed_detail,
+                    **dict(name_record.detail or {}),
+                }
+            elif not benchmark_text and not category:
+                result.skipped += 1
+                continue
         result.processed += 1
         if record is not None:
             _promote_and_remember(
@@ -978,6 +1081,18 @@ def migrate_legacy_pending_profile_resolutions() -> PrecomputeBatchResult:
             "tracking_index_sector_catalog_pending",
             "independent_identity_evidence_missing",
         }
+    )
+
+
+def reclassify_gold_spot_and_equity_gaps(
+    *,
+    limit: int | None = None,
+) -> PrecomputeBatchResult:
+    """把已落盘但仍漏挂的黄金/黄金股身份重跑一遍，不访问上游。"""
+
+    return reclassify_stored_profile_resolutions(
+        reason_codes=set(_GOLD_GAP_RECLASSIFY_REASON_CODES),
+        limit=limit,
     )
 
 
@@ -1078,6 +1193,31 @@ def run_bulk_profile_precompute_batch(
             profile = by_code.get(code)
             name = name_by_code.get(code) or None
             if profile is None:
+                name_record = _gold_vehicle_record_from_name(code, name)
+                if name_record is not None:
+                    _promote_and_remember(
+                        name_record,
+                        source="precompute_benchmark",
+                        global_rows_by_code=global_rows_by_code,
+                    )
+                    result.ok += 1
+                    checkpoint_rows.append(
+                        _resolution_status_row(
+                            fund_code=code,
+                            fund_name=name,
+                            status="verified",
+                            reason_code="vehicle_name_identity_verified",
+                            detail={
+                                **dict(name_record.detail or {}),
+                                "provider_failed": provider_failed,
+                                "profile_retry_attempted": code in retried_codes,
+                                "profile_retry_provider_failed": retry_provider_failed,
+                            },
+                            previous=statuses.get(code),
+                            checked_at=checked_at,
+                        )
+                    )
+                    continue
                 result.unavailable += 1
                 result.miss += 1
                 checkpoint_rows.append(

@@ -32,4 +32,28 @@ describe("job API helpers", () => {
       expect.objectContaining({ cache: "no-store" }),
     );
   });
+
+  it("startDiscoveryJob surfaces a readable API error instead of raw JSON", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: "当前异步荐基队列已满，请稍后重试" }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { startDiscoveryJob } = await import("@/lib/api");
+    await expect(
+      startDiscoveryJob([], {
+        max_drawdown_percent: 15,
+        concentration_limit_percent: 35,
+        expected_investment_amount: 30000,
+        prefer_dca: true,
+        avoid_chasing: true,
+        round_trip_fee_percent: 1.5,
+        min_net_profit_percent: 1,
+        hold_days_target: 7,
+      }),
+    ).rejects.toThrow("当前异步荐基队列已满，请稍后重试");
+  });
 });

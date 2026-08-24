@@ -170,3 +170,39 @@ def test_stream_slot_respects_cancel(monkeypatch):
             raise AssertionError("cancelled waiter must not enter")
     release.set()
     holder.join(2)
+
+
+def test_sync_timeout_does_not_use_first_byte_watchdog(monkeypatch) -> None:
+    monkeypatch.setattr(
+        deepseek_http,
+        "get_settings",
+        lambda: _settings(
+            deepseek_timeout_seconds=300,
+            deepseek_first_byte_timeout_seconds=60,
+            deepseek_request_budget_seconds=180,
+        ),
+    )
+
+    sync_timeout = deepseek_http.deepseek_timeout(first_byte_watchdog=False)
+    stream_timeout = deepseek_http.deepseek_timeout(first_byte_watchdog=True)
+
+    assert sync_timeout.read == 300
+    assert stream_timeout.read == 60
+
+
+def test_sync_timeout_does_not_use_first_byte_watchdog(monkeypatch) -> None:
+    monkeypatch.setattr(
+        deepseek_http,
+        "get_settings",
+        lambda: _settings(
+            deepseek_timeout_seconds=300,
+            deepseek_first_byte_timeout_seconds=60,
+            deepseek_request_budget_seconds=180,
+        ),
+    )
+
+    sync_timeout = deepseek_http.deepseek_timeout(first_byte_watchdog=False)
+    stream_timeout = deepseek_http.deepseek_timeout(first_byte_watchdog=True)
+
+    assert sync_timeout.read == 300
+    assert stream_timeout.read == 60

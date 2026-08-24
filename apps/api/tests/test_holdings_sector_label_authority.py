@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from app.models import Holding
+from app.models import FundProfile, Holding
 from app.services import portfolio_holdings_service as service
 
 
@@ -35,7 +35,33 @@ def test_authoritative_identity_does_not_stamp_timing_strategy_fund(monkeypatch)
         ]
     )
 
-    assert [item.sector_name for item in aligned] == [None, "CXO"]
+    assert [item.sector_name for item in aligned] == [None, "医疗"]
+    assert aligned[1].intraday_index_name != "国证CXO"
+
+
+def test_profile_guozheng_cxo_does_not_stick_on_named_healthcare_fund() -> None:
+    holding = service._overlay_profile_onto_holding(
+        _holding("011373", "招商前沿医疗保健股票A", "CXO").model_copy(
+            update={"intraday_index_name": "国证CXO"}
+        ),
+        FundProfile(
+            fund_code="011373",
+            fund_name="招商前沿医疗保健股票A",
+            aliases=["招商前沿医疗保健股票A"],
+            holding_amount=1000,
+            source="alipay-overview",
+            sector_name="CXO",
+            intraday_index_name="国证CXO",
+        ),
+        identity_row={
+            "sector_name": "CXO",
+            "intraday_index_name": "国证CXO",
+            "source": "holdings_infer",
+        },
+    )
+
+    assert holding.sector_name == "医疗"
+    assert holding.intraday_index_name != "国证CXO"
 
 
 def test_identity_label_that_is_not_a_board_name_keeps_the_usable_copy(monkeypatch) -> None:

@@ -387,8 +387,6 @@ def get_job(job_id: str) -> dict[str, Any] | None:
 
 
 def get_job_response(job_id: str) -> dict[str, Any] | None:
-    from app.database import get_report
-
     job = get_job(job_id)
     if job is None:
         return None
@@ -402,9 +400,9 @@ def get_job_response(job_id: str) -> dict[str, Any] | None:
         "analysis_mode": request.get("analysis_mode", "fast"),
         "created_at": job["created_at"],
         "updated_at": job["updated_at"],
+        "job_kind": "analysis",
     }
-    if job["status"] == "completed" and job["report_id"]:
-        report = get_report(job["report_id"])
-        if report is not None:
-            response["report"] = report
+    report_id = job.get("report_id")
+    if report_id:
+        response["report_id"] = report_id
     return response

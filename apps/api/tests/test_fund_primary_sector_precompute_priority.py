@@ -214,6 +214,56 @@ def test_profile_resolution_verifies_only_passive_exact_benchmark(monkeypatch) -
     assert qdii_status == "research_only"
     assert qdii_reason == "overseas_holdings_classifier_unavailable"
 
+    commodity_record, commodity_status, commodity_reason, _detail = (
+        service._profile_sector_resolution(
+            fund_code="160719",
+            fallback_name="嘉实黄金",
+            profile={
+                "fund_category": "QDII-商品",
+                "benchmark_text": "伦敦金每日下午收盘价",
+                "benchmark_text_kind": "performance_benchmark",
+                "benchmark_text_source_kind": "xq_akshare_aggregator",
+            },
+        )
+    )
+    assert commodity_record is not None
+    assert commodity_record.sector_name == "黄金"
+    assert commodity_status == "verified"
+    assert commodity_reason == "exact_benchmark_verified"
+
+    gold_feeder_record, gold_feeder_status, gold_feeder_reason, _detail = (
+        service._profile_sector_resolution(
+            fund_code="000216",
+            fallback_name="华安黄金易ETF联接A",
+            profile={
+                "fund_category": "股票型-标准指数",
+                "benchmark_text": "国内黄金现货价格收益率×95%＋活期存款利率×5%",
+                "benchmark_text_kind": "performance_benchmark",
+                "benchmark_text_source_kind": "xq_akshare_aggregator",
+            },
+        )
+    )
+    assert gold_feeder_record is not None
+    assert gold_feeder_record.sector_name == "黄金"
+    assert gold_feeder_status == "verified"
+    assert gold_feeder_reason == "exact_benchmark_verified"
+
+    mixed_gold_record, mixed_gold_status, mixed_gold_reason, _detail = (
+        service._profile_sector_resolution(
+            fund_code="000005",
+            fallback_name="某黄金主题混合A",
+            profile={
+                "fund_category": "混合型",
+                "benchmark_text": "国内黄金现货价格收益率×95%＋活期存款利率×5%",
+                "benchmark_text_kind": "performance_benchmark",
+                "benchmark_text_source_kind": "xq_akshare_aggregator",
+            },
+        )
+    )
+    assert mixed_gold_record is None
+    assert mixed_gold_status == "queued"
+    assert mixed_gold_reason == "active_fund_holdings_verification_queued"
+
     monkeypatch.setattr(service, "_resolve_from_holdings_infer", lambda *_a, **_k: None)
     holdings = service._evaluate_holdings_resolution(
         "000002",
@@ -494,3 +544,118 @@ def test_stored_profile_reclassification_promotes_new_exact_catalog_match(
     assert saved[0]["resolution_status"] == "verified"
     assert saved[0]["reason_code"] == "exact_benchmark_verified"
     assert saved[0]["attempt_count"] == 2
+
+
+def test_gold_vehicle_name_identity_is_strict() -> None:
+    assert service._gold_vehicle_identity_from_name("黄金ETF华安") == "黄金"
+    assert service._gold_vehicle_identity_from_name("华安黄金ETF联接I") == "黄金"
+    assert service._gold_vehicle_identity_from_name("博时黄金ETF联接E") == "黄金"
+    assert service._gold_vehicle_identity_from_name("国泰黄金股ETF") == "黄金股"
+    assert service._gold_vehicle_identity_from_name("南方黄金股C") == "黄金股"
+    assert service._gold_vehicle_identity_from_name("嘉实黄金") is None
+    assert service._gold_vehicle_identity_from_name("白银期货ETF") is None
+    assert service._gold_vehicle_identity_from_name("某黄金主题混合A") is None
+
+
+def test_reclassify_gold_gaps_promotes_catalog_and_name_identities(monkeypatch) -> None:
+    stored = {
+        "000216": {
+            "fund_code": "000216",
+            "fund_name": "华安黄金易ETF联接A",
+            "stage": "bulk_benchmark_profile",
+            "resolution_status": "research_only",
+            "reason_code": "tracking_index_sector_catalog_research_only",
+            "attempt_count": 1,
+            "detail": json.dumps(
+                {
+                    "fund_category": "股票型-标准指数",
+                    "benchmark_text": "国内黄金现货价格收益率×95%＋活期存款利率×5%",
+                    "benchmark_text_kind": "performance_benchmark",
+                    "semantic_recall_sector": "黄金",
+                },
+                ensure_ascii=False,
+            ),
+        },
+        "160719": {
+            "fund_code": "160719",
+            "fund_name": "嘉实黄金",
+            "stage": "bulk_benchmark_profile",
+            "resolution_status": "research_only",
+            "reason_code": "overseas_holdings_classifier_unavailable",
+            "attempt_count": 1,
+            "detail": json.dumps(
+                {
+                    "fund_category": "QDII-商品",
+                    "benchmark_text": "伦敦金每日下午收盘价",
+                    "benchmark_text_kind": "performance_benchmark",
+                },
+                ensure_ascii=False,
+            ),
+        },
+        "518880": {
+            "fund_code": "518880",
+            "fund_name": "黄金ETF华安",
+            "stage": "bulk_benchmark_profile",
+            "resolution_status": "unavailable",
+            "reason_code": "profile_row_unavailable",
+            "attempt_count": 1,
+            "detail": json.dumps({"provider_failed": False}, ensure_ascii=False),
+        },
+        "517400": {
+            "fund_code": "517400",
+            "fund_name": "黄金股ETF国泰",
+            "stage": "bulk_benchmark_profile",
+            "resolution_status": "unavailable",
+            "reason_code": "profile_row_unavailable",
+            "attempt_count": 1,
+            "detail": json.dumps({"provider_failed": False}, ensure_ascii=False),
+        },
+        "161226": {
+            "fund_code": "161226",
+            "fund_name": "国投瑞银白银期货",
+            "stage": "bulk_benchmark_profile",
+            "resolution_status": "unmapped",
+            "reason_code": "profile_row_unavailable",
+            "attempt_count": 1,
+            "detail": json.dumps({"provider_failed": False}, ensure_ascii=False),
+        },
+    }
+    monkeypatch.setattr(
+        service,
+        "list_fund_sector_resolution_statuses",
+        lambda: dict(stored),
+    )
+    saved: list[dict] = []
+    monkeypatch.setattr(
+        service,
+        "save_fund_sector_resolution_statuses",
+        lambda rows: saved.extend(rows) or len(rows),
+    )
+    monkeypatch.setattr(
+        service,
+        "get_fund_primary_sectors_global_by_codes",
+        lambda _codes: {},
+    )
+    promoted: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        service,
+        "_promote_and_remember",
+        lambda record, **_kwargs: promoted.append(
+            (record.fund_code, record.sector_name)
+        ),
+    )
+
+    result = service.reclassify_gold_spot_and_equity_gaps()
+
+    assert result.ok == 4
+    assert result.skipped == 1
+    assert ("000216", "黄金") in promoted
+    assert ("160719", "黄金") in promoted
+    assert ("518880", "黄金") in promoted
+    assert ("517400", "黄金股") in promoted
+    assert all(item[0] != "161226" for item in promoted)
+    by_code = {row["fund_code"]: row for row in saved}
+    assert by_code["000216"]["reason_code"] == "exact_benchmark_verified"
+    assert by_code["160719"]["reason_code"] == "exact_benchmark_verified"
+    assert by_code["518880"]["reason_code"] == "vehicle_name_identity_verified"
+    assert by_code["517400"]["reason_code"] == "vehicle_name_identity_verified"

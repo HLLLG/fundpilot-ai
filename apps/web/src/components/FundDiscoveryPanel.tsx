@@ -1,10 +1,5 @@
 "use client";
 
-import type {
-  Dispatch,
-  MutableRefObject,
-  SetStateAction,
-} from "react";
 import { ChevronDown, History, Loader2, RotateCcw, Sparkles, Target } from "lucide-react";
 import type {
   DiscoveryPromptConfig,
@@ -22,25 +17,19 @@ import {
   fetchDiscoverySectors,
   listDiscoveryReports,
   saveDiscoveryPromptRemote,
+  startDiscoveryJob,
 } from "@/lib/api";
 import { DiscoveryHistoryWorkspace } from "@/components/DiscoveryHistoryWorkspace";
+import { DiscoveryScanProgress } from "@/components/DiscoveryScanProgress";
 import { InlineNotice, type NoticeTone } from "@/components/InlineNotice";
 import { DiscoveryReportPanel } from "@/components/DiscoveryReportPanel";
-import { DiscoverySkeleton } from "@/components/DiscoverySkeleton";
 import { FocusSectorPicker } from "@/components/FocusSectorPicker";
 import { DiscoveryStrategySelector } from "@/components/DiscoveryStrategySelector";
 import { RolePromptEditor } from "@/components/RolePromptEditor";
 import { YangjibaoFundDetail } from "@/components/YangjibaoFundDetail";
 import { displayableHoldings } from "@/lib/holdingMetrics";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  appendStreamTokenBuffer,
-  streamDiscovery,
-  streamTimestamp,
-  type DiscoveryPartialField,
-  type DiscoveryRecommendationPartial,
-  type StreamingDiscoveryState,
-} from "@/lib/discoveryStreamApi";
+import { streamTimestamp } from "@/lib/streamApi";
 import { ensureNotificationPermission } from "@/lib/notifications";
 import {
   loadDiscoveryBudgetYuan,
@@ -58,9 +47,9 @@ import {
   setDiscoveryFocusSectors,
 } from "@/lib/discoveryFocusSectors";
 import { ANALYZE_BLOCKS_DISCOVERY } from "@/lib/researchStreamMutex";
-import { streamHandoffFailureMessage } from "@/lib/streamHttpError";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
 import { startVisibilityAwarePolling } from "@/lib/visibilityPolling";
+import type { DiscoveryScanProgress as DiscoveryScanProgressState } from "@/lib/discoveryScanProgress";
 import {
   DISCOVERY_RECOVERY_POLL_MS,
   detectCompletedScan,
@@ -133,16 +122,13 @@ type FundDiscoveryPanelProps = {
   holdings: Holding[];
   profile: InvestorProfile;
   discoveryJobId: string | null;
+  scanProgress?: DiscoveryScanProgressState | null;
   onDiscoveryJobIdChange: (jobId: string | null) => void;
   pendingDiscoveryReport: FundDiscoveryReport | null;
   onPendingDiscoveryReportApplied: () => void;
   onRegisterDiscoveryScanRetry: (retry: (() => void) | null) => void;
-  streamingDiscovery: StreamingDiscoveryState | null;
   analysisBusy?: boolean;
-  onStreamingDiscoveryChange: Dispatch<SetStateAction<StreamingDiscoveryState | null>>;
   onDiscoveryStreamComplete: (report: FundDiscoveryReport) => void;
-  onDiscoveryStreamStart?: () => void;
-  discoveryStreamAbortRef: MutableRefObject<AbortController | null>;
 };
 
 export function FundDiscoveryPanel({
@@ -150,16 +136,13 @@ export function FundDiscoveryPanel({
   holdings,
   profile,
   discoveryJobId,
+  scanProgress = null,
   onDiscoveryJobIdChange,
   pendingDiscoveryReport,
   onPendingDiscoveryReportApplied,
   onRegisterDiscoveryScanRetry,
-  streamingDiscovery,
   analysisBusy = false,
-  onStreamingDiscoveryChange,
   onDiscoveryStreamComplete,
-  onDiscoveryStreamStart,
-  discoveryStreamAbortRef,
 }: FundDiscoveryPanelProps) {
   const {
     data: sectorRows,
@@ -212,6 +195,7 @@ export function FundDiscoveryPanel({
     loadDiscoveryPrompt(userId, DEFAULT_DISCOVERY_PROMPT),
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [jobScanStartedAt, setJobScanStartedAt] = useState<number | null>(null);
   const [feedback, setFeedback] = useState<DiscoveryFeedback | null>(null);
   const [configExpanded, setConfigExpanded] = useState(false);
   const [rolePromptOpen, setRolePromptOpen] = useState(false);
@@ -307,6 +291,7 @@ export function FundDiscoveryPanel({
     writeDiscoveryReportDetailCache(userId, pendingDiscoveryReport, { asLatest: true });
     setReport(pendingDiscoveryReport);
     setFeedback(null);
+    setJobScanStartedAt(null);
     void refreshReports();
     onPendingDiscoveryReportApplied();
   }, [pendingDiscoveryReport, refreshReports, onPendingDiscoveryReportApplied, userId]);
@@ -319,18 +304,14 @@ export function FundDiscoveryPanel({
   }, [reportId]);
 
   const handleCancelStream = useCallback(() => {
-    discoveryStreamAbortRef.current?.abort();
-    discoveryStreamAbortRef.current = null;
-    onStreamingDiscoveryChange(null);
-    // 也要清掉后台任务 id：`isRunning` 把它算在内，只清流式状态的话按钮仍是
-    // 「扫描进行中…」的禁用态，用户依旧走不出去。
     onDiscoveryJobIdChange(null);
+    setJobScanStartedAt(null);
     setIsSubmitting(false);
     setFeedback({
       tone: "info",
       message: "已停止扫描，当前条件与页面中的已有结果均已保留。",
     });
-  }, [discoveryStreamAbortRef, onDiscoveryJobIdChange, onStreamingDiscoveryChange]);
+  }, [onDiscoveryJobIdChange]);
 
   const handleScan = useCallback(async () => {
     if (analysisBusy) {
@@ -358,140 +339,40 @@ export function FundDiscoveryPanel({
       discoveryStrategy: DISCOVERY_STRATEGY,
       systemRolePrompt: discoveryPrompt.is_custom ? discoveryPrompt.role_prompt : null,
     };
-    const streamEvents = {
-      onStage: (stage: string, label: string) =>
-        onStreamingDiscoveryChange((current) => {
-          if (!current) {
-            return current;
-          }
-          const entry = { stage, label, at: streamTimestamp() };
-          const stageLog = [
-            ...current.stageLog.filter((item) => item.stage !== stage),
-            entry,
-          ];
-          return { ...current, stage, stageLabel: label, stageLog };
-        }),
-      onSkeleton: (fundCodes: string[], fundNames: string[]) =>
-        onStreamingDiscoveryChange((current) =>
-          current ? { ...current, fundCodes, fundNames } : current,
-        ),
-      onToken: (content: string) =>
-        onStreamingDiscoveryChange((current) =>
-          current
-            ? {
-                ...current,
-                tokenBuffer: appendStreamTokenBuffer(current.tokenBuffer, content),
-              }
-            : current,
-        ),
-      onPartial: (field: DiscoveryPartialField, value: unknown) => {
-        onStreamingDiscoveryChange((current) => {
-          if (!current) {
-            return current;
-          }
-          if (field === "title") {
-            return { ...current, title: String(value) };
-          }
-          if (field === "summary") {
-            return { ...current, summary: String(value) };
-          }
-          if (field === "caveats" && Array.isArray(value)) {
-            return { ...current, caveats: value.map(String) };
-          }
-          if (field === "recommendation" && value && typeof value === "object") {
-            const rec = value as DiscoveryRecommendationPartial;
-            const code = rec.fund_code;
-            if (!code) {
-              return current;
-            }
-            return {
-              ...current,
-              partialByCode: {
-                ...current.partialByCode,
-                [code]: { ...current.partialByCode[code], ...rec },
-              },
-            };
-          }
-          return current;
-        });
-      },
-      onDone: (completedReport: FundDiscoveryReport) => {
-        discoveryStreamAbortRef.current = null;
-        onStreamingDiscoveryChange(null);
-        onDiscoveryStreamComplete(completedReport);
-        void refreshReports();
-      },
-      onError: (message: string) => {
-        throw new Error(message);
-      },
-    };
-
-    const runStreamOnce = async (abortController: AbortController) => {
-      discoveryStreamAbortRef.current = abortController;
-      onStreamingDiscoveryChange({
-        stage: "sector_heat",
-        stageLabel: "正在连接流式扫描…",
-        fundCodes: [],
-        fundNames: [],
-        partialByCode: {},
-        stageLog: [],
-        tokenBuffer: "",
-        startedAt: streamTimestamp(),
-      });
-      await streamDiscovery(
-        displayableHoldings(holdings),
-        profile,
-        streamEvents,
-        { ...scanOptions, signal: abortController.signal },
-      );
-    };
 
     try {
       void ensureNotificationPermission();
-      onDiscoveryStreamStart?.();
       let lastError: unknown = null;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         if (attempt > 0) {
           await new Promise((resolve) => window.setTimeout(resolve, 300));
         }
-        const abortController = new AbortController();
         try {
-          await runStreamOnce(abortController);
+          const jobId = await startDiscoveryJob(
+            displayableHoldings(holdings),
+            profile,
+            scanOptions,
+          );
+          onDiscoveryJobIdChange(jobId);
+          setJobScanStartedAt(streamTimestamp());
           return;
-        } catch (streamError) {
-          const userAborted = abortController.signal.aborted;
-          discoveryStreamAbortRef.current = null;
-          if (
-            userAborted &&
-            streamError instanceof DOMException &&
-            streamError.name === "AbortError"
-          ) {
-            onStreamingDiscoveryChange(null);
-            return;
-          }
+        } catch (submitError) {
           const recovered = await recoverCompletedDiscoveryReport(
             latestKnownReportIdRef.current,
           );
           if (recovered) {
-            onStreamingDiscoveryChange(null);
             onDiscoveryStreamComplete(recovered);
             void refreshReports();
             return;
           }
-          lastError = streamError;
+          lastError = submitError;
         }
       }
-      onStreamingDiscoveryChange(null);
       setFeedback({
         tone: "error",
-        message: streamHandoffFailureMessage(
-          lastError,
-          "流式扫描中断",
-          "没有转入后台任务，请再点一次重新扫描。",
-        ),
+        message: userFacingErrorMessage(lastError, "提交扫描失败"),
       });
     } catch (scanError) {
-      onStreamingDiscoveryChange(null);
       setFeedback({
         tone: "error",
         message: userFacingErrorMessage(scanError, "提交失败"),
@@ -504,13 +385,11 @@ export function FundDiscoveryPanel({
     budgetYuan,
     discoveryPrompt.is_custom,
     discoveryPrompt.role_prompt,
-    discoveryStreamAbortRef,
     focusSectors,
     historyReports,
     holdings,
+    onDiscoveryJobIdChange,
     onDiscoveryStreamComplete,
-    onDiscoveryStreamStart,
-    onStreamingDiscoveryChange,
     profile,
     refreshReports,
     report,
@@ -536,7 +415,16 @@ export function FundDiscoveryPanel({
     });
   };
 
-  const isRunning = isSubmitting || Boolean(discoveryJobId) || Boolean(streamingDiscovery);
+  const isRunning = isSubmitting || Boolean(discoveryJobId);
+  const liveProgress: DiscoveryScanProgressState | null = scanProgress
+    ?? (discoveryJobId
+      ? { stage: "queued", stageLabel: "正在扫描机会…", status: "running" }
+      : null)
+    ?? (isSubmitting
+      ? { stage: "queued", stageLabel: "提交扫描…", status: "running" }
+      : null);
+  const scanFailed = liveProgress?.status === "failed";
+  const showScanTrack = Boolean(liveProgress) && liveProgress?.status !== "completed";
   const blockedByAnalysis = analysisBusy && !isRunning;
   const reportedScanGoal =
     report?.discovery_facts?.effective_configuration?.scan_goal ??
@@ -641,7 +529,7 @@ export function FundDiscoveryPanel({
     if (userId == null || autoLoadedLatestForUserRef.current === userId) return;
     if (!historyReports.length) return;
     // 正在扫描、或已有刚扫完待应用的正文时不要抢。
-    if (pendingDiscoveryReport || streamingDiscovery) {
+    if (pendingDiscoveryReport || discoveryJobId) {
       autoLoadedLatestForUserRef.current = userId;
       return;
     }
@@ -651,16 +539,15 @@ export function FundDiscoveryPanel({
       return;
     }
     selectHistoryReport(latest, { revealReport: false, asLatest: true });
-  }, [historyReports, pendingDiscoveryReport, report, selectHistoryReport, streamingDiscovery, userId]);
+  }, [discoveryJobId, historyReports, pendingDiscoveryReport, report, selectHistoryReport, userId]);
 
-  // 每收到一个流事件就刷新"最近有动静"的时间戳（streamingDiscovery 每次事件都是新对象）。
   useEffect(() => {
-    if (streamingDiscovery) {
+    if (discoveryJobId || scanProgress) {
       lastStreamActivityRef.current = streamTimestamp();
     }
-  }, [streamingDiscovery]);
+  }, [discoveryJobId, scanProgress]);
 
-  const scanStartedAt = streamingDiscovery?.startedAt ?? null;
+  const scanStartedAt = jobScanStartedAt;
 
   const recoverStuckScan = useCallback(async () => {
     if (!streamLooksDead(lastStreamActivityRef.current, streamTimestamp())) return;
@@ -677,10 +564,6 @@ export function FundDiscoveryPanel({
     });
     if (!recovered) return;
 
-    // 后台其实已经跑完了：断掉那条死掉的流，接管结果。
-    discoveryStreamAbortRef.current?.abort();
-    discoveryStreamAbortRef.current = null;
-    onStreamingDiscoveryChange(null);
     onDiscoveryJobIdChange(null);
     setIsSubmitting(false);
     latestKnownReportIdRef.current = recovered.id;
@@ -691,17 +574,13 @@ export function FundDiscoveryPanel({
     });
     selectHistoryReport(recovered, { asLatest: true });
   }, [
-    discoveryStreamAbortRef,
     onDiscoveryJobIdChange,
-    onStreamingDiscoveryChange,
     refreshReports,
     selectHistoryReport,
   ]);
 
-  // 手机浏览器切走后会挂起 fetch 的 reader，`streamDiscovery` 那个 promise 可能永远不
-  // settle，于是 `finally` 不执行、`isSubmitting` 与 `streamingDiscovery` 永远留着，
-  // 页面就死在「扫描进行中…」。而流式路径从不登记 discoveryJobId，没有任何轮询兜底。
-  // 这里在页面重新可见时补一次核对：流已静默且后台确实产出了新报告，就直接接管。
+  // 后台 Job 的进度浮层会轮询任务状态；这里再补一层报告列表核对，避免浮层
+  // 漏接完成事件、或用户关掉浮层后结果悬空。流式遗留路径同样走这条兜底。
   useEffect(() => {
     if (scanStartedAt === null || userId == null) return;
     return startVisibilityAwarePolling({
@@ -742,27 +621,44 @@ export function FundDiscoveryPanel({
             </div>
           </div>
 
-          <ol className="discovery-decision-rail" aria-label="基金扫描流程">
-            <li className={!isRunning && !report ? "is-current" : "is-done"}><span>01</span>方向与约束</li>
-            <li className={isRunning ? "is-current" : report ? "is-done" : ""}><span>02</span>扫描与验证</li>
-            <li className={report ? "is-current" : ""}><span>03</span>候选与依据</li>
-          </ol>
+          {showScanTrack && liveProgress ? (
+            <DiscoveryScanProgress progress={liveProgress} />
+          ) : (
+            <ol className="discovery-decision-rail" aria-label="基金扫描流程">
+              <li className={!isRunning && !report ? "is-current" : "is-done"}><span>01</span>方向与约束</li>
+              <li className={isRunning ? "is-current" : report ? "is-done" : ""}><span>02</span>扫描与验证</li>
+              <li className={report ? "is-current" : ""}><span>03</span>候选与依据</li>
+            </ol>
+          )}
 
           <div className="p-4 sm:p-5">
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 data-testid="discovery-scan-button"
-                disabled={isRunning || blockedByAnalysis}
-                onClick={() => void handleScan()}
+                disabled={(!scanFailed && isRunning) || blockedByAnalysis}
+                onClick={() => {
+                  if (scanFailed) {
+                    onDiscoveryJobIdChange(null);
+                  }
+                  void handleScan();
+                }}
                 className="btn-primary min-h-11 w-full !rounded-xl sm:w-auto"
               >
-                {isRunning ? (
+                {scanFailed ? (
+                  <RotateCcw size={16} />
+                ) : isRunning ? (
                   <Loader2 size={16} className="animate-spin" />
                 ) : (
                   <Sparkles size={16} />
                 )}
-                {isRunning ? "扫描进行中…" : report ? "重新扫描" : "扫描今日机会"}
+                {scanFailed
+                  ? "重试扫描"
+                  : isRunning
+                    ? "扫描进行中…"
+                    : report
+                      ? "重新扫描"
+                      : "扫描今日机会"}
               </button>
               {/* 扫描中必须永远留一个出口。手机切走再回来时流式连接可能已被系统挂起，
                   此时主按钮是禁用态，若这里没有「停止」，页面就彻底卡死在扫描进行中。 */}
@@ -773,7 +669,7 @@ export function FundDiscoveryPanel({
                   onClick={handleCancelStream}
                   className="btn-ghost min-h-11 w-full !rounded-xl border border-[var(--line)] sm:w-auto"
                 >
-                  停止扫描
+                  {scanFailed ? "关闭" : "停止扫描"}
                 </button>
               ) : null}
             </div>
@@ -933,11 +829,7 @@ export function FundDiscoveryPanel({
           <InlineNotice tone="info" message={ANALYZE_BLOCKS_DISCOVERY} />
         ) : null}
 
-        {streamingDiscovery ? (
-          <DiscoverySkeleton streaming={streamingDiscovery} onCancel={handleCancelStream} />
-        ) : null}
-
-        {report && streamingDiscovery ? (
+        {report && discoveryJobId ? (
           <InlineNotice tone="info" message="新扫描正在进行，下方继续显示上次报告，完成后会自动替换。" />
         ) : null}
 

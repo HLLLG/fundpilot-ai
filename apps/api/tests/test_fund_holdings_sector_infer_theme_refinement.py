@@ -15,6 +15,7 @@ from app.services.fund_holdings_sector_infer import (
     assess_sector_from_portfolio_stocks,
     resolve_display_sector,
 )
+from app.services.sector_labels import healthcare_parent_lock_against_cxo
 
 _NOW = datetime(2026, 8, 17, 3, 0, tzinfo=timezone.utc).isoformat()
 
@@ -27,6 +28,22 @@ def _industry_evidence(industry: str) -> dict:
         "ref_id": f"ref-{industry}",
         "pit_qualified": True,
     }
+
+
+def test_healthcare_parent_lock_reads_name_and_contract() -> None:
+    assert (
+        healthcare_parent_lock_against_cxo("招商前沿医疗保健股票A") == "医疗"
+    )
+    assert healthcare_parent_lock_against_cxo("南方医药保健灵活配置混合A") == "医药"
+    assert (
+        healthcare_parent_lock_against_cxo(
+            "某某精选股票A",
+            contract_text="中证医药卫生指数收益率×80%",
+        )
+        == "医药"
+    )
+    assert healthcare_parent_lock_against_cxo("某CXO主题股票A") is None
+    assert healthcare_parent_lock_against_cxo("广发高端制造股票A") is None
 
 
 def _board_evidence(codes: list[str]) -> dict:
@@ -195,6 +212,142 @@ def test_refined_cxo_theme_wins_primary_sector_vote():
     assert assessment["sector_name"] == "CXO"
     assert assessment["scores"] == {"CXO": 50.0, "医疗": 10.0}
     assert assessment["qualification"]["sector_inference_eligible"] is True
+
+
+def test_named_healthcare_fund_does_not_let_cxo_refinement_win():
+    """名字已是医疗保健时，CXO 重仓不得改写主板块。"""
+
+    coverage = {"portfolio_weight_coverage_percent": 60.0}
+    stocks = [
+        HoldingStockRow(
+            name="药明康德",
+            weight=30.0,
+            industry="医疗服务",
+            stock_code="603259",
+            coverage=coverage,
+            industry_pit_qualified=True,
+            theme="CXO",
+            theme_pit_qualified=True,
+            theme_available_at=_NOW,
+        ),
+        HoldingStockRow(
+            name="泰格医药",
+            weight=20.0,
+            industry="医疗服务",
+            stock_code="300347",
+            coverage=coverage,
+            industry_pit_qualified=True,
+            theme="CXO",
+            theme_pit_qualified=True,
+            theme_available_at=_NOW,
+        ),
+        HoldingStockRow(
+            name="爱尔眼科",
+            weight=10.0,
+            industry="医疗服务",
+            stock_code="300015",
+            coverage=coverage,
+            industry_pit_qualified=True,
+        ),
+    ]
+
+    assessment = assess_sector_from_portfolio_stocks(
+        stocks,
+        fund_name="招商前沿医疗保健股票A",
+    )
+
+    assert assessment["sector_name"] == "医疗"
+    assert assessment["scores"] == {"医疗": 60.0}
+    assert assessment["display"]["method"] == "named_healthcare_parent_lock"
+
+
+def test_named_pharma_fund_keeps_medicine_not_cxo():
+    assessment = assess_sector_from_portfolio_stocks(
+        [
+            HoldingStockRow(
+                name="药明康德",
+                weight=40.0,
+                industry="医疗服务",
+                stock_code="603259",
+                coverage={"portfolio_weight_coverage_percent": 60.0},
+                industry_pit_qualified=True,
+                theme="CXO",
+                theme_pit_qualified=True,
+                theme_available_at=_NOW,
+            ),
+        ],
+        fund_name="南方医药保健灵活配置混合A",
+    )
+    assert assessment["sector_name"] == "医药"
+
+
+def test_cxo_named_fund_still_accepts_cxo_refinement():
+    assessment = assess_sector_from_portfolio_stocks(
+        [
+            HoldingStockRow(
+                name="药明康德",
+                weight=40.0,
+                industry="医疗服务",
+                stock_code="603259",
+                coverage={"portfolio_weight_coverage_percent": 60.0},
+                industry_pit_qualified=True,
+                theme="CXO",
+                theme_pit_qualified=True,
+                theme_available_at=_NOW,
+            ),
+        ],
+        fund_name="某CXO主题股票A",
+    )
+    assert assessment["sector_name"] == "CXO"
+
+
+def test_contract_healthcare_benchmark_blocks_cxo():
+    assessment = assess_sector_from_portfolio_stocks(
+        [
+            HoldingStockRow(
+                name="药明康德",
+                weight=40.0,
+                industry="医疗服务",
+                stock_code="603259",
+                coverage={"portfolio_weight_coverage_percent": 60.0},
+                industry_pit_qualified=True,
+                theme="CXO",
+                theme_pit_qualified=True,
+                theme_available_at=_NOW,
+            ),
+        ],
+        fund_name="某某精选股票A",
+        contract_text="中证医药卫生指数收益率×80%＋中证综合债指数收益率×20%",
+    )
+    assert assessment["sector_name"] == "医药"
+
+
+def test_cxo_rule_skips_refinement_for_named_healthcare_fund(monkeypatch):
+    rows = [
+        {"security_code": "603259", "weight_percent": 8.0},
+        {"security_code": "300347", "weight_percent": 6.0},
+    ]
+    broad = {
+        code: _industry_evidence("医疗服务")
+        for code in ("603259", "300347")
+    }
+    monkeypatch.setattr(
+        infer_module,
+        "fetch_current_board_constituent_evidence",
+        lambda codes, *, force_refresh=False: {
+            "BK1600": _board_evidence(["603259", "300347"])
+        },
+    )
+
+    enriched = _refine_current_portfolio_themes(
+        rows,
+        broad,
+        force_refresh=False,
+        fund_name="招商前沿医疗保健股票A",
+    )
+
+    assert "theme" not in enriched["603259"]
+    assert "theme" not in enriched["300347"]
 
 
 def test_pcb_rule_uses_seed_codes_when_board_omits_leaders(monkeypatch):

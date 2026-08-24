@@ -18,22 +18,14 @@ from app.models import (
 )
 from app.services import (
     analyze_pipeline,
-    analyze_streaming,
     discovery_job_store,
     discovery_pipeline,
-    discovery_streaming,
     job_store,
 )
 from app.services.decision_data_evidence import PortfolioPreflightResult
 from app.services.deepseek_client import _apply_recommendation_guards_by_holding_order
 from app.services.discovery_guard import apply_discovery_guards
 from app.services.recommendations import canonicalize_fund_recommendations
-
-
-RAW_DAILY_ACTION = "RAW_DAILY_UNGUARDED_ACTION"
-RAW_DAILY_AMOUNT = "RAW_DAILY_AMOUNT_999999"
-RAW_DISCOVERY_ACTION = "RAW_DISCOVERY_UNGUARDED_BUY"
-RAW_DISCOVERY_AMOUNT = "RAW_DISCOVERY_AMOUNT_999999"
 
 
 def _risk() -> RiskAssessment:
@@ -338,87 +330,6 @@ def _run_daily_service(
     return analyze_pipeline.run_analysis(request)
 
 
-def _run_daily_stream(
-    monkeypatch: pytest.MonkeyPatch,
-    request: AnalysisRequest,
-    report: Report,
-) -> list[dict]:
-    monkeypatch.setattr(
-        analyze_streaming,
-        "get_settings",
-        lambda: SimpleNamespace(
-            deepseek_configured=True,
-            deepseek_max_tokens_report=1_024,
-        ),
-    )
-    monkeypatch.setattr(
-        analyze_streaming,
-        "resolve_portfolio_preflight",
-        lambda holdings, **_kwargs: _preflight(holdings),
-    )
-    monkeypatch.setattr(
-        analyze_streaming,
-        "FundProfileService",
-        lambda: MagicMock(resolve_holdings=lambda holdings: holdings),
-    )
-    monkeypatch.setattr(analyze_streaming, "evaluate_portfolio_risk", lambda *_args: _risk())
-    monkeypatch.setattr(
-        analyze_streaming,
-        "FundDataService",
-        lambda: MagicMock(get_snapshots_with_nav_trends=lambda _holdings: ([], {})),
-    )
-    monkeypatch.setattr(
-        analyze_streaming,
-        "NewsService",
-        lambda: MagicMock(prefetch_for_holdings=lambda *_args, **_kwargs: []),
-    )
-    monkeypatch.setattr(analyze_streaming, "_build_topic_briefs", lambda *_args: [])
-    monkeypatch.setattr(
-        analyze_streaming,
-        "prepare_analysis_bundle",
-        lambda *_args, **_kwargs: SimpleNamespace(facts={}),
-    )
-    monkeypatch.setattr(
-        analyze_streaming,
-        "resolve_analysis_runtime",
-        lambda *_args: SimpleNamespace(
-            mode="fast",
-            model="test",
-            news_max_topics=0,
-            news_retrieval_policy="bounded_prefetch.v1",
-            news_tool_rounds_configured=0,
-            news_tool_rounds_executed=0,
-        ),
-    )
-    monkeypatch.setattr(
-        analyze_streaming,
-        "build_analysis_chat_messages",
-        lambda *_args, **_kwargs: [],
-    )
-
-    def raw_stream(**_kwargs):
-        yield (
-            '{"title":"raw","summary":"'
-            + RAW_DAILY_ACTION
-            + '","fund_recommendations":['
-        )
-        yield (
-            '{"fund_code":"000000","fund_name":"未知基金甲",'
-            '"action":"分批加仓","amount_yuan":999999,'
-            f'"points":["{RAW_DAILY_AMOUNT}"]}}],"caveats":[]}}'
-        )
-
-    monkeypatch.setattr(analyze_streaming, "stream_chat_completion", raw_stream)
-    monkeypatch.setattr(
-        analyze_streaming,
-        "judge_parsed_report",
-        lambda parsed, *_args, **_kwargs: (parsed, {}),
-    )
-    monkeypatch.setattr(analyze_streaming, "_build_final_report", lambda *_args, **_kwargs: report)
-    monkeypatch.setattr(analyze_streaming, "save_report", lambda value: value)
-    return list(analyze_streaming.stream_analysis(request, user_id=1))
-
-
 def _patch_discovery_prep(
     monkeypatch: pytest.MonkeyPatch,
     module,
@@ -495,73 +406,6 @@ def _run_discovery_service(
     return discovery_pipeline.run_discovery(request)
 
 
-def _run_discovery_stream(
-    monkeypatch: pytest.MonkeyPatch,
-    request: DiscoveryRequest,
-    report: FundDiscoveryReport,
-) -> list[dict]:
-    _patch_discovery_prep(monkeypatch, discovery_streaming, report)
-    monkeypatch.setattr(
-        discovery_streaming,
-        "get_settings",
-        lambda: SimpleNamespace(
-            deepseek_configured=True,
-            deepseek_max_tokens_report=1_024,
-        ),
-    )
-    monkeypatch.setattr(
-        discovery_streaming,
-        "resolve_analysis_runtime",
-        lambda *_args: SimpleNamespace(
-            mode="fast",
-            model="test",
-            news_max_topics=3,
-            news_tool_max_rounds=0,
-            news_retrieval_policy="bounded_prefetch.v1",
-            news_tool_rounds_configured=0,
-            news_tool_rounds_executed=0,
-        ),
-    )
-    monkeypatch.setattr(
-        discovery_streaming,
-        "DiscoveryClient",
-        lambda: SimpleNamespace(_system_prompt=lambda *_args, **_kwargs: "system"),
-    )
-    monkeypatch.setattr(discovery_streaming, "build_user_payload", lambda **_kwargs: {})
-    monkeypatch.setattr(
-        discovery_streaming,
-        "append_output_requirements_to_system",
-        lambda value: value,
-    )
-
-    def raw_stream(**_kwargs):
-        yield (
-            '{"title":"raw","summary":"'
-            + RAW_DISCOVERY_ACTION
-            + '","recommendations":['
-        )
-        yield (
-            '{"fund_code":"000001","fund_name":"伪造",'
-            '"sector_name":"伪造","action":"分批买入",'
-            '"suggested_amount_yuan":999999,'
-            f'"points":["{RAW_DISCOVERY_AMOUNT}"]}}],"caveats":[]}}'
-        )
-
-    monkeypatch.setattr(discovery_streaming, "stream_chat_completion", raw_stream)
-    monkeypatch.setattr(
-        discovery_streaming,
-        "judge_parsed_discovery_report",
-        lambda parsed, **_kwargs: (parsed, {}),
-    )
-    monkeypatch.setattr(
-        discovery_streaming,
-        "build_discovery_report_from_parsed",
-        lambda *_args, **_kwargs: report,
-    )
-    monkeypatch.setattr(discovery_streaming, "save_discovery_report", lambda value: value)
-    return list(discovery_streaming.stream_discovery(request, user_id=1))
-
-
 def _daily_background_payload(
     monkeypatch: pytest.MonkeyPatch,
     request: AnalysisRequest,
@@ -596,7 +440,10 @@ def _daily_background_payload(
         },
     )
     monkeypatch.setattr("app.database.get_report", lambda _report_id: payload)
-    return job_store.get_job_response("daily-job")["report"]
+    job_response = job_store.get_job_response("daily-job")
+    assert job_response["report_id"] == report.id
+    assert "report" not in job_response
+    return payload
 
 
 def _discovery_background_payload(
@@ -632,19 +479,42 @@ def _discovery_background_payload(
             "updated_at": "2026-07-14T00:00:00+00:00",
         },
     )
-    monkeypatch.setattr(discovery_job_store, "get_discovery_report", lambda _report_id: payload)
-    return discovery_job_store.get_discovery_job_response("discovery-job")[
-        "discovery_report"
-    ]
+    monkeypatch.setattr(
+        discovery_job_store,
+        "get_discovery_report_summary",
+        lambda _report_id: {
+            key: payload[key]
+            for key in (
+                "id",
+                "created_at",
+                "title",
+                "summary",
+                "market_view",
+                "target_sectors",
+                "focus_sectors",
+                "analysis_mode",
+                "provider",
+                "caveats",
+            )
+            if key in payload
+        },
+    )
+    job_response = discovery_job_store.get_discovery_job_response("discovery-job")
+    slim = job_response["discovery_report"]
+    assert job_response["discovery_report_id"] == report.id
+    assert "recommendations" not in slim
+    assert "decision_events" not in slim
+    assert "discovery_facts" not in slim
+    assert "candidate_pool" not in slim
+    return payload
 
 
-def test_daily_final_projection_matches_service_sse_and_background(
+def test_daily_final_projection_matches_service_and_background(
     monkeypatch: pytest.MonkeyPatch,
     daily_contract: tuple[AnalysisRequest, Report],
 ) -> None:
     request, guarded_report = daily_contract
     service = _run_daily_service(monkeypatch, request, guarded_report).model_dump(mode="json")
-    events = _run_daily_stream(monkeypatch, request, guarded_report)
     background = _daily_background_payload(monkeypatch, request, guarded_report)
 
     projection = _daily_projection(service)
@@ -658,20 +528,11 @@ def test_daily_final_projection_matches_service_sse_and_background(
         any("暂时关闭仓位操作" in note for note in item["guard_notes"])
         for item in projection
     )
-    assert projection == _daily_projection(events[-1]["report"])
     assert projection == _daily_projection(background)
-
-    assert events[-1]["type"] == "done"
-    assert not [event for event in events if event.get("type") == "report_partial"]
-    pre_done_text = repr(events[:-1])
-    assert RAW_DAILY_ACTION not in pre_done_text
-    assert RAW_DAILY_AMOUNT not in pre_done_text
-    assert RAW_DAILY_ACTION not in repr(events)
-    assert RAW_DAILY_AMOUNT not in repr(events)
     assert "999999" not in repr(service)
 
 
-def test_discovery_final_projection_matches_service_sse_and_background(
+def test_discovery_final_projection_matches_service_and_background(
     monkeypatch: pytest.MonkeyPatch,
     discovery_contract: tuple[DiscoveryRequest, FundDiscoveryReport],
 ) -> None:
@@ -679,7 +540,6 @@ def test_discovery_final_projection_matches_service_sse_and_background(
     service = _run_discovery_service(monkeypatch, request, guarded_report).model_dump(
         mode="json"
     )
-    events = _run_discovery_stream(monkeypatch, request, guarded_report)
     background = _discovery_background_payload(monkeypatch, request, guarded_report)
 
     projection = _discovery_projection(service)
@@ -697,18 +557,4 @@ def test_discovery_final_projection_matches_service_sse_and_background(
     )
     assert all(len(item["final_projection"]) == 1 for item in projection)
     assert projection == _discovery_projection(background)
-
-    assert events[-1]["type"] == "done"
-    assert events[-1]["report_id"] == guarded_report.id
-    assert events[-1]["report"]["title"] == guarded_report.title
-    assert "recommendations" not in events[-1]["report"]
-    assert "decision_events" not in events[-1]["report"]
-    assert "discovery_facts" not in events[-1]["report"]
-    assert "candidate_pool" not in events[-1]["report"]
-    assert not [event for event in events if event.get("type") == "report_partial"]
-    pre_done_text = repr(events[:-1])
-    assert RAW_DISCOVERY_ACTION not in pre_done_text
-    assert RAW_DISCOVERY_AMOUNT not in pre_done_text
-    assert RAW_DISCOVERY_ACTION not in repr(events)
-    assert RAW_DISCOVERY_AMOUNT not in repr(events)
     assert "999999" not in repr(service)

@@ -3,7 +3,7 @@
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AnalysisJob, Report } from "@/lib/api";
-import { fetchAnalysisJob } from "@/lib/api";
+import { fetchAnalysisJob, fetchReportDetail } from "@/lib/api";
 import { JobStatusFloat } from "@/components/JobStatusFloat";
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -11,10 +11,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     fetchAnalysisJob: vi.fn(),
+    fetchReportDetail: vi.fn(),
   };
 });
 
 const fetchJob = vi.mocked(fetchAnalysisJob);
+const fetchDetail = vi.mocked(fetchReportDetail);
 
 function sampleReport(): Report {
   return {
@@ -53,20 +55,23 @@ function job(overrides: Partial<AnalysisJob> = {}): AnalysisJob {
 describe("JobStatusFloat", () => {
   beforeEach(() => {
     fetchJob.mockReset();
+    fetchDetail.mockReset();
   });
 
   afterEach(() => {
     cleanup();
   });
 
-  it("loads the finished report without waiting for a view click", async () => {
+  it("hydrates the completed report by id instead of trusting an embedded body", async () => {
     const onComplete = vi.fn();
+    const full = sampleReport();
     fetchJob.mockResolvedValue(
       job({
         status: "completed",
-        report: sampleReport(),
+        report_id: "report-1",
       }),
     );
+    fetchDetail.mockResolvedValue(full);
 
     render(
       <JobStatusFloat
@@ -77,10 +82,35 @@ describe("JobStatusFloat", () => {
       />,
     );
 
-    await waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
-    expect(onComplete.mock.calls[0]?.[0]).toMatchObject({ id: "report-1" });
-    expect(document.querySelector('[data-testid="analysis-job-float"]')?.textContent).not.toContain(
-      "查看报告",
+    await waitFor(() => expect(onComplete).toHaveBeenCalledWith(full));
+    expect(fetchDetail).toHaveBeenCalledWith("report-1");
+  });
+
+  it("emits page-chart progress as the job stage advances", async () => {
+    const onProgress = vi.fn();
+    fetchJob.mockResolvedValue(
+      job({
+        stage: "generating",
+        stage_label: "正在生成 AI 日报…",
+      }),
+    );
+
+    render(
+      <JobStatusFloat
+        jobId="job-1"
+        onComplete={vi.fn()}
+        onClose={vi.fn()}
+        onRetry={vi.fn()}
+        onProgress={onProgress}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(onProgress).toHaveBeenCalledWith({
+        stage: "generating",
+        stageLabel: "正在生成 AI 日报…",
+        status: "running",
+      }),
     );
   });
 });

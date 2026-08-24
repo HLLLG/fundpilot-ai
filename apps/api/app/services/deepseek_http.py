@@ -78,6 +78,15 @@ def deepseek_timeout(
     deadline_monotonic: float | None = None,
     first_byte_watchdog: bool = False,
 ) -> httpx.Timeout:
+    """Build the HTTPX timeout for one DeepSeek call.
+
+    ``first_byte_watchdog`` is only valid for streaming responses, where the
+    provider sends headers or SSE bytes before the completion is finished.
+    A non-stream ``chat/completions`` body arrives only after the full JSON is
+    generated; applying the 60s first-byte cap there turns a normal 2-minute
+    discovery/daily completion into ``read_timeout``.
+    """
+
     resolved = settings or get_settings()
     remaining = deepseek_budget_remaining(deadline_monotonic)
     read_seconds = float(resolved.deepseek_timeout_seconds)
