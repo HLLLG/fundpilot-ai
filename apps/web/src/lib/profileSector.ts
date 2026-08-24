@@ -174,27 +174,39 @@ function canonicalTrackingDisplayName(name: string | null | undefined): string |
   return trimmed === "黄金999" ? "黄金9999" : trimmed;
 }
 
+function fundLooksLikeIndexOrFeeder(fundName: string | null | undefined): boolean {
+  if (inferIndexFromFundName(fundName)) {
+    return true;
+  }
+  const compact = (fundName || "").replace(/\s+/g, "");
+  return /指数|ETF|联接|连接|LOF/i.test(compact);
+}
+
 function holdingRelatedBoardLabel(
   holding: Pick<Holding, "fund_name" | "sector_name" | "intraday_index_name">,
 ): string {
   const indexName = canonicalTrackingDisplayName(holding.intraday_index_name);
-  if (
+  const fromFund = canonicalTrackingDisplayName(inferIndexFromFundName(holding.fund_name));
+  const trackingIndex =
     indexName &&
     TRACKING_INDEX_DISPLAY_NAMES.has(indexName) &&
     !isInvalidSectorLabel(indexName)
-  ) {
-    return indexName;
-  }
-  const fromFund = canonicalTrackingDisplayName(inferIndexFromFundName(holding.fund_name));
-  if (
-    fromFund &&
-    TRACKING_INDEX_DISPLAY_NAMES.has(fromFund) &&
-    !isInvalidSectorLabel(fromFund)
-  ) {
-    return fromFund;
+      ? indexName
+      : fromFund &&
+          TRACKING_INDEX_DISPLAY_NAMES.has(fromFund) &&
+          !isInvalidSectorLabel(fromFund)
+        ? fromFund
+        : null;
+  // 指数/联接跟合同标的，展示场内指数；主动基金展示板块身份。
+  // 否则 CXO 的分时代理「国证CXO」会盖掉关联板块。
+  if (trackingIndex && fundLooksLikeIndexOrFeeder(holding.fund_name)) {
+    return trackingIndex;
   }
   if (holding.sector_name?.trim() && !isInvalidSectorLabel(holding.sector_name)) {
     return holding.sector_name;
+  }
+  if (trackingIndex) {
+    return trackingIndex;
   }
   if (indexName) {
     return indexName;

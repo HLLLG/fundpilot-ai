@@ -26,6 +26,7 @@ from app.services.holding_estimates import (
     compute_daily_profit_from_rate,
     compute_portfolio_total_assets,
     enrich_holdings_estimates,
+    release_stale_official_nav_to_sector,
     sum_daily_profit,
 )
 from app.services.holding_filters import is_inactive_holding, is_test_holding, without_inactive_holdings, without_test_holdings
@@ -34,7 +35,7 @@ from app.services.portfolio_persistence import enrich_loaded_holdings, persist_h
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
 from app.services.portfolio_snapshot import save_daily_snapshot
 from app.services.transaction_ledger import promote_pending_transactions_into_holdings
-from app.services.trading_session import get_effective_trade_date
+from app.services.trading_session import get_effective_trade_date, session_blocks_official_nav
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +175,18 @@ def _fast_trusted_sector_return(holding: Holding) -> float | None:
     return None
 
 
-def _fast_overlay_cached_official_nav(holding: Holding, trade_date: str | None) -> Holding:
+def _fast_overlay_cached_official_nav(
+    holding: Holding,
+    trade_date: str | None,
+    *,
+    session_kind: str | None = None,
+) -> Holding:
+    if session_kind is None:
+        from app.services.trading_session import build_trading_session
+
+        session_kind = str(build_trading_session().get("session_kind") or "")
+    if session_blocks_official_nav(session_kind):
+        return release_stale_official_nav_to_sector(holding, session_kind=session_kind)
     if (
         not trade_date
         or not holding.fund_code
@@ -290,7 +302,11 @@ def build_fast_snapshot_holdings_response() -> dict | None:
     from app.services.fund_primary_sector_service import repair_stale_cross_market_sectors
 
     holdings = repair_stale_cross_market_sectors(holdings)
-    trade_date = get_effective_trade_date()
+    from app.services.trading_session import build_trading_session
+
+    session = build_trading_session()
+    session_kind = str(session.get("session_kind") or "")
+    trade_date = str(session.get("effective_trade_date") or get_effective_trade_date())
     fund_codes = [
         holding.fund_code
         for holding in holdings
@@ -308,7 +324,10 @@ def build_fast_snapshot_holdings_response() -> dict | None:
         estimate_quotes={},
         shares_override=compute_effective_shares_map(fund_codes),
     )
-    holdings = [_fast_overlay_cached_official_nav(holding, trade_date) for holding in holdings]
+    holdings = [
+        _fast_overlay_cached_official_nav(holding, trade_date, session_kind=session_kind)
+        for holding in holdings
+    ]
     from app.services.pending_holding_preview import overlay_pending_transaction_previews
 
     matched_profiles = match_profiles_to_holdings(holdings, list_fund_profiles())
@@ -369,8 +388,15 @@ def load_dashboard_holdings() -> tuple[list[Holding], str, str | None, datetime 
     if not holdings:
         return [], "empty", None, None
 
-    trade_date = get_effective_trade_date()
-    holdings = [_fast_overlay_cached_official_nav(holding, trade_date) for holding in holdings]
+    from app.services.trading_session import build_trading_session
+
+    session = build_trading_session()
+    session_kind = str(session.get("session_kind") or "")
+    trade_date = str(session.get("effective_trade_date") or get_effective_trade_date())
+    holdings = [
+        _fast_overlay_cached_official_nav(holding, trade_date, session_kind=session_kind)
+        for holding in holdings
+    ]
     from app.services.holding_estimates import enrich_holdings_estimates
 
     enriched = enrich_holdings_estimates(holdings)

@@ -11,6 +11,8 @@ import {
   formatHoldingDays,
   formatHoldingUnitCost,
   getHoldingUnitCost,
+  holdingForCurrentSession,
+  holdingHasCurrentOfficialNav,
   holdingProfitIsEstimated,
   mergeHoldingsAppend,
   mergeSectorIntradayClose,
@@ -20,6 +22,7 @@ import {
   navigableHoldings,
   patchHoldingRecord,
   portfolioOfficialNavSettled,
+  sessionBlocksOfficialNav,
   sumPortfolioTotalAssets,
 } from "@/lib/holdingMetrics";
 import { getDailyProfit } from "@/lib/holdingDisplay";
@@ -481,5 +484,43 @@ describe("OCR holding return session estimate", () => {
     expect(computeEstimatedHoldingReturnPercent(ocrHolding, "trading_day_pre_open")).toBe(10);
     expect(computeHoldingProfit(ocrHolding, "trading_day_pre_open")).toBe(909.09);
     expect(holdingProfitIsEstimated(ocrHolding, "trading_day_pre_open")).toBe(false);
+  });
+});
+
+describe("intraday leftover official NAV", () => {
+  const leftover: Holding = {
+    fund_code: "017787",
+    fund_name: "万家宏观择时多策略混合C",
+    holding_amount: 2267.18,
+    settled_holding_amount: 2267.18,
+    return_percent: 3.05,
+    holding_return_percent: 3.05,
+    holding_profit: 67.18,
+    daily_profit: 21.76,
+    daily_return_percent: 0.96,
+    daily_return_percent_source: "official_nav",
+    sector_return_percent: -1.2,
+    estimated_daily_return_percent: 0.96,
+    daily_return_is_estimated: false,
+  };
+
+  it("does not treat leftover official NAV as updated during the session", () => {
+    expect(sessionBlocksOfficialNav("trading_day_intraday")).toBe(true);
+    expect(holdingHasCurrentOfficialNav(leftover, "trading_day_intraday")).toBe(false);
+    expect(holdingHasCurrentOfficialNav(leftover, "trading_day_after_close")).toBe(true);
+  });
+
+  it("rewrites leftover official NAV to the live sector estimate", () => {
+    const released = holdingForCurrentSession(leftover, "trading_day_intraday");
+    expect(released.daily_return_percent_source).toBe("sector_estimate");
+    expect(released.daily_return_percent).toBe(-1.2);
+    expect(released.daily_profit).toBe(-27.21);
+    expect(holdingHasCurrentOfficialNav(released, "trading_day_intraday")).toBe(false);
+  });
+
+  it("keeps official NAV after the close", () => {
+    const kept = holdingForCurrentSession(leftover, "trading_day_after_close");
+    expect(kept.daily_return_percent_source).toBe("official_nav");
+    expect(kept.daily_profit).toBe(21.76);
   });
 });

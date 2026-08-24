@@ -37,11 +37,16 @@ from app.services.sector_quote_resolver import (
     mapping_record_from_result,
     resolve_sector_quote,
 )
-from app.services.trading_session import build_trading_session, get_effective_trade_date
+from app.services.trading_session import (
+    build_trading_session,
+    get_effective_trade_date,
+    session_blocks_official_nav,
+)
 from app.services.fund_nav_service import get_official_nav_return
 from app.services.holding_estimates import (
     _amount_includes_today_return,
     compute_daily_profit_from_rate,
+    release_stale_official_nav_to_sector,
 )
 from app.services.eastmoney_trends_client import is_plausible_daily_change
 
@@ -71,10 +76,7 @@ def refresh_holdings_sector_quotes(
         session.get("effective_trade_date") or get_effective_trade_date()
     )
     is_trading_hours = session_kind == "trading_day_intraday"
-    intraday_blocks_official_nav = session_kind in {
-        "trading_day_intraday",
-        "trading_day_pre_close",
-    }
+    intraday_blocks_official_nav = session_blocks_official_nav(session_kind)
     fetched_at = datetime.now(timezone.utc)
 
     if not settings.sector_quotes_enabled:
@@ -386,7 +388,11 @@ def refresh_holdings_sector_quotes(
             message=result.message,
         )
 
-        new_holding = holding
+        new_holding = release_stale_official_nav_to_sector(
+            holding,
+            session_kind=session_kind,
+            profile=profile,
+        )
         if result.confidence in {"high", "medium"} and result.change_percent is not None:
             nav_return = None
             if holding.fund_code and not intraday_blocks_official_nav and not cache_only:

@@ -411,6 +411,34 @@ def compute_daily_profit_from_rate(
     return _round2(holding_amount * daily_return_percent / 100)
 
 
+def release_stale_official_nav_to_sector(
+    holding: Holding,
+    *,
+    session_kind: str | None,
+    profile: _ProfileArg = _PROFILE_NOT_PROVIDED,
+) -> Holding:
+    """盘中/收盘前把昨夜残留的 official_nav 改回板块估算，去掉「已更新」。
+
+    今日净值通常要到收盘后才披露。快照里的 official_nav 是上一交易日结算，
+    若板块刷新没命中（低置信/未解析），这层残留会一直挂在持仓上。
+    """
+    from app.services.trading_session import session_blocks_official_nav
+
+    if not session_blocks_official_nav(session_kind):
+        return holding
+    if holding.daily_return_percent_source != "official_nav":
+        return holding
+    released = holding.model_copy(
+        update={
+            "daily_profit": None,
+            "daily_return_percent": None,
+            "daily_return_percent_source": None,
+            "amount_includes_today": False,
+        }
+    )
+    return apply_sector_daily_estimates(released, profile=profile)
+
+
 def apply_sector_daily_estimates(
     holding: Holding,
     *,
@@ -459,11 +487,19 @@ def apply_sector_daily_estimates(
 def overlay_official_nav_returns(holdings: list[Holding]) -> list[Holding]:
     """恢复持仓时若官方净值已公布，覆盖板块估算的当日收益。"""
     from app.services.fund_nav_service import get_official_nav_return
-    from app.services.trading_session import build_trading_session, get_effective_trade_date
+    from app.services.trading_session import (
+        build_trading_session,
+        get_effective_trade_date,
+        session_blocks_official_nav,
+    )
 
     session = build_trading_session()
-    if session.get("session_kind") in {"trading_day_intraday", "trading_day_pre_close"}:
-        return holdings
+    session_kind = str(session.get("session_kind") or "")
+    if session_blocks_official_nav(session_kind):
+        return [
+            release_stale_official_nav_to_sector(holding, session_kind=session_kind)
+            for holding in holdings
+        ]
 
     trade_date = get_effective_trade_date()
     profiles_by_code = _load_profiles_by_code(holdings)

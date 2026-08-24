@@ -314,6 +314,7 @@ export function YangjibaoFundDetail({
     () => resolveIntradayQuery(activeHolding, sectorMeta),
     [activeHolding, sectorMeta],
   );
+  const chartLabel = intradayQuery?.source_name ?? quoteLabel;
   const intradayFallbackQuery = useMemo(
     () => resolveIntradayFallbackQuery(activeHolding, intradayQuery),
     [activeHolding, intradayQuery],
@@ -889,7 +890,7 @@ export function YangjibaoFundDetail({
               <div className="mb-1 flex items-center gap-2 border-b border-slate-100 pb-2 text-xs">
                 <span className="shrink-0 text-slate-500">日期 {tradeDateLabel}</span>
                 <span className="flex min-w-0 flex-1 items-center justify-center gap-0.5 truncate font-bold text-slate-800">
-                  {quoteLabel}
+                  {chartLabel}
                   <ChevronDown size={12} className="shrink-0 text-slate-500" />
                 </span>
                 <span

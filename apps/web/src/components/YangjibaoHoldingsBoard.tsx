@@ -38,6 +38,8 @@ import {
   portfolioOfficialNavSettled,
   sumPortfolioTotalAssets,
   navigableHoldings,
+  holdingForCurrentSession,
+  holdingHasCurrentOfficialNav,
   holdingIdentityKey,
   isUnsettledPreviewHolding,
   pendingBuyAmount,
@@ -260,6 +262,9 @@ export function YangjibaoHoldingsBoard({
     const cached = readTradingSessionCache();
     return cached ? formatHoldingsColumnDateShort(cached) : null;
   });
+  const [sessionKind, setSessionKind] = useState<string | null>(() => {
+    return readTradingSessionCache()?.session_kind ?? null;
+  });
   const [sortKey, setSortKey] = useState<HoldingsSortKey>("amount");
   const [sortDir, setSortDir] = useState<HoldingsSortDir>("desc");
   const [amountsHidden, setAmountsHidden] = useState(() => loadAmountsHidden());
@@ -279,10 +284,14 @@ export function YangjibaoHoldingsBoard({
     return hydrateTradingSession((session) => {
       setQuoteTradeDate(formatTradeDateShort(session.effective_trade_date));
       setColumnDate(formatHoldingsColumnDateShort(session));
+      setSessionKind(session.session_kind);
     });
   }, []);
 
-  const displayHoldings = useMemo(() => navigableHoldings(holdings), [holdings]);
+  const displayHoldings = useMemo(
+    () => navigableHoldings(holdings).map((holding) => holdingForCurrentSession(holding, sessionKind)),
+    [holdings, sessionKind],
+  );
   const settledHoldings = useMemo(
     () => displayHoldings.filter((holding) => !isUnsettledPreviewHolding(holding)),
     [displayHoldings],
@@ -671,7 +680,7 @@ export function YangjibaoHoldingsBoard({
             const holdingReturn = unsettledOnly ? null : getEstimatedHoldingReturnPercent(holding);
             const dailyIsEstimated = isDailyProfitEstimated(holding);
             const profitAccrualDeferred = holding.profit_accrual_deferred === true;
-            const isOfficialDaily = holding.daily_return_percent_source === "official_nav";
+            const isOfficialDaily = holdingHasCurrentOfficialNav(holding, sessionKind);
             const showDailyApprox =
               !isOfficialDaily &&
               (dailyIsEstimated ||
@@ -760,7 +769,7 @@ export function YangjibaoHoldingsBoard({
                             ? "交易已导入，份额尚未确认，暂不计收益"
                             : profitAccrualDeferred
                             ? "份额待确认，次交易日起计收益（与支付宝一致）"
-                            : holding.daily_return_percent_source === "official_nav"
+                            : isOfficialDaily
                             ? "官方净值已公布"
                             : holding.daily_return_percent_source === "holdings_estimate"
                             ? "季报重仓股加权估算，非正式净值"

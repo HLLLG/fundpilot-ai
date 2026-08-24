@@ -12,6 +12,14 @@ AFTERNOON_OPEN = time(13, 0)
 MARKET_CLOSE = time(15, 0)
 PRE_CLOSE_FOCUS = time(14, 30)
 
+# 盘中/收盘前今日净值尚未披露；昨夜快照里的 official_nav 不能当成「已更新」。
+OFFICIAL_NAV_BLOCKED_SESSIONS = frozenset(
+    {
+        "trading_day_intraday",
+        "trading_day_pre_close",
+    }
+)
+
 
 def build_trading_session(when: datetime | None = None) -> dict:
     moment = when or datetime.now(CN_TZ)
@@ -125,6 +133,11 @@ def get_previous_trade_date(effective_trade_date: str | None = None) -> str | No
         if _is_trading_day(cursor):
             return cursor.isoformat()
     return None
+
+
+def session_blocks_official_nav(session_kind: str | None) -> bool:
+    """交易时段不得把上一交易日官方净值标成今日已更新。"""
+    return str(session_kind or "") in OFFICIAL_NAV_BLOCKED_SESSIONS
 
 
 def needed_official_nav_date(session: dict | None = None) -> str:

@@ -13,6 +13,50 @@ const HOLDING_RETURN_ESTIMATE_SESSIONS = new Set([
   "trading_day_after_close",
 ]);
 
+/** 与后端 trading_session.OFFICIAL_NAV_BLOCKED_SESSIONS 同步 */
+const OFFICIAL_NAV_BLOCKED_SESSIONS = new Set([
+  "trading_day_intraday",
+  "trading_day_pre_close",
+]);
+
+export function sessionBlocksOfficialNav(sessionKind?: string | null): boolean {
+  const kind = sessionKind ?? readTradingSessionCache()?.session_kind ?? null;
+  return kind != null && OFFICIAL_NAV_BLOCKED_SESSIONS.has(kind);
+}
+
+/** 盘中昨夜残留的 official_nav 不算今日已更新。 */
+export function holdingHasCurrentOfficialNav(
+  holding: Holding,
+  sessionKind?: string | null,
+): boolean {
+  return (
+    holding.daily_return_percent_source === "official_nav" &&
+    !sessionBlocksOfficialNav(sessionKind)
+  );
+}
+
+/** 交易时段把昨夜官方净值改回板块估算，避免「已更新」挂到今日。 */
+export function holdingForCurrentSession(
+  holding: Holding,
+  sessionKind?: string | null,
+): Holding {
+  if (!holdingHasCurrentOfficialNav(holding, sessionKind) && holding.daily_return_percent_source === "official_nav") {
+    return applySectorDailyEstimate({
+      ...holding,
+      daily_profit: null,
+      daily_return_percent: null,
+      daily_return_percent_source: null,
+      amount_includes_today: false,
+      daily_return_is_estimated: undefined,
+      estimated_daily_return_percent: undefined,
+      estimated_holding_profit: undefined,
+      estimated_holding_return_percent: undefined,
+      holding_return_is_estimated: undefined,
+    });
+  }
+  return holding;
+}
+
 const TEST_FUND_CODES = new Set(["000001"]);
 const TEST_NAME_PREFIXES = ["测试", "新基金"];
 const TEST_FUND_NAMES = new Set(["audit"]);
@@ -505,9 +549,12 @@ function computeDailyProfitFromRate(
 
 /**
  * 板块刷新后重算当日收益（忽略 OCR 截图里的当日收益）。
- * 若后端已写入官方净值当日收益率，则保留。
+ * 收盘后官方净值已公布则保留；盘中昨夜残留的 official_nav 改回板块估算。
  */
-export function applySectorDailyEstimate(holding: Holding): Holding {
+export function applySectorDailyEstimate(
+  holding: Holding,
+  sessionKind?: string | null,
+): Holding {
   if (
     holding.profit_accrual_deferred ||
     holding.daily_return_percent_source === "pending_accrual"
@@ -520,7 +567,7 @@ export function applySectorDailyEstimate(holding: Holding): Holding {
     };
   }
   if (
-    holding.daily_return_percent_source === "official_nav" ||
+    holdingHasCurrentOfficialNav(holding, sessionKind) ||
     holding.daily_return_percent_source === "holdings_estimate"
   ) {
     return holding;

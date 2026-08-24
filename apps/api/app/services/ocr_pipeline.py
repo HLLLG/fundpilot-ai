@@ -233,12 +233,16 @@ def _pin_confirmed_holding_settlements(
     *,
     trade_date: str,
     profile_service: FundProfileService,
+    session_kind: str | None = None,
 ) -> list[Holding]:
     """Pin confirmed amounts and mark official-NAV profiles with one profile read."""
+    from app.services.trading_session import session_blocks_official_nav
+
+    pin_official_daily = not session_blocks_official_nav(session_kind)
     official_codes = {
         code
         for holding in holdings
-        if _holding_has_ocr_official_daily(holding)
+        if pin_official_daily and _holding_has_ocr_official_daily(holding)
         if (code := (holding.fund_code or "").strip()) and code != "000000"
     }
     profiles_by_code = (
@@ -253,7 +257,7 @@ def _pin_confirmed_holding_settlements(
             "settled_holding_amount": holding.holding_amount,
             "holding_amount": holding.holding_amount,
         }
-        if _holding_has_ocr_official_daily(holding):
+        if pin_official_daily and _holding_has_ocr_official_daily(holding):
             patch["amount_includes_today"] = True
             code = (holding.fund_code or "").strip()
             profile = profiles_by_code.get(code)
@@ -336,30 +340,42 @@ def _apply_confirmed_holdings_unlocked(
     cache_refresh = refresh_holdings_sector_quotes(processed, cache_only=True)
     if cache_refresh.get("holdings"):
         processed = [Holding.model_validate(item) for item in cache_refresh["holdings"]]
-    from app.services.trading_session import get_effective_trade_date
+    from app.services.trading_session import (
+        build_trading_session,
+        get_effective_trade_date,
+        session_blocks_official_nav,
+    )
     from app.services.fund_nav_service import prime_official_nav_cache
     from app.services.portfolio_holdings_service import _fast_overlay_cached_official_nav
 
-    trade_date = get_effective_trade_date()
+    session = build_trading_session()
+    session_kind = str(session.get("session_kind") or "")
+    trade_date = str(session.get("effective_trade_date") or get_effective_trade_date())
+    keep_ocr_official_daily = not session_blocks_official_nav(session_kind)
     fund_codes_needing_prime = [
         item.fund_code
         for item in processed
         if (item.fund_code or "").strip()
         and item.fund_code != "000000"
-        and not _holding_has_ocr_official_daily(item)
+        and not (keep_ocr_official_daily and _holding_has_ocr_official_daily(item))
     ]
     if fund_codes_needing_prime:
         prime_official_nav_cache(fund_codes_needing_prime, trade_date, cache_only=True)
     processed = [
         holding
-        if _holding_has_ocr_official_daily(holding)
-        else _fast_overlay_cached_official_nav(holding, trade_date)
+        if keep_ocr_official_daily and _holding_has_ocr_official_daily(holding)
+        else _fast_overlay_cached_official_nav(
+            holding,
+            trade_date,
+            session_kind=session_kind,
+        )
         for holding in processed
     ]
     processed = _pin_confirmed_holding_settlements(
         processed,
         trade_date=trade_date,
         profile_service=profile_service,
+        session_kind=session_kind,
     )
     processed = enrich_holdings_estimates(processed)
 

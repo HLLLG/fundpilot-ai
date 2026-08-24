@@ -116,7 +116,7 @@ describe("profileSector", () => {
         sector_name: "黄金股",
         intraday_index_name: "沪港深黄金",
       }),
-    ).toBe("沪港深黄金");
+    ).toBe("黄金股");
   });
 
   it("still shows a named medical flexible-allocation fund", () => {
@@ -176,8 +176,8 @@ describe("profileSector", () => {
 
   it("charts 国证CXO when the related board is CXO", () => {
     const holding = {
-      fund_code: "000960",
-      fund_name: "招商医疗保健股票A",
+      fund_code: "011373",
+      fund_name: "招商前沿医疗保健股票A",
       sector_name: "CXO",
       intraday_index_name: null,
     };
@@ -190,6 +190,6 @@ describe("profileSector", () => {
         ...holding,
         intraday_index_name: "国证CXO",
       }),
-    ).toBe("国证CXO");
+    ).toBe("CXO");
   });
 });
