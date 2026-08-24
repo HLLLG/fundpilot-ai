@@ -47,6 +47,8 @@ type RiskControlsProps = {
   readingModeKey?: string | null;
   /** 流式生成时的当前阶段，替代按钮上的笼统「正在生成...」。 */
   busyLabel?: string | null;
+  /** 发现基金正在跑时禁止再开日报，避免两台设备/两个 Tab 叠两条长流。 */
+  peerBusyMessage?: string | null;
 };
 
 export function RiskControls({
@@ -63,6 +65,7 @@ export function RiskControls({
   errorMessage = null,
   readingModeKey = null,
   busyLabel = null,
+  peerBusyMessage = null,
 }: RiskControlsProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [rolePromptOpen, setRolePromptOpen] = useState(false);
@@ -73,6 +76,7 @@ export function RiskControls({
   }, [readingModeKey]);
 
   const busyButtonLabel = isBusy ? busyLabel?.trim() || "正在生成..." : null;
+  const blockedByPeer = Boolean(peerBusyMessage) && !isBusy;
 
   if (readingModeKey && !settingsOpen) {
     return (
@@ -96,6 +100,10 @@ export function RiskControls({
               <p className="mt-1 text-xs font-semibold text-[var(--danger-fg)]" role="alert">
                 {errorMessage}
               </p>
+            ) : blockedByPeer ? (
+              <p className="mt-1 text-xs font-semibold text-[var(--brand-strong)]" role="status">
+                {peerBusyMessage}
+              </p>
             ) : null}
           </div>
           <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
@@ -109,7 +117,7 @@ export function RiskControls({
             <button
               type="button"
               onClick={onAnalyze}
-              disabled={isBusy || hasBlockingErrors}
+              disabled={isBusy || hasBlockingErrors || blockedByPeer}
               className="btn-primary min-h-11"
             >
               {busyButtonLabel ?? (hasBlockingErrors ? "请先处理严重项" : "重新生成")}
@@ -208,12 +216,19 @@ export function RiskControls({
         >
           {errorMessage}
         </p>
+      ) : blockedByPeer ? (
+        <p
+          className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--brand-soft)] px-3 py-2 text-xs font-semibold leading-5 text-[var(--brand-strong)]"
+          role="status"
+        >
+          {peerBusyMessage}
+        </p>
       ) : null}
 
       <button
         type="button"
         onClick={onAnalyze}
-        disabled={isBusy || hasBlockingErrors}
+        disabled={isBusy || hasBlockingErrors || blockedByPeer}
         data-testid="analyze"
         className="btn-primary mt-4 w-full !rounded-xl"
       >

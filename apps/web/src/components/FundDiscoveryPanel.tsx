@@ -57,6 +57,8 @@ import {
   loadDiscoveryFocusSectors,
   setDiscoveryFocusSectors,
 } from "@/lib/discoveryFocusSectors";
+import { ANALYZE_BLOCKS_DISCOVERY } from "@/lib/researchStreamMutex";
+import { streamHandoffFailureMessage } from "@/lib/streamHttpError";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
 import { startVisibilityAwarePolling } from "@/lib/visibilityPolling";
 import {
@@ -136,6 +138,7 @@ type FundDiscoveryPanelProps = {
   onPendingDiscoveryReportApplied: () => void;
   onRegisterDiscoveryScanRetry: (retry: (() => void) | null) => void;
   streamingDiscovery: StreamingDiscoveryState | null;
+  analysisBusy?: boolean;
   onStreamingDiscoveryChange: Dispatch<SetStateAction<StreamingDiscoveryState | null>>;
   onDiscoveryStreamComplete: (report: FundDiscoveryReport) => void;
   onDiscoveryStreamStart?: () => void;
@@ -152,6 +155,7 @@ export function FundDiscoveryPanel({
   onPendingDiscoveryReportApplied,
   onRegisterDiscoveryScanRetry,
   streamingDiscovery,
+  analysisBusy = false,
   onStreamingDiscoveryChange,
   onDiscoveryStreamComplete,
   onDiscoveryStreamStart,
@@ -329,6 +333,13 @@ export function FundDiscoveryPanel({
   }, [discoveryStreamAbortRef, onDiscoveryJobIdChange, onStreamingDiscoveryChange]);
 
   const handleScan = useCallback(async () => {
+    if (analysisBusy) {
+      setFeedback({
+        tone: "info",
+        message: ANALYZE_BLOCKS_DISCOVERY,
+      });
+      return;
+    }
     setIsSubmitting(true);
     setFeedback(null);
     if (report) {
@@ -473,7 +484,11 @@ export function FundDiscoveryPanel({
       onStreamingDiscoveryChange(null);
       setFeedback({
         tone: "error",
-        message: `${userFacingErrorMessage(lastError, "流式扫描中断")}。没有转入后台任务，请再点一次重新扫描。`,
+        message: streamHandoffFailureMessage(
+          lastError,
+          "流式扫描中断",
+          "没有转入后台任务，请再点一次重新扫描。",
+        ),
       });
     } catch (scanError) {
       onStreamingDiscoveryChange(null);
@@ -485,6 +500,7 @@ export function FundDiscoveryPanel({
       setIsSubmitting(false);
     }
   }, [
+    analysisBusy,
     budgetYuan,
     discoveryPrompt.is_custom,
     discoveryPrompt.role_prompt,
@@ -521,6 +537,7 @@ export function FundDiscoveryPanel({
   };
 
   const isRunning = isSubmitting || Boolean(discoveryJobId) || Boolean(streamingDiscovery);
+  const blockedByAnalysis = analysisBusy && !isRunning;
   const reportedScanGoal =
     report?.discovery_facts?.effective_configuration?.scan_goal ??
     report?.discovery_facts?.portfolio_gap?.scan_mode;
@@ -736,7 +753,7 @@ export function FundDiscoveryPanel({
               <button
                 type="button"
                 data-testid="discovery-scan-button"
-                disabled={isRunning}
+                disabled={isRunning || blockedByAnalysis}
                 onClick={() => void handleScan()}
                 className="btn-primary min-h-11 w-full !rounded-xl sm:w-auto"
               >
@@ -912,6 +929,8 @@ export function FundDiscoveryPanel({
             message={feedback.message}
             onDismiss={() => setFeedback(null)}
           />
+        ) : blockedByAnalysis ? (
+          <InlineNotice tone="info" message={ANALYZE_BLOCKS_DISCOVERY} />
         ) : null}
 
         {streamingDiscovery ? (

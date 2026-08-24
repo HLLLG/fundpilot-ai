@@ -53,6 +53,7 @@ import {
   type FundRecommendationPartial,
   type StreamingReportState,
 } from "@/lib/streamApi";
+import { DISCOVERY_BLOCKS_ANALYZE } from "@/lib/researchStreamMutex";
 import type { StreamingDiscoveryState } from "@/lib/discoveryStreamApi";
 import { useAuth } from "@/components/AuthProvider";
 import { notifyDesktop, ensureNotificationPermission } from "@/lib/notifications";
@@ -111,6 +112,7 @@ import { MePage } from "@/components/MePage";
 import { InlineNotice } from "@/components/InlineNotice";
 import { activeAnalysisRolePrompt } from "@/lib/analysisPrompt";
 import { resolveReportProviderStatus } from "@/lib/reportPresentation";
+import { streamHandoffFailureMessage } from "@/lib/streamHttpError";
 import { userFacingErrorMessage } from "@/lib/userFacingError";
 import { subscribeAgentJobStarted } from "@/lib/agentJobEvents";
 import {
@@ -983,6 +985,10 @@ export function Dashboard() {
   );
 
   const runAnalyze = async (targetHoldings: Holding[]) => {
+    if (streamingDiscovery || discoveryJobId) {
+      setAnalyzeError(DISCOVERY_BLOCKS_ANALYZE);
+      return;
+    }
     if (!targetHoldings.length) {
       // 文案省略：workflowBlockers 的 no-holdings 已由 RiskControls 行内展示，
       // 且该状态下生成按钮本身是禁用的。
@@ -1169,7 +1175,11 @@ export function Dashboard() {
       setStreamingReport(null);
       lastAnalysisStageRef.current = null;
       setAnalyzeError(
-        `${userFacingErrorMessage(lastError, "流式生成中断")}。没有转入后台任务，请再点一次生成日报。`,
+        streamHandoffFailureMessage(
+          lastError,
+          "流式生成中断",
+          "没有转入后台任务，请再点一次生成日报。",
+        ),
       );
     } catch (error) {
       setStreamingReport(null);
@@ -1836,6 +1846,9 @@ export function Dashboard() {
                 hasBlockingErrors={blockingErrors}
                 blockingMessage={blockingMessage}
                 errorMessage={analyzeError}
+                peerBusyMessage={
+                  streamingDiscovery || discoveryJobId ? DISCOVERY_BLOCKS_ANALYZE : null
+                }
                 readingModeKey={report?.id ?? null}
               />
               {report || streamingReport ? (
@@ -1913,6 +1926,7 @@ export function Dashboard() {
               onPendingDiscoveryReportApplied={clearPendingDiscoveryReport}
               onRegisterDiscoveryScanRetry={registerDiscoveryScanRetry}
               streamingDiscovery={streamingDiscovery}
+              analysisBusy={Boolean(streamingReport || activeJobId || isSubmitting)}
               onStreamingDiscoveryChange={setStreamingDiscovery}
               onDiscoveryStreamComplete={handleDiscoveryStreamComplete}
               onDiscoveryStreamStart={() => {

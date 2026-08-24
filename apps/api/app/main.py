@@ -84,6 +84,7 @@ from app.services.async_sse import (
 )
 from app.services.discovery_streaming import stream_discovery
 from app.services.stream_session_store import append_stream_followup
+from app.services.research_stream_mutex import try_acquire_research_stream
 from app.services.stream_admission import try_acquire_stream_slot
 from app.database import get_portfolio_summary
 from app.services.fund_data import FundDataService
@@ -925,8 +926,16 @@ async def analyze_stream_endpoint(
     request = request.model_copy(update={"analysis_mode": "deep"})
     user_id = get_request_user_id()
     settings = get_settings()
+    research_slot, research_conflict = try_acquire_research_stream("analyze")
+    if research_slot is None:
+        raise HTTPException(
+            status_code=409,
+            detail=research_conflict,
+            headers={"Retry-After": str(settings.sse_retry_after_seconds)},
+        )
     stream_slot = try_acquire_stream_slot(settings.sse_max_concurrent_per_process)
     if stream_slot is None:
+        research_slot.release()
         raise HTTPException(
             status_code=429,
             detail="当前深度分析任务较多，请稍后重试",
@@ -951,6 +960,7 @@ async def analyze_stream_endpoint(
                 yield chunk
         finally:
             stream_slot.release()
+            research_slot.release()
 
     return StreamingResponse(
         event_stream(),
@@ -1072,8 +1082,16 @@ async def fund_discovery_stream_endpoint(
     request = request.model_copy(update={"analysis_mode": "deep"})
     user_id = get_request_user_id()
     settings = get_settings()
+    research_slot, research_conflict = try_acquire_research_stream("discovery")
+    if research_slot is None:
+        raise HTTPException(
+            status_code=409,
+            detail=research_conflict,
+            headers={"Retry-After": str(settings.sse_retry_after_seconds)},
+        )
     stream_slot = try_acquire_stream_slot(settings.sse_max_concurrent_per_process)
     if stream_slot is None:
+        research_slot.release()
         raise HTTPException(
             status_code=429,
             detail="当前深度分析任务较多，请稍后重试",
@@ -1123,6 +1141,7 @@ async def fund_discovery_stream_endpoint(
                     stream_state["stage"],
                 )
             stream_slot.release()
+            research_slot.release()
 
     return StreamingResponse(
         event_stream(),

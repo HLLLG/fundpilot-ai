@@ -419,6 +419,19 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.getByRole("group", { name: "荐基决策策略" })).toBeInTheDocument();
   });
 
+  it("does not mention a background job when the API is still starting", async () => {
+    vi.mocked(streamDiscovery).mockRejectedValue(
+      new Error("服务正在启动，请稍后再点一次。"),
+    );
+    renderPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
+    const failureMessage = await screen.findByText("服务正在启动，请稍后再点一次。");
+    expect(failureMessage).toBeInTheDocument();
+    expect(screen.queryByText(/没有转入后台任务/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/initialization in progress/)).not.toBeInTheDocument();
+  });
+
   it("retries a transient stream failure once and does not start a background job", async () => {
     vi.mocked(streamDiscovery)
       .mockRejectedValueOnce(new Error("Failed to fetch"))
@@ -465,14 +478,14 @@ describe("FundDiscoveryPanel stream lifecycle", () => {
     expect(screen.queryByText(/没有转入后台任务/)).not.toBeInTheDocument();
   });
 
-  it("starts a discovery stream even when a daily report stream is already active", async () => {
+  it("does not start a discovery stream when a daily report is already running", async () => {
     vi.mocked(streamDiscovery).mockResolvedValue(undefined);
-    renderPanel();
+    renderPanel({ analysisBusy: true });
 
+    expect(screen.getByRole("button", { name: "扫描今日机会" })).toBeDisabled();
+    expect(screen.getByText("日报正在生成，完成后即可扫描。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "扫描今日机会" }));
-    await waitFor(() => expect(streamDiscovery).toHaveBeenCalledTimes(1));
-    expect(screen.queryByText(/日报正在流式生成/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/同时开两条长连接/)).not.toBeInTheDocument();
+    expect(streamDiscovery).not.toHaveBeenCalled();
   });
 
   it("keeps the previous report visible while a new stream is running", async () => {

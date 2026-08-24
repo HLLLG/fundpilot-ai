@@ -90,6 +90,24 @@ it("shows the current stream stage while generating a report", () => {
   expect(screen.getByRole("button", { name: "正在审校报告…" })).toBeDisabled();
 });
 
+it("disables generate while discovery is running", () => {
+  const onAnalyze = vi.fn();
+  render(
+    <RiskControls
+      {...props()}
+      onAnalyze={onAnalyze}
+      peerBusyMessage="发现基金正在扫描，完成后即可生成日报。"
+    />,
+  );
+
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "发现基金正在扫描，完成后即可生成日报。",
+  );
+  expect(screen.getByTestId("analyze")).toBeDisabled();
+  fireEvent.click(screen.getByTestId("analyze"));
+  expect(onAnalyze).not.toHaveBeenCalled();
+});
+
 it("shows only actionable blocking details instead of a generic review count", () => {
   render(
     <RiskControls
