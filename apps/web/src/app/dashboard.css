@@ -1293,3 +1293,263 @@
   .workflow-rail { padding:0 .75rem; }
   .workflow-rail li { align-items:flex-start; flex-direction:column; justify-content:center; gap:.1rem; }
 }
+
+/* ── 日报 / 荐基扫描航线 ── */
+.discovery-scan-chart {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 0.95rem 1.1rem 1.05rem;
+  color: #e7efe8;
+  background:
+    radial-gradient(320px 110px at 100% -20px, rgba(181, 139, 69, 0.22), transparent 62%),
+    linear-gradient(180deg, #123847 0%, #071f2b 100%);
+}
+
+.discovery-scan-chart::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  background-image:
+    linear-gradient(rgba(231, 239, 232, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(231, 239, 232, 0.045) 1px, transparent 1px);
+  background-size: 22px 22px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.7), transparent 88%);
+}
+
+.discovery-scan-chart[data-status="failed"] {
+  background:
+    radial-gradient(280px 120px at 0% -10px, rgba(200, 30, 58, 0.22), transparent 58%),
+    linear-gradient(180deg, #2a1820 0%, #071f2b 100%);
+}
+
+.discovery-scan-chart-head,
+.discovery-scan-chart-track,
+.discovery-scan-chart-fault {
+  position: relative;
+  z-index: 1;
+}
+
+.discovery-scan-chart-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.95rem;
+}
+
+.discovery-scan-chart-eyebrow {
+  margin: 0 0 0.28rem;
+  color: color-mix(in srgb, var(--accent-soft) 78%, transparent);
+  font-size: 0.625rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.discovery-scan-chart-kicker {
+  margin: 0;
+  color: #f6f3ea;
+  font-family: var(--font-display);
+  font-size: 0.98rem;
+  font-weight: 800;
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+}
+
+.discovery-scan-chart-count {
+  display: flex;
+  align-items: baseline;
+  gap: 0.15rem;
+  margin: 0;
+  color: color-mix(in srgb, #f1e8d7 72%, transparent);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.discovery-scan-chart-count strong {
+  color: var(--accent);
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.discovery-scan-chart-track {
+  position: relative;
+  padding: 0.15rem 0 0;
+}
+
+.discovery-scan-chart-rail {
+  position: absolute;
+  top: 0.565rem;
+  right: calc(100% / 14);
+  left: calc(100% / 14);
+  z-index: 0;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(231, 239, 232, 0.14);
+}
+
+.discovery-scan-chart-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background:
+    linear-gradient(90deg, #8f6a2e 0%, var(--accent) 55%, #f0d59a 100%);
+  box-shadow: 0 0 10px rgba(181, 139, 69, 0.45);
+  transition: width var(--motion-large) var(--ease-out);
+}
+
+.discovery-scan-chart[data-status="failed"] .discovery-scan-chart-fill {
+  background: linear-gradient(90deg, #8f6a2e 0%, #c81e3a 100%);
+}
+
+.discovery-scan-chart-steps {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.discovery-scan-chart-step {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.34rem;
+  min-width: 0;
+  text-align: center;
+}
+
+.discovery-scan-chart-node {
+  display: flex;
+  width: 1.15rem;
+  height: 1.15rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: #31464d;
+  box-shadow: 0 0 0 4px rgba(7, 31, 43, 0.55);
+  color: transparent;
+  transition:
+    transform var(--motion-base) var(--ease-out),
+    background var(--motion-base) var(--ease-out),
+    border-color var(--motion-base) var(--ease-out),
+    color var(--motion-base) var(--ease-out);
+}
+
+.discovery-scan-chart-step[data-state="pending"] .discovery-scan-chart-node {
+  width: 0.55rem;
+  height: 0.55rem;
+  margin: 0.3rem 0;
+  background: #6b7c82;
+  box-shadow: 0 0 0 4px rgba(7, 31, 43, 0.45);
+}
+
+.discovery-scan-chart-step[data-state="done"] .discovery-scan-chart-node {
+  background: #d7b36a;
+  color: #071f2b;
+}
+
+.discovery-scan-chart-step[data-state="current"] .discovery-scan-chart-node {
+  width: 1.28rem;
+  height: 1.28rem;
+  border-color: var(--accent);
+  background:
+    radial-gradient(circle at 50% 50%, #f4e3be 0 28%, #123847 30% 100%);
+  box-shadow:
+    0 0 0 4px rgba(7, 31, 43, 0.55),
+    0 0 0 6px rgba(181, 139, 69, 0.28);
+  animation: discovery-scan-pulse 1.6s var(--ease-out) infinite;
+}
+
+.discovery-scan-chart-step[data-state="failed"] .discovery-scan-chart-node {
+  width: 1.28rem;
+  height: 1.28rem;
+  background: #c81e3a;
+  color: #fff7f7;
+  box-shadow:
+    0 0 0 4px rgba(7, 31, 43, 0.55),
+    0 0 0 6px rgba(200, 30, 58, 0.28);
+}
+
+.discovery-scan-chart-label {
+  color: color-mix(in srgb, #d5ddd6 70%, transparent);
+  font-size: 0.625rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.discovery-scan-chart-step[data-state="done"] .discovery-scan-chart-label {
+  color: #f6f3ea;
+}
+
+.discovery-scan-chart-step[data-state="current"] .discovery-scan-chart-label {
+  color: var(--accent);
+}
+
+.discovery-scan-chart-step[data-state="failed"] .discovery-scan-chart-label {
+  color: #f4c4cc;
+}
+
+.discovery-scan-chart-hint {
+  display: none;
+  color: color-mix(in srgb, #c5d0c8 62%, transparent);
+  font-size: 0.625rem;
+  line-height: 1.2;
+}
+
+.discovery-scan-chart-fault {
+  margin: 0.75rem 0 0;
+  color: #f4c4cc;
+  font-size: 0.6875rem;
+  line-height: 1.45;
+}
+
+@keyframes discovery-scan-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 4px rgba(7, 31, 43, 0.55),
+      0 0 0 6px rgba(181, 139, 69, 0.22);
+  }
+  50% {
+    box-shadow:
+      0 0 0 4px rgba(7, 31, 43, 0.55),
+      0 0 0 9px rgba(181, 139, 69, 0.08);
+  }
+}
+
+@media (min-width: 640px) {
+  .discovery-scan-chart {
+    padding: 1.05rem 1.25rem 1.15rem;
+  }
+
+  .discovery-scan-chart-hint {
+    display: block;
+  }
+
+  .discovery-scan-chart-label {
+    font-size: 0.6875rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .discovery-scan-chart-fill,
+  .discovery-scan-chart-node {
+    transition: none;
+  }
+
+  .discovery-scan-chart-step[data-state="current"] .discovery-scan-chart-node {
+    animation: none;
+  }
+}
