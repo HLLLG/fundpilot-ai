@@ -183,7 +183,7 @@ npm run dev
 | `FUND_AI_NEWS_SUMMARIZE` | 是否用 Flash 按主题生成 `topic_briefs` |
 | `FUND_AI_RUNTIME_ROLE` | `all`（本地默认）/ `api` / `worker`；生产已拆开请求与后台任务 |
 | `FUND_AI_LANGGRAPH_ENABLED` | 默认 `true`。追问 / 日报 / 荐基走编排轨迹；`false` 回线性实现，不改仓位与质量门 |
-| `WEB_CONCURRENCY` | Uvicorn worker 数；生产 4 核默认 2，本地仍为 1 |
+| `WEB_CONCURRENCY` | Uvicorn worker 数；3.6G 生产机默认 1，双流靠进程内线程池；内存充足时可再调高 |
 
 DeepSeek 只在 TCP/TLS 尚未建立时自动重试连接错误，不会重放已经开始响应的模型请求。
 

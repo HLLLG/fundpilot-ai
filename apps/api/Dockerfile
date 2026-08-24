@@ -34,9 +34,9 @@ COPY var/factor_ic /app/var/factor_ic
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
-ENV WEB_CONCURRENCY=2
+ENV WEB_CONCURRENCY=1
 
 EXPOSE 8000
 
-# 2 workers + 流式 SSE 走 async（见 async_sse.py）；worker 数可由部署环境覆盖。
+# 1 worker + 流式 SSE 走 async（见 async_sse.py）；双流靠进程内线程池，worker 数可由部署环境覆盖。
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

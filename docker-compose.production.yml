@@ -29,7 +29,7 @@ services:
       FUND_AI_PROJECT_ROOT: /app
       FUND_AI_RUNTIME_ROLE: api
       FUND_AI_BACKGROUND_WORKER_HEARTBEAT_PATH: /app/data/background-worker-heartbeat.json
-      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
     command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     volumes:
       - /srv/fundpilot/data:/app/data

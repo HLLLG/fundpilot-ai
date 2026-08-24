@@ -32,10 +32,11 @@ COPY apps/api/var/factor_ic /app/var/factor_ic
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
-# Uvicorn reads WEB_CONCURRENCY when --workers is omitted. Two workers are the
-# safe default for the 4-core Lighthouse host because each worker also owns
-# bounded market-data and analysis thread pools.
-ENV WEB_CONCURRENCY=2
+# Uvicorn reads WEB_CONCURRENCY when --workers is omitted. One worker is the
+# safe default on the 3.6G Lighthouse host: a second spawned process doubles
+# RSS, while daily-report and discovery SSE still run together on in-process
+# thread pools (deepseek_max_concurrent_streams=2).
+ENV WEB_CONCURRENCY=1
 
 EXPOSE 8000
 
