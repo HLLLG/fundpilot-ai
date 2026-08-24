@@ -53,7 +53,6 @@ import {
   isDailyProfitEstimated,
   isHoldingReturnEstimated,
 } from "@/lib/holdingDisplay";
-import type { SectorQuoteMeta } from "@/lib/api";
 import { holdingDisplaySectorLabel } from "@/lib/profileSector";
 import { loadAmountsHidden, saveAmountsHidden } from "@/lib/storage";
 import { formatHoldingsColumnDateShort, formatTradeDateShort } from "@/lib/tradeDateLabel";
@@ -274,7 +273,6 @@ export function YangjibaoHoldingsBoard({
     refresh,
     selectMapping,
     dismissMapping,
-    sectorMetaByFundCode,
   } = sectorRefresh;
 
   useEffect(() => {
@@ -675,8 +673,7 @@ export function YangjibaoHoldingsBoard({
                 holding.daily_return_is_estimated === true ||
                 holding.daily_return_percent_source === "holdings_estimate");
             const sectorReturn = unsettledOnly ? null : resolveSectorBoardReturnPercent(holding);
-            const sectorMeta = sectorMetaByFundCode[holding.fund_code] as SectorQuoteMeta | undefined;
-            const sectorLabel = unsettledOnly ? "—" : holdingDisplaySectorLabel(holding, sectorMeta);
+            const sectorLabel = unsettledOnly ? "—" : holdingDisplaySectorLabel(holding);
             const settledAmount = getSettledHoldingAmount(holding);
             const amountText = unsettledOnly ? pendingBuy : settledAmount;
             const weight = unsettledOnly ? null : computeHoldingWeight(holding, totalAssets);

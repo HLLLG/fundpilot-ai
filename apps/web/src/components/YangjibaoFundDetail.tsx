@@ -286,7 +286,7 @@ export function YangjibaoFundDetail({
     detail?.fund_code_resolved === true && activeHolding.fund_code !== "000000";
   const yearReturn = detail?.year_return_percent ?? null;
 
-  const quoteLabel = holdingDisplaySectorLabel(activeHolding, sectorMeta);
+  const quoteLabel = holdingDisplaySectorLabel(activeHolding);
   const sectorReturn = resolveSectorBoardReturnPercent(activeHolding);
   // 盘中优先用分时末点（与曲线同源），避免板块刷新缓存与分时不同步
   const displaySectorReturn =

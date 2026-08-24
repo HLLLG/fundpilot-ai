@@ -142,7 +142,6 @@ function inferSectorLabelFromFundName(fundName: string | null | undefined): stri
 /** 持仓列表「板块」列展示名：档案/OCR → 基金名推断 */
 export function holdingDisplaySectorLabel(
   holding: Pick<Holding, "fund_code" | "fund_name" | "sector_name" | "intraday_index_name">,
-  _sectorMeta?: SectorQuoteMeta | null,
 ): string {
   if (isUnthemedAllocationFund(holding.fund_name)) {
     return "—";
