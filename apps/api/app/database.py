@@ -2412,7 +2412,7 @@ def rewrite_fund_profile_associated_sector_for_code(
     sector_name: str,
     intraday_index_name: str | None,
 ) -> int:
-    """同步档案副本里的关联板块，避免详情页继续读到国证CXO。"""
+    """同步档案副本里的关联板块，避免详情页继续读到过期身份。"""
 
     from app.services.fund_profile import invalidate_fund_profile_cache
 

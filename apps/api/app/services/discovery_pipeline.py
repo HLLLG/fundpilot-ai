@@ -728,6 +728,7 @@ def _score_select_and_persist_directions(
     展示出来的状态和入选依据就是两套东西。
     """
     from app.services.sector_direction_state import (
+        annotate_family_direction_divergence,
         apply_direction_state_hysteresis,
         load_previous_direction_states,
         record_direction_states,
@@ -759,6 +760,10 @@ def _score_select_and_persist_directions(
         previous_states=load_previous_direction_states(previous_trade_date),
     )
     record_direction_states(rows, trade_date=effective_trade_date)
+    # 同族口径（细分↔父行业，如 CXO↔医疗）状态相互矛盾时标注到行上，guard 据此在
+    # 买入卡上披露"同主题另一口径本轮已判不具备参与条件"。必须在选择之前：invalid
+    # 的那一侧通常选不进方向名额，选完再看就找不到它了。
+    annotate_family_direction_divergence(rows)
     scored_labels = {
         label
         for row in rows

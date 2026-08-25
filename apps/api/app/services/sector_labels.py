@@ -218,6 +218,61 @@ def normalize_sector_label(label: str | None) -> str:
     return cleaned
 
 
+#: 细分主题 → 父行业（同族板块）。
+#:
+#: 这不是展示别名，而是**同族关系**的唯一事实源，同时服务两件事：
+#:
+#: * 展示层：细分主题未过组合验证门槛时回退父行业（`fund_holdings_sector_infer`
+#:   的 `resolve_display_sector`）——一只医药基金会因季报穿透结果在「CXO」与「医疗」
+#:   之间漂移，两个键指向的是同一群基金里高度重叠的敞口。
+#: * 跨链路一致性：正因为上面这种漂移，荐基与日报可能各自拿到同族的两个键（推荐
+#:   000960=CXO、持仓 011373=医疗），两个键的行情代理不同（BK1600 vs 399989），
+#:   方向状态在打分边界上可以向相反方向翻转。跨报告披露与方向分歧披露必须把它们
+#:   当同族看待，否则用户会看到"同一天一边减仓医疗、一边买入 CXO"的裸矛盾且没有
+#:   任何解释（2026-08 线上实测）。
+#:
+#: 刻意**只收**细分↔父行业这一层：医药/医疗/创新药/医疗器械这类并列宽主题各自有
+#: 独立的基金人群与代理指数，把它们并成一族是另一个（未回测的）产品决策。
+SECTOR_FAMILY_PARENT: dict[str, str] = {
+    "半导体材料": "半导体",
+    "CPO": "通信技术",
+    "CXO": "医疗",
+    "算力租赁": "计算机",
+    "PCB": "电子",
+}
+
+
+def sector_family_root(label: str | None) -> str:
+    """同族根标签：细分主题归到父行业，其余标签是自己的根。空标签返回空串。"""
+    normalized = normalize_sector_label(label)
+    return SECTOR_FAMILY_PARENT.get(normalized, normalized)
+
+
+def same_sector_family(left: str | None, right: str | None) -> bool:
+    """两个板块标签是否同族（相等，或经细分→父行业归并后相等）。"""
+    left_root = sector_family_root(left)
+    return bool(left_root) and left_root == sector_family_root(right)
+
+
+def sector_family_relation(label: str | None, other: str | None) -> str | None:
+    """`other` 相对 `label` 的同族关系；不同族或同名返回 None。
+
+    返回值供披露文案选词：``fine_theme``（对方是本标签的细分口径）、``parent``
+    （对方是本标签的父行业/整体口径）、``sibling``（同父的两个细分）。
+    """
+    label_key = normalize_sector_label(label)
+    other_key = normalize_sector_label(other)
+    if not label_key or not other_key or label_key == other_key:
+        return None
+    if not same_sector_family(label_key, other_key):
+        return None
+    if SECTOR_FAMILY_PARENT.get(other_key) == label_key:
+        return "fine_theme"
+    if SECTOR_FAMILY_PARENT.get(label_key) == other_key:
+        return "parent"
+    return "sibling"
+
+
 def build_sector_candidates(label: str | None) -> list[str]:
     base = normalize_sector_label(label)
     if not base:
@@ -382,32 +437,16 @@ def infer_sector_label_from_fund_name(fund_name: str | None) -> str | None:
     return None
 
 
-_HEALTHCARE_PARENT_LOCKS = ("医药", "医疗")
-
-
 def healthcare_parent_lock_against_cxo(
     fund_name: str | None,
     *,
     contract_text: str | None = None,
 ) -> str | None:
-    """名字或合同已点明医疗/医药时，返回锁定的父主题。
+    """已退役：不再用名字/合同把 CXO 重仓锁回医疗/医药。
 
-    医疗保健行业基金重仓药明康德是常态，不能因此改写成 CXO 基金。
-    名称或合同自己写了 CXO 的，不锁父主题，细分仍可生效。
+    养基宝关联板块跟当期重仓走。医疗保健基金只要季报穿透过了 CXO 组合门槛
+    （BK1600 成分占医疗服务多数），就自动漂到 CXO；不够线仍停在医疗。
     """
 
-    name = normalize_sector_label((fund_name or "").replace("...", ""))
-    contract = normalize_sector_label((contract_text or "").replace("...", ""))
-    haystack = f"{name}{contract}"
-    if not haystack:
-        return None
-    if "cxo" in haystack.lower():
-        return None
-    if fund_name:
-        semantic = infer_semantic_sector_from_fund_name(fund_name)
-        if semantic is not None and semantic.sector_name in _HEALTHCARE_PARENT_LOCKS:
-            return semantic.sector_name
-    for token in _HEALTHCARE_PARENT_LOCKS:
-        if token in name or token in contract:
-            return token
+    del fund_name, contract_text
     return None

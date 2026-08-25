@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping, Sequence
 
+from app.services.sector_labels import sector_family_relation, sector_family_root
 from app.services.sector_opportunity_scoring import (
     ENTRY_FORMING,
     ENTRY_INVALID,
@@ -190,6 +191,65 @@ def apply_direction_state_hysteresis(
             ]
         result.append(item)
     return result
+
+
+def annotate_family_direction_divergence(
+    rows: Sequence[dict[str, Any]],
+) -> Sequence[dict[str, Any]]:
+    """同族板块（细分↔父行业，如 CXO↔医疗）当日入场状态相互矛盾时，互相标注对方状态。
+
+    两个同族键的行情代理不同（CXO=BK1600、医疗=399989/BK0727），方向状态分开计算，
+    在打分边界上完全可以同日向相反方向翻转——2026-08 线上实测：「医疗」判 invalid
+    触发持仓大幅减仓的同日，「CXO」判 ready_to_start 给出分批买入，两张卡片没有任何
+    一句话解释这不是自相矛盾。
+
+    只标注**会产生相反动作**的组合：一侧可执行（ready 或试仓通道激活）、另一侧
+    invalid。同为 forming/pullback 的正常差异不算矛盾，不标注。只加注解
+    （``family_direction_divergence``），不改任何状态或分数——披露不是仲裁。
+
+    必须在滞回**之后**、选择**之前**调用：invalid 的那一侧通常选不进方向名额，
+    选完再看整个横截面就找不到它了。
+    """
+    by_root: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        label = str(row.get("sector_label") or "").strip()
+        if not label:
+            continue
+        by_root.setdefault(sector_family_root(label), []).append(row)
+    for group in by_root.values():
+        if len(group) < 2:
+            continue
+        for row in group:
+            label = str(row.get("sector_label") or "").strip()
+            state = str(row.get("entry_state") or "")
+            executable = (
+                bool(row.get("execution_eligible")) or state == ENTRY_READY_TO_START
+            )
+            conflicts: list[dict[str, Any]] = []
+            for other in group:
+                if other is row:
+                    continue
+                other_label = str(other.get("sector_label") or "").strip()
+                other_state = str(other.get("entry_state") or "")
+                other_executable = (
+                    bool(other.get("execution_eligible"))
+                    or other_state == ENTRY_READY_TO_START
+                )
+                if (executable and other_state == ENTRY_INVALID) or (
+                    state == ENTRY_INVALID and other_executable
+                ):
+                    conflicts.append(
+                        {
+                            "sector_label": other_label,
+                            "entry_state": other_state,
+                            "relation": sector_family_relation(label, other_label),
+                        }
+                    )
+            if conflicts:
+                row["family_direction_divergence"] = conflicts
+    return rows
 
 
 # --------------------------------------------------------------------------
@@ -356,6 +416,7 @@ __all__ = [
     "READY_CONFIRMATION_DAYS",
     "SECTOR_DIRECTION_STATE_SCHEMA_VERSION",
     "DirectionStateRecord",
+    "annotate_family_direction_divergence",
     "apply_direction_state_hysteresis",
     "load_previous_direction_states",
     "record_direction_states",

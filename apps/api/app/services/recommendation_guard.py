@@ -564,6 +564,11 @@ def apply_recommendation_guards(
         cross_note = _discovery_cross_reference_note(facts, holding)
         if cross_note:
             copy.validation_notes = [*copy.validation_notes, cross_note]
+        family_divergence_note = _direction_exit_family_note(
+            sector_opportunity, facts_row
+        )
+        if family_divergence_note:
+            copy.validation_notes = [*copy.validation_notes, family_divergence_note]
         # 批次费用时机：最终动作是减仓类且有比例时，按先进先出判断触及的批次会不会
         # 撞上 7 天惩罚费窗口。纯事实披露——费用贵不构成回避减仓的理由，只帮用户在
         # "今天减"与"过窗后减"之间权衡。此时 action 与比例都已是终值（escalation
@@ -2183,11 +2188,16 @@ def _evidence_composite_summary(evidence: dict | None, ic_status: dict | None) -
 # 方向证据**整层**缺席时的降级原因。区分两种缺席是为了让用户和运维能分辨"这只持仓压根
 # 没有板块"与"今天板块证据没取到"——前者要去补板块映射，后者等下一份日报就好。
 def _discovery_cross_reference_note(facts: dict | None, holding) -> str | None:
-    """当日发现基金对该持仓所属板块推荐了新载体时的披露文案；没有就 None。
+    """当日发现基金对该持仓所属板块（或同族细分板块）推荐了新载体时的披露文案。
 
     只解释"两侧为什么不矛盾"，不搬动作：发现的推荐面向新资金（买哪只更好的载体），
-    本卡片只对已持有的这只负责，方向判断两侧共用同一套打分。命中多只时只点名第一只、
-    带上数量——validation_notes 是披露渠道，不是第二份推荐列表。
+    本卡片只对已持有的这只负责。命中多只时只点名第一只、带上数量——validation_notes
+    是披露渠道，不是第二份推荐列表。
+
+    同名板块与同族口径要说不同的话：同名时两侧共用同一行方向状态；同族（持仓「医疗」
+    ← 推荐「CXO」这类细分↔父行业）是**两条分开计算的方向状态**（行情代理不同），
+    同一天完全可以一边判退出、一边判可布局——必须把"这不是打脸"讲出来，否则用户
+    看到的就是裸矛盾。
     """
     if not isinstance(facts, dict) or holding is None:
         return None
@@ -2205,12 +2215,44 @@ def _discovery_cross_reference_note(facts: dict | None, holding) -> str | None:
     name = str(first.get("fund_name") or "").strip() or str(first.get("fund_code") or "").strip()
     action = str(first.get("action") or "").strip() or "分批买入"
     extra = f" 等 {len(rows)} 只" if len(rows) > 1 else ""
+    rec_label = normalize_sector_label(str(first.get("sector_label") or "")) or label
+    if rec_label != label:
+        return (
+            f"发现基金今日报告对同主题的「{rec_label}」口径推荐了新的候选载体"
+            f"（{name}{extra}，动作「{action}」）。「{label}」与「{rec_label}」是"
+            "同一主题家族里两条分开计算的方向状态（行情代理不同），结论可以不一致："
+            f"本卡片只按你持有的「{label}」口径给出加/减/退，发现基金回答的是"
+            "细分口径的新资金能不能进。两侧都成立时请按同主题总敞口合并权衡，"
+            "避免一边减仓一边开新仓放大同主题暴露。"
+        )
     return (
         f"发现基金今日报告对「{label}」方向另推荐了新的候选载体（{name}{extra}，"
         f"动作「{action}」）。两侧共用同一套方向打分：方向仍成立时，本卡片只处理"
         "已持有这只载体（落后则停加，不等于卖掉方向）；发现基金回答的是有没有"
         "更好的新工具，不能理解成一边减仓一边开新仓。"
     )
+
+
+def _direction_exit_family_note(
+    sector_opportunity: dict | None,
+    facts_row: dict | None,
+) -> str | None:
+    """方向退出判定携带同族口径分歧披露时，把它原样带到卡片 validation_notes。
+
+    文案在 `report_sector_opportunity._attach_family_direction_divergence` 生成（同族
+    口径当日在全局账本仍可布局，如「医疗」退出但「CXO」ready）。取值优先级与
+    `resolve_escalation_floor` 的 `direction_exit` 完全一致——guard 与 facts 不得各看
+    一套数据。纯披露：不改动作，也不参与任何档位合并。
+    """
+    exit_row = (
+        sector_opportunity.get("direction_exit")
+        if isinstance(sector_opportunity, dict)
+        else None
+    ) or ((facts_row or {}).get("direction_exit"))
+    if not isinstance(exit_row, dict):
+        return None
+    note = str(exit_row.get("family_divergence_note") or "").strip()
+    return note or None
 
 
 _SECTOR_DIRECTION_ABSENT_NO_SECTOR = "该持仓未识别到所属板块，无法做方向判断"

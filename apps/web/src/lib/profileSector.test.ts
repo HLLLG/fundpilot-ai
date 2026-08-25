@@ -174,17 +174,17 @@ describe("profileSector", () => {
     expect(holdingDisplaySectorLabel(holding)).toBe("医疗");
   });
 
-  it("does not let CXO overlay a named healthcare fund", () => {
+  it("lets CXO overlay a named healthcare fund when holdings drifted", () => {
     const holding = {
       fund_code: "011373",
       fund_name: "招商前沿医疗保健股票A",
       sector_name: "CXO",
       intraday_index_name: "国证CXO",
     };
-    expect(holdingDisplaySectorLabel(holding)).toBe("医疗");
+    expect(holdingDisplaySectorLabel(holding)).toBe("CXO");
     expect(resolveIntradayQuery(holding)).toEqual({
-      source_type: "concept",
-      source_name: "医疗",
+      source_type: "index",
+      source_name: "国证CXO",
     });
   });
 

@@ -57,7 +57,7 @@ def test_authoritative_labels_do_not_restamp_unthemed_allocation(monkeypatch) ->
     )
     assert holdings[0].sector_name is None
     assert holdings[0].sector_return_percent is None
-    assert holdings[1].sector_name == "医疗"
+    assert holdings[1].sector_name == "CXO"
 
 
 def test_serialize_strips_unthemed_allocation_research_board() -> None:
@@ -125,10 +125,10 @@ def test_industry_equity_fund_keeps_holdings_infer_theme() -> None:
     )
 
 
-def test_repair_named_healthcare_cxo_row_rewrites_parent() -> None:
+def test_repair_named_healthcare_cxo_row_restores_cxo() -> None:
     from app.services.fund_primary_sector_service import _repair_named_healthcare_cxo_row
 
-    record = _repair_named_healthcare_cxo_row(
+    unchanged = _repair_named_healthcare_cxo_row(
         {
             "fund_code": "011373",
             "sector_name": "CXO",
@@ -144,19 +144,43 @@ def test_repair_named_healthcare_cxo_row_rewrites_parent() -> None:
         fund_name="招商前沿医疗保健股票A",
         persist=False,
     )
+    assert unchanged is None
+
+    record = _repair_named_healthcare_cxo_row(
+        {
+            "fund_code": "011373",
+            "sector_name": "医疗",
+            "intraday_index_name": "中证医疗",
+            "source": "holdings_infer",
+            "confidence": 0.92,
+            "detail": {
+                "cxo_override_blocked": True,
+                "display": {
+                    "sector_name": "医疗",
+                    "method": "named_healthcare_parent_lock",
+                },
+                "scores": {"CXO": 41.85, "医疗": 5.0},
+                "qualification": {"sector_inference_eligible": True},
+                "fund_name": "招商前沿医疗保健股票A",
+            },
+        },
+        code="011373",
+        fund_name="招商前沿医疗保健股票A",
+        persist=False,
+    )
     assert record is not None
-    assert record.sector_name == "医疗"
-    assert record.intraday_index_name != "国证CXO"
+    assert record.sector_name == "CXO"
+    assert record.intraday_index_name == "国证CXO"
 
 
-def test_named_healthcare_fund_does_not_display_cxo_override() -> None:
+def test_named_healthcare_fund_displays_cxo_override() -> None:
     holding = apply_page_associated_sector(
         Holding(
             fund_code="011373",
             fund_name="招商前沿医疗保健股票A",
             holding_amount=1000,
-            sector_name="CXO",
-            intraday_index_name="国证CXO",
+            sector_name="医疗",
+            intraday_index_name=None,
         ),
         PrimarySectorRecord(
             fund_code="011373",
@@ -166,8 +190,8 @@ def test_named_healthcare_fund_does_not_display_cxo_override() -> None:
             confidence=0.92,
         ),
     )
-    assert holding.sector_name == "医疗"
-    assert holding.intraday_index_name != "国证CXO"
+    assert holding.sector_name == "CXO"
+    assert holding.intraday_index_name == "国证CXO"
 
 
 def test_named_theme_fund_keeps_matching_holdings_infer() -> None:
@@ -281,6 +305,10 @@ def test_flexible_mixed_uses_holdings_calculator_until_official_nav() -> None:
     preserved = apply_sector_daily_estimates(estimated)
     assert preserved.daily_return_percent_source == "holdings_estimate"
     assert preserved.daily_return_percent == 0.17
+    stripped = enrich_holding_estimates(estimated, profile=None)
+    assert stripped.sector_name is None
+    assert stripped.daily_return_percent_source == "holdings_estimate"
+    assert stripped.daily_return_percent == 0.17
 
 
 def _verified_semiconductor_materials_record() -> PrimarySectorRecord:

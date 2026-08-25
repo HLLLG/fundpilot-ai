@@ -19,7 +19,11 @@ from app.services.decision_guard_shared import (
 )
 from app.services.news_citation import _collect_citable_titles, _matches_known_title
 from app.services.sector_canonical import get_canonical_sector, get_intraday_canonical_sector
-from app.services.sector_labels import normalize_sector_label
+from app.services.sector_labels import (
+    normalize_sector_label,
+    same_sector_family,
+    sector_family_relation,
+)
 from app.services.sector_registry import resolve_theme_sector_label
 from app.services.discovery_allocator import is_unclassified_sector_key
 from app.services.discovery_sector_context import execution_qualified_fund_codes
@@ -1148,6 +1152,9 @@ def apply_discovery_guards(
         held_note = _held_same_sector_note(copy, discovery_facts)
         if held_note:
             copy.validation_notes = [*copy.validation_notes, held_note]
+        family_conflict_note = _family_direction_conflict_note(copy, opportunity)
+        if family_conflict_note:
+            copy.validation_notes = [*copy.validation_notes, family_conflict_note]
         _enforce_discovery_execution_projection(copy)
         copy.news_bullish = _filter_news_titles(copy.news_bullish, titles)
         _humanize_recommendation_text(copy)
@@ -1638,11 +1645,15 @@ def _held_same_sector_note(
     rec: DiscoveryRecommendation,
     discovery_facts: dict | None,
 ) -> str | None:
-    """买入类推荐与用户既有持仓同方向时的职责边界披露；无重叠或非买入类返回 None。
+    """买入类推荐与用户既有持仓同方向（或同族口径）时的职责边界披露。
 
     与日报侧的 `_discovery_cross_reference_note` 互为镜像：同一天里发现基金推荐买板块 A
     的新基金、日报可能按住同板块的老持仓，两个结论都对，但必须各自说明分工。金额侧的
     同板块集中度扣减已经存在，这里补的是**结论层面**的一句话。
+
+    匹配按同族板块（细分↔父行业，如 CXO↔医疗）而非仅精确同名：同族的两个键是分开
+    计算的方向状态，正因为可能一边判退出、一边判可布局，才更需要在买入卡上点名同族
+    持仓——精确匹配会让这类最容易被用户读成"自相矛盾"的组合恰好漏掉披露。
     """
     if not isinstance(discovery_facts, dict):
         return None
@@ -1660,21 +1671,84 @@ def _held_same_sector_note(
     rows = portfolio.get("holdings_slim") if isinstance(portfolio, dict) else None
     if not isinstance(rows, list):
         return None
-    held_same_sector = [
+    held_same_family = [
         row
         for row in rows
         if isinstance(row, dict)
-        and normalize_sector_label(str(row.get("sector_name") or "")) == rec_label
+        and same_sector_family(str(row.get("sector_name") or ""), rec_label)
     ]
-    if not held_same_sector:
+    if not held_same_family:
         return None
-    first = held_same_sector[0]
+    # 精确同板块的持仓优先点名；只有同族口径时才用"同主题不同口径"的说法。
+    held_same_family.sort(
+        key=lambda row: normalize_sector_label(str(row.get("sector_name") or ""))
+        != rec_label
+    )
+    first = held_same_family[0]
     name = str(first.get("fund_name") or "").strip() or str(first.get("fund_code") or "").strip()
-    extra = f" 等 {len(held_same_sector)} 只" if len(held_same_sector) > 1 else ""
+    extra = f" 等 {len(held_same_family)} 只" if len(held_same_family) > 1 else ""
+    held_label = normalize_sector_label(str(first.get("sector_name") or ""))
+    if held_label and held_label != rec_label:
+        return (
+            f"你已持有同主题「{held_label}」口径的 {name}{extra}，而本推荐属于"
+            f"「{rec_label}」口径：两者是同一主题家族里分开计算的方向状态（行情代理"
+            "不同），结论可以不一致。已有仓位的停加或减仓由日报按其口径处理，本推荐"
+            "只回答细分口径的新资金能不能进；请按同主题总敞口合并权衡，避免一边减仓"
+            "一边开新仓放大同主题暴露。"
+        )
     return (
         f"你已持有同方向的 {name}{extra}。方向两侧共用同一套打分；"
         "已有仓位的停加或减仓由日报按这只载体处理，本推荐只回答有没有更好的新工具，"
         "不能理解成否定方向，也不能理解成一边减仓一边开新仓。"
+    )
+
+
+_FAMILY_RELATION_SCOPE = {"parent": "整体", "fine_theme": "细分", "sibling": "同族"}
+
+
+def _family_direction_conflict_note(
+    rec: DiscoveryRecommendation,
+    opportunity: dict | None,
+) -> str | None:
+    """买入类推荐的同族口径本轮判定为 invalid 时的分歧披露；无矛盾返回 None。
+
+    矛盾由打分侧标注（`sector_direction_state.annotate_family_direction_divergence`，
+    与本轮方向横截面同一快照），本函数只把它翻译成人话。只披露、不仲裁：同族口径
+    行情代理不同、状态分开计算，"细分可布局 + 整体退潮"可以同时为真（族内轮动本身
+    是合法观点），但不说出来，用户同日看到日报对同主题持仓的减仓就是裸矛盾。
+    """
+    from app.services.decision_guard_shared import (
+        ACTION_BUCKET_ADD,
+        classify_action_bucket,
+    )
+
+    if classify_action_bucket(rec.action) < ACTION_BUCKET_ADD:
+        return None
+    if not isinstance(opportunity, dict):
+        return None
+    conflicts = opportunity.get("family_direction_divergence")
+    if not isinstance(conflicts, list):
+        return None
+    invalid_rows = [
+        row
+        for row in conflicts
+        if isinstance(row, dict)
+        and str(row.get("entry_state") or "") == ENTRY_INVALID
+        and str(row.get("sector_label") or "").strip()
+    ]
+    if not invalid_rows:
+        return None
+    first = invalid_rows[0]
+    other_label = str(first.get("sector_label") or "").strip()
+    scope = _FAMILY_RELATION_SCOPE.get(str(first.get("relation") or ""), "同族")
+    label = normalize_sector_label(rec.sector_name) or str(
+        opportunity.get("sector_label") or ""
+    )
+    return (
+        f"同主题口径分歧：{scope}口径「{other_label}」本轮方向扫描判定为不具备参与条件，"
+        f"而本推荐依据的「{label}」口径可布局（两者行情代理不同、状态分开计算）。"
+        "两侧并不互相推翻；若日报同日对同主题持仓给出减仓，请按同主题总敞口统一权衡"
+        "后再执行买入。"
     )
 
 

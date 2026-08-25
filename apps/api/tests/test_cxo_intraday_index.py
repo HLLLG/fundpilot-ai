@@ -1,6 +1,6 @@
-"""名字已点明 CXO 的基金：持仓穿透出 CXO 时，分时走国证CXO。
+"""持仓穿透出 CXO 时，分时走国证CXO。
 
-医疗/医药合同主题基金不再被 CXO 细分改写，见 healthcare_parent_lock。
+医疗保健基金只要过了 CXO 组合门槛，也跟养基宝一样自动漂到 CXO。
 """
 
 from __future__ import annotations

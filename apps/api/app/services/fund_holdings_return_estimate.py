@@ -221,6 +221,17 @@ def apply_holdings_daily_estimates(
     return updated
 
 
+def holdings_missing_weighted_daily(holdings: Sequence[Holding]) -> bool:
+    """主动/灵活配置还没有官方净值或重仓加权时，读路径才允许补拉股票行情。"""
+
+    locked = _LOCKED_DAILY_SOURCES | {"holdings_estimate"}
+    return any(
+        should_use_holdings_weighted_daily(holding)
+        and holding.daily_return_percent_source not in locked
+        for holding in holdings
+    )
+
+
 def overlay_holdings_daily_estimates(
     holdings: Sequence[Holding],
     *,
@@ -395,6 +406,7 @@ __all__ = [
     "compute_holdings_weighted_return",
     "estimate_holdings_weighted_returns",
     "holding_row_secid",
+    "holdings_missing_weighted_daily",
     "overlay_holdings_daily_estimates",
     "should_use_holdings_weighted_daily",
 ]

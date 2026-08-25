@@ -17,11 +17,20 @@ from app.services.holding_estimates import (
     overlay_official_nav_returns,
     sum_daily_profit,
 )
-from app.services.fund_profile import _is_valid_sector_label
-from app.services.fund_profile import _looks_like_index_name
+from app.services.fund_holdings_return_estimate import overlay_holdings_daily_estimates
+from app.services.fund_profile import (
+    _is_valid_sector_label,
+    _looks_like_index_name,
+    match_profiles_to_holdings,
+)
 from app.services.holding_filters import without_inactive_holdings, without_placeholder_holdings, without_test_holdings
 from app.services.portfolio_profit_analysis import persist_intraday_curve
 from app.services.portfolio_snapshot import save_daily_snapshot
+
+
+_PERSISTED_DAILY_SOURCES = frozenset(
+    {"official_nav", "holdings_estimate", "pending_accrual"}
+)
 
 
 def _overlay_sector_fields(base: Holding, patch: Holding) -> Holding:
@@ -36,18 +45,20 @@ def _overlay_sector_fields(base: Holding, patch: Holding) -> Holding:
         updates["daily_return_percent"] = patch.daily_return_percent
         updates["daily_profit"] = patch.daily_profit
         updates["daily_return_percent_source"] = patch.daily_return_percent_source
-    elif patch.daily_return_percent_source == "official_nav":
+    elif patch.daily_return_percent_source in _PERSISTED_DAILY_SOURCES:
+        # 无主题灵活配置不写关联板块，当日走季报重仓加权；没有板块涨跌也必须落盘。
         updates["daily_return_percent"] = patch.daily_return_percent
         updates["daily_profit"] = patch.daily_profit
         updates["daily_return_percent_source"] = patch.daily_return_percent_source
     if patch.sector_return_percent_source is not None:
         updates["sector_return_percent_source"] = patch.sector_return_percent_source
-    elif patch.daily_profit is not None:
-        updates["daily_profit"] = patch.daily_profit
-    elif patch.daily_return_percent is not None:
-        updates["daily_return_percent"] = patch.daily_return_percent
-    elif patch.daily_return_percent_source is not None:
-        updates["daily_return_percent_source"] = patch.daily_return_percent_source
+    elif "daily_profit" not in updates:
+        if patch.daily_profit is not None:
+            updates["daily_profit"] = patch.daily_profit
+        elif patch.daily_return_percent is not None:
+            updates["daily_return_percent"] = patch.daily_return_percent
+        elif patch.daily_return_percent_source is not None:
+            updates["daily_return_percent_source"] = patch.daily_return_percent_source
     if patch.yesterday_profit is not None:
         updates["yesterday_profit"] = patch.yesterday_profit
     return base.model_copy(update=updates) if updates else base
@@ -240,6 +251,14 @@ def _persist_holdings_after_sector_refresh_unlocked(
     enriched = enrich_holdings_estimates(synced)
     if not enriched:
         return enriched
+    # strip 无主题板块后，必须再写回季报重仓加权；否则 merge 哪怕带了估算也会被清掉。
+    persist_profiles = match_profiles_to_holdings(enriched, list_fund_profiles())
+    enriched = overlay_holdings_daily_estimates(
+        enriched,
+        allow_fetch=True,
+        allow_live_snapshot=with_official_nav,
+        profiles=persist_profiles,
+    )
 
     enriched = _drop_holdings_removed_during_refresh(
         enriched,

@@ -115,6 +115,9 @@ _NO_EXIT: dict[str, Any] = {
     "invalidation_status": [],
     #: 其中"当初承诺过、今天确实触发"的 code；非空即可直接引用买入承诺作为减仓理由。
     "breached_entry_promises": [],
+    #: 「反弹修复结构」分数（`sector_opportunity_scoring.describe_structure_repair_v3`）。
+    #: 提供时原样回显；结构破坏是判废唯一触发条件且修复分过线时会放宽退出档位。
+    "structure_repair": None,
     "thresholds_validated": False,
 }
 
@@ -129,6 +132,7 @@ def assess_direction_exit(
     entry_contract: Mapping[str, Any] | None = None,
     has_unrealized_gain: bool = False,
     invalidation_checks: object = None,
+    structure_repair: Mapping[str, Any] | None = None,
     persistent_breakdown_days: int = PERSISTENT_BREAKDOWN_DAYS,
     relative_decay_points: float = RELATIVE_TREND_DECAY_POINTS,
 ) -> dict[str, Any]:
@@ -141,6 +145,14 @@ def assess_direction_exit(
     `sector_opportunity_scoring._invalidation_checks_v3`）。它与入场契约里冻结的
     ``promised_invalidation`` 对照后写入 ``invalidation_status``：这是"买入卡片上写的失效
     条件"第一次真的被逐日核对，而不是停在展示文案。
+
+    ``structure_repair`` 是当前方向行的「反弹修复结构」分数
+    （`sector_opportunity_scoring.describe_structure_repair_v3`）。此前 invalid 一律
+    大幅减仓 −50%，把"当日反弹正在修复结构"与"跌透了没人接"当成同一种情况处理——
+    2026-08 线上实测：医疗当日 +2.6%（估算）、主力资金转为净流入、区间修复进行中，
+    日报仍只能复述"超跌反弹，结构未修复"并深减一半。现在结构破坏是判废**唯一**
+    触发条件（非双弱、非主线退潮）且修复分过放宽线时，档位放宽为普通减仓评估；
+    连续跌破退出线的清仓升级不受影响（时间确认的失效高于单日反弹证据）。
     """
     label = str(sector_label or "").strip()
     result: dict[str, Any] = {
@@ -169,6 +181,10 @@ def assess_direction_exit(
     )
     result["invalidation_status"] = invalidation_status
     result["breached_entry_promises"] = [row["code"] for row in breached]
+    # 修复分原样回显：放宽与否都要能在退出判定上看到"当天修复证据是多少"。
+    result["structure_repair"] = (
+        dict(structure_repair) if isinstance(structure_repair, Mapping) else None
+    )
     breach_reason = (
         "买入时写明的失效条件已触发："
         + "；".join(row["label"] or row["code"] for row in breached[:2])
@@ -227,6 +243,55 @@ def assess_direction_exit(
                     *([breach_reason] if breach_reason else []),
                 ],
                 triggers=["趋势与资金参与度同时回到横截面中位以上，方向才重新具备参与资格"],
+            )
+        # 反弹修复结构：结构破坏是判废的**唯一**触发条件、且修复分已过放宽线时，把
+        # 大幅减仓 −50% 放宽为普通减仓评估。刻意不放到持有/停加：invalid 仍然成立、
+        # 方向没有恢复参与资格，只是"当日反弹正在修复"的可量化证据让一步砍半显得
+        # 过重。双弱或主线退潮同时在场时不放宽——那说明弱的不只是价格结构。放宽线
+        # 未经回测（`thresholds_validated=False` 已随分数披露），上面的清仓升级分支
+        # 刻意排在前面：时间确认的失效高于单日反弹证据。
+        repair = structure_repair if isinstance(structure_repair, Mapping) else None
+        if repair and repair.get("active") and repair.get("sole_invalid_driver"):
+            score = _num(repair.get("score")) or 0.0
+            threshold = _num(repair.get("threshold")) or 0.0
+            components = (
+                repair.get("components")
+                if isinstance(repair.get("components"), Mapping)
+                else {}
+            )
+            component_text = "、".join(
+                f"{name} {value:.0f}"
+                for name, value in (
+                    ("区间修复", _num(components.get("range_recovery"))),
+                    ("当日反弹", _num(components.get("intraday_rebound"))),
+                    ("资金回流", _num(components.get("flow_reflux"))),
+                )
+                if value is not None
+            )
+            percent = -(100.0 / 3.0) if has_unrealized_gain else -25.0
+            reasons = [
+                base_reason,
+                (
+                    "但结构破坏是本次判废的唯一触发条件，且当日反弹正在修复结构"
+                    f"（反弹修复分 {score:.0f}/100，放宽线 {threshold:g}"
+                    + (f"：{component_text}" if component_text else "")
+                    + "），减仓档位从大幅减仓放宽为减仓评估"
+                ),
+            ]
+            if has_unrealized_gain:
+                reasons.append("当前持仓浮盈，落袋压力更小，建议提高减仓比例")
+            if breach_reason:
+                reasons.append(breach_reason)
+            return _finalize(
+                result,
+                exit_state=EXIT_STATE_REDUCE,
+                min_bucket=ACTION_BUCKET_REDUCE,
+                percent=percent,
+                reasons=reasons,
+                triggers=[
+                    "下一交易日修复中断（当日转跌或主力资金再度流出）则恢复大幅减仓评估",
+                    f"若连续 {persistent_days} 个交易日仍在退出线下则升级为清仓评估",
+                ],
             )
         return _finalize(
             result,

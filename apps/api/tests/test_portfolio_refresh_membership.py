@@ -30,6 +30,128 @@ def _snapshot(*holdings: Holding) -> dict:
     }
 
 
+def test_merge_persists_holdings_estimate_without_sector(monkeypatch) -> None:
+    """无主题灵活配置没有板块涨跌，重仓加权当日收益仍须写回快照。"""
+
+    base = Holding(
+        fund_code="012200",
+        fund_name="新华鑫科技3个月滚动持有灵活配置混合A",
+        holding_amount=2227.19,
+        settled_holding_amount=2227.19,
+        return_percent=-25.76,
+    )
+    patch = base.model_copy(
+        update={
+            "daily_profit": -50.21,
+            "daily_return_percent": -2.25,
+            "daily_return_percent_source": "holdings_estimate",
+        }
+    )
+    monkeypatch.setattr(
+        portfolio_persistence,
+        "get_most_recent_portfolio_snapshot",
+        lambda: _snapshot(base),
+    )
+
+    merged = portfolio_persistence.merge_holdings_with_snapshot([patch])
+
+    assert merged[0].daily_return_percent_source == "holdings_estimate"
+    assert merged[0].daily_return_percent == -2.25
+    assert merged[0].daily_profit == -50.21
+    assert merged[0].sector_return_percent is None
+
+
+def test_merge_keeps_holdings_estimate_when_refresh_misses(monkeypatch) -> None:
+    existing = Holding(
+        fund_code="017787",
+        fund_name="万家宏观择时多策略混合C",
+        holding_amount=12287.02,
+        settled_holding_amount=12287.02,
+        return_percent=3.05,
+        daily_profit=-93.25,
+        daily_return_percent=-0.76,
+        daily_return_percent_source="holdings_estimate",
+    )
+    missed = existing.model_copy(
+        update={
+            "daily_profit": None,
+            "daily_return_percent": None,
+            "daily_return_percent_source": None,
+        }
+    )
+    monkeypatch.setattr(
+        portfolio_persistence,
+        "get_most_recent_portfolio_snapshot",
+        lambda: _snapshot(existing),
+    )
+
+    merged = portfolio_persistence.merge_holdings_with_snapshot([missed])
+
+    assert merged[0].daily_return_percent_source == "holdings_estimate"
+    assert merged[0].daily_return_percent == -0.76
+    assert merged[0].daily_profit == -93.25
+
+
+def test_persist_keeps_holdings_estimate_after_enrich(monkeypatch) -> None:
+    holding = Holding(
+        fund_code="012200",
+        fund_name="新华鑫科技3个月滚动持有灵活配置混合A",
+        holding_amount=2227.19,
+        settled_holding_amount=2227.19,
+        return_percent=-25.76,
+    )
+    estimated = holding.model_copy(
+        update={
+            "daily_profit": -50.21,
+            "daily_return_percent": -2.25,
+            "daily_return_percent_source": "holdings_estimate",
+        }
+    )
+    captured: dict = {}
+    monkeypatch.setattr(
+        portfolio_persistence,
+        "get_most_recent_portfolio_snapshot",
+        lambda: _snapshot(holding),
+    )
+    monkeypatch.setattr(
+        "app.services.transaction_ledger.promote_pending_transactions_into_holdings",
+        lambda rows: (list(rows), {}),
+    )
+    monkeypatch.setattr(
+        portfolio_persistence,
+        "sync_holding_amounts_from_shares",
+        lambda rows, **_kwargs: list(rows),
+    )
+    monkeypatch.setattr(portfolio_persistence, "enrich_holdings_estimates", lambda rows: list(rows))
+    monkeypatch.setattr(
+        portfolio_persistence,
+        "overlay_holdings_daily_estimates",
+        lambda rows, **_kwargs: [estimated],
+    )
+    monkeypatch.setattr(portfolio_persistence, "list_fund_profiles", lambda: [])
+    monkeypatch.setattr(
+        portfolio_persistence,
+        "match_profiles_to_holdings",
+        lambda rows, _profiles: [None] * len(rows),
+    )
+    monkeypatch.setattr(portfolio_persistence, "get_portfolio_summary", lambda: None)
+    monkeypatch.setattr(portfolio_persistence, "save_portfolio_summary", lambda summary: None)
+    monkeypatch.setattr(
+        portfolio_persistence,
+        "save_daily_snapshot",
+        lambda rows, _summary: captured.setdefault("holdings", list(rows)),
+    )
+    monkeypatch.setattr(portfolio_persistence, "persist_intraday_curve", lambda *_args, **_kwargs: None)
+
+    result = portfolio_persistence._persist_holdings_after_sector_refresh_unlocked(
+        [holding],
+        with_official_nav=False,
+    )
+
+    assert result[0].daily_return_percent_source == "holdings_estimate"
+    assert captured["holdings"][0].daily_return_percent_source == "holdings_estimate"
+
+
 def test_stale_refresh_cannot_delete_a_newer_holding(monkeypatch) -> None:
     first = _holding("010236", "广发电子信息传媒股票C")
     newly_added = _holding("015945", "易方达国防军工混合C")

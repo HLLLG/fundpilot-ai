@@ -20,10 +20,7 @@ from app.services.fund_holdings_snapshot_repository import (
     resolve_fund_holdings_snapshot_at_decision,
 )
 from app.services.fund_industry_theme_map import map_industry_to_theme_label
-from app.services.sector_labels import (
-    healthcare_parent_lock_against_cxo,
-    normalize_sector_label,
-)
+from app.services.sector_labels import SECTOR_FAMILY_PARENT, normalize_sector_label
 from app.services.stock_classification_evidence import (
     fetch_current_board_constituent_evidence,
     fetch_current_stock_industry_evidence,
@@ -44,13 +41,9 @@ _MIN_THEME_DOMINANCE_RATIO = 0.60
 # 养基宝详情页会尽量给出一个关联板块，但细分主题（CXO/PCB…）只有组合真的
 # 像那条赛道时才挂上去。我们的 verified 门槛仍守决策/荐基；展示层在不过线时
 # 退回父行业，避免列表空着，也不把未过线的 PCB/CPO 当成当前主板块。
-_FINE_THEME_DISPLAY_PARENT: dict[str, str] = {
-    "半导体材料": "半导体",
-    "CPO": "通信技术",
-    "CXO": "医疗",
-    "算力租赁": "计算机",
-    "PCB": "电子",
-}
+# 映射本体在 `sector_labels.SECTOR_FAMILY_PARENT`（同族关系的唯一事实源）：
+# 跨报告披露与方向分歧披露也要用同一份细分↔父行业关系，两处各写一份必然漂移。
+_FINE_THEME_DISPLAY_PARENT: dict[str, str] = SECTOR_FAMILY_PARENT
 
 
 @dataclass(frozen=True)
@@ -288,57 +281,10 @@ def apply_healthcare_parent_lock_to_assessment(
     fund_name: str | None,
     contract_text: str | None = None,
 ) -> dict[str, Any]:
-    """名字/合同已是医疗或医药时，CXO 投票胜者退回锁定的父主题。"""
+    """兼容旧调用：医疗保健基金的 CXO 重仓不再锁回父主题。"""
 
-    locked = healthcare_parent_lock_against_cxo(
-        fund_name, contract_text=contract_text
-    )
-    if not locked:
-        return assessment
-    winner = normalize_sector_label(str(assessment.get("sector_name") or ""))
-    if winner != "CXO":
-        return assessment
-    raw_scores = assessment.get("scores")
-    if not isinstance(raw_scores, Mapping):
-        return {
-            **assessment,
-            "sector_name": locked,
-            "display_sector": locked,
-            "display": {"sector_name": locked, "method": "named_healthcare_parent_lock"},
-        }
-    scores = {
-        str(key): float(value)
-        for key, value in raw_scores.items()
-        if isinstance(value, (int, float))
-    }
-    cxo_mass = float(scores.pop("CXO", 0.0) or 0.0)
-    scores[locked] = float(scores.get(locked) or 0.0) + cxo_mass
-    if not scores:
-        scores = {locked: cxo_mass}
-    sector_name = min(scores, key=lambda key: (-scores[key], key))
-    qualification = assessment.get("qualification")
-    eligible = bool(
-        isinstance(qualification, Mapping)
-        and qualification.get("sector_inference_eligible") is True
-    )
-    display = resolve_display_sector(
-        sector_name=sector_name,
-        scores=scores,
-        eligible=eligible,
-    )
-    display = {
-        **display,
-        "method": "named_healthcare_parent_lock",
-        "locked_parent": locked,
-        "blocked_theme": "CXO",
-    }
-    return {
-        **assessment,
-        "sector_name": sector_name,
-        "scores": dict(sorted(scores.items())),
-        "display_sector": display.get("sector_name"),
-        "display": display,
-    }
+    del fund_name, contract_text
+    return assessment
 
 
 def infer_sector_from_portfolio_stocks(
@@ -642,6 +588,7 @@ def _refine_current_portfolio_themes(
     popular concept must not relabel an otherwise unrelated fund.
     """
 
+    del fund_name, contract_text
     enriched = {
         str(code): dict(value) if isinstance(value, Mapping) else value
         for code, value in broad_evidence.items()
@@ -655,12 +602,7 @@ def _refine_current_portfolio_themes(
             continue
         if weight > 0:
             disclosed_mass += weight
-    locked_healthcare = healthcare_parent_lock_against_cxo(
-        fund_name, contract_text=contract_text
-    )
     for rule in _PORTFOLIO_THEME_REFINEMENT_RULES:
-        if rule.target_theme == "CXO" and locked_healthcare:
-            continue
         parent_labels = {
             normalized
             for raw in rule.parent_industries

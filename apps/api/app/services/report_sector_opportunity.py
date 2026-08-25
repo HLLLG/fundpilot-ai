@@ -19,8 +19,13 @@ import time
 from typing import Any
 
 from app.models import Holding
-from app.services.sector_labels import normalize_sector_label
+from app.services.sector_labels import (
+    normalize_sector_label,
+    sector_family_relation,
+    sector_family_root,
+)
 from app.services.sector_opportunity_scoring import (
+    ENTRY_READY_TO_START,
     build_sector_divergence_map_for_opportunities,
     build_sector_flow_map_for_opportunities,
     describe_sector_opportunity,
@@ -722,9 +727,14 @@ def _attach_direction_exit(
                 has_unrealized_gain=gain_by_label.get(label, False),
                 # 今天这一行的失效条件判定，用来和买入时冻结的承诺逐条对照。
                 invalidation_checks=row.get("invalidation_checks"),
+                # 反弹修复结构分：结构破坏是判废唯一触发条件且修复过线时放宽档位。
+                structure_repair=row.get("structure_repair"),
             )
             exit_row["ledger_health"] = dict(ledger_health)
             row["direction_exit"] = exit_row
+
+        # 卖出档退出 × 同族口径当日仍可布局：把分歧披露挂到退出判定上（只披露、不仲裁）。
+        _attach_family_direction_divergence(held, trade_date=history_cutoff)
 
         # 逐基金：用**这只基金自己**的入场契约，对着它当前板块的方向行判一次。
         by_fund_code: dict[str, dict] = {}
@@ -747,13 +757,93 @@ def _attach_direction_exit(
                 entry_contract=contract,
                 has_unrealized_gain=gain_by_code.get(code, False),
                 invalidation_checks=row.get("invalidation_checks"),
+                structure_repair=row.get("structure_repair"),
             )
             fund_exit_row["ledger_health"] = dict(ledger_health)
+            # 族内分歧是板块级事实（卖出档与否由共享的 entry_state/趋势决定，板块行与
+            # 逐基金行必然同侧），逐基金那份判定同样要带上——guard 与卡片读的是
+            # facts_row["direction_exit"]（即这一份），不带就等于只在板块行披露了一半。
+            sector_exit = row.get("direction_exit") or {}
+            for key in ("family_divergence", "family_divergence_note"):
+                if sector_exit.get(key):
+                    fund_exit_row[key] = sector_exit[key]
             by_fund_code[code] = fund_exit_row
         return by_fund_code
     except Exception:  # noqa: BLE001 — 绝不阻塞日报
         logger.warning("方向退出判定失败，本次跳过", exc_info=True)
         return {}
+
+
+_FAMILY_RELATION_SCOPE = {"parent": "整体", "fine_theme": "细分", "sibling": "同族"}
+
+
+def _attach_family_direction_divergence(
+    held: dict[str, dict],
+    *,
+    trade_date: str | None,
+) -> None:
+    """持仓方向被判卖出档退出、而同族口径当日在全局账本仍可布局时，把分歧写上退出判定。
+
+    同族口径（细分↔父行业，如 CXO↔医疗）行情代理不同、方向状态分开计算，同日一边判
+    退出、一边判可布局完全可能（2026-08 线上实测：「医疗」invalid 触发 011373 大幅减仓
+    的同日，荐基对「CXO」给出分批买入）。不披露，减仓卡就会被读成"系统否定了整个医药
+    主题"，与同日的买入卡构成裸矛盾。
+
+    数据源是荐基当日写入的全局方向状态账本（`sector_direction_states`，日报只读，与
+    跨报告披露同一纪律：**只看当日**——旧交易日的状态只会制造新的矛盾；今天没跑荐基
+    就没有当日行，如实跳过）。只披露、不仲裁：不改动作、比例或任何分数。
+    """
+    try:
+        from app.services.sector_direction_exit import (
+            EXIT_STATE_DEEP_REDUCE,
+            EXIT_STATE_EXIT,
+            EXIT_STATE_REDUCE,
+        )
+
+        sell_side = {EXIT_STATE_REDUCE, EXIT_STATE_DEEP_REDUCE, EXIT_STATE_EXIT}
+        selling = {
+            label: row
+            for label, row in held.items()
+            if isinstance(row.get("direction_exit"), dict)
+            and row["direction_exit"].get("exit_state") in sell_side
+        }
+        if not selling or not trade_date:
+            return
+        from app.services.sector_direction_state import load_previous_direction_states
+
+        # 函数名里的 previous 指"滞回读上一交易日"这个主用途；它按给定交易日读账本，
+        # 传今天就是今天的行（荐基当日扫描写入的完整横截面，含 invalid）。
+        states = load_previous_direction_states(trade_date)
+        if not states:
+            return
+        for label, row in selling.items():
+            root = sector_family_root(label)
+            divergent = [
+                {
+                    "sector_label": record.sector_label,
+                    "entry_state": record.entry_state,
+                    "relation": sector_family_relation(label, record.sector_label),
+                    "trade_date": trade_date,
+                }
+                for record in states.values()
+                if normalize_sector_label(record.sector_label) != label
+                and sector_family_root(record.sector_label) == root
+                and record.entry_state == ENTRY_READY_TO_START
+            ]
+            if not divergent:
+                continue
+            first = divergent[0]
+            scope = _FAMILY_RELATION_SCOPE.get(str(first.get("relation") or ""), "同族")
+            exit_row = row["direction_exit"]
+            exit_row["family_divergence"] = divergent
+            exit_row["family_divergence_note"] = (
+                f"同主题口径分歧：{scope}口径「{first['sector_label']}」今日在全局方向"
+                f"账本中仍为可布局状态，而本退出判定针对的是「{label}」口径（两者行情"
+                "代理不同、状态分开计算）。本判定不构成对整个主题的否定；若今日发现"
+                "报告对该口径有买入推荐，请按同主题总敞口合并权衡。"
+            )
+    except Exception:  # noqa: BLE001 — 披露层，绝不阻塞日报
+        logger.warning("同族方向分歧披露失败，本次跳过", exc_info=True)
 
 
 def _reconcile_contracts_with_holdings(

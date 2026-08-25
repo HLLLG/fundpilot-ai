@@ -7,6 +7,7 @@ from app.services.fund_holdings_return_estimate import (
     compute_holdings_weighted_return,
     estimate_holdings_weighted_returns,
     holding_row_secid,
+    holdings_missing_weighted_daily,
     overlay_holdings_daily_estimates,
     should_use_holdings_weighted_daily,
 )
@@ -99,6 +100,29 @@ def test_secid_maps_cn_and_hk() -> None:
     assert holding_row_secid(_row("300502", 8.0, security_id="CN:300502")) == "0.300502"
     assert holding_row_secid(_row("01347", 6.96, security_id="HK:01347")) == "116.01347"
     assert holding_row_secid(_row("NVDA", 5.0)) is None
+
+
+def test_holdings_missing_weighted_daily_detects_unthemed_gap() -> None:
+    missing = Holding(
+        fund_code="017787",
+        fund_name="万家宏观择时多策略混合C",
+        holding_amount=1000,
+    )
+    estimated = missing.model_copy(
+        update={
+            "daily_return_percent": -0.76,
+            "daily_return_percent_source": "holdings_estimate",
+        }
+    )
+    official = missing.model_copy(
+        update={
+            "daily_return_percent": 0.5,
+            "daily_return_percent_source": "official_nav",
+        }
+    )
+    assert holdings_missing_weighted_daily([missing]) is True
+    assert holdings_missing_weighted_daily([estimated]) is False
+    assert holdings_missing_weighted_daily([official]) is False
 
 
 def test_should_use_holdings_weighted_daily_skips_passive_and_qdii() -> None:

@@ -32,7 +32,6 @@ from app.services.fund_type_classification import has_positive_qdii_marker
 from app.services.sector_canonical import get_canonical_sector
 from app.services.sector_labels import (
     fund_name_has_registered_theme,
-    healthcare_parent_lock_against_cxo,
     infer_sector_label_from_fund_name,
     infer_semantic_sector_from_fund_name,
     normalize_sector_label,
@@ -418,60 +417,58 @@ def _repair_named_healthcare_cxo_row(
     persist: bool,
     batch_context: PrimarySectorBatchContext | None = None,
 ) -> PrimarySectorRecord | None:
-    """身份表里的 CXO 若盖掉了医疗/医药合同主题，改回父主题。"""
+    """把曾经被父主题锁住的 CXO 重仓身份恢复成养基宝口径。"""
 
     if not row:
         return None
-    if normalize_sector_label(str(row.get("sector_name") or "")) != "CXO":
+    current = normalize_sector_label(str(row.get("sector_name") or ""))
+    if current == "CXO":
         return None
     detail = dict(_row_detail(row) or {})
-    locked = healthcare_parent_lock_against_cxo(
-        fund_name,
-        contract_text=_contract_text_from_detail(detail),
+    display = detail.get("display") if isinstance(detail.get("display"), Mapping) else {}
+    scores = detail.get("scores") if isinstance(detail.get("scores"), Mapping) else {}
+    blocked = bool(detail.get("cxo_override_blocked")) or (
+        display.get("method") == "named_healthcare_parent_lock"
     )
-    if not locked:
+    cxo_score = 0.0
+    current_score = 0.0
+    try:
+        cxo_score = float(scores.get("CXO") or 0.0)
+    except (TypeError, ValueError):
+        cxo_score = 0.0
+    try:
+        current_score = float(scores.get(current) or 0.0) if current else 0.0
+    except (TypeError, ValueError):
+        current_score = 0.0
+    cxo_wins = cxo_score > 0 and cxo_score >= current_score
+    if not blocked and not cxo_wins:
         return None
-    from app.database import get_fund_sector_current_primary_by_codes
-    from app.services.fund_holdings_sector_infer import (
-        apply_healthcare_parent_lock_to_assessment,
+    qualification = detail.get("qualification")
+    eligible = bool(
+        isinstance(qualification, Mapping)
+        and qualification.get("sector_inference_eligible") is True
     )
+    if not blocked and not eligible:
+        return None
     from app.services.fund_profile import infer_intraday_index_from_sector
 
-    current = get_fund_sector_current_primary_by_codes([code]).get(code)
-    if (
-        current
-        and current.get("identity_status") == "verified"
-        and not isinstance(detail.get("qualification"), Mapping)
-    ):
-        detail["qualification"] = {
-            "sector_inference_eligible": True,
-            "research_only": False,
-        }
-
-    scores = detail.get("scores") if isinstance(detail.get("scores"), Mapping) else {}
-    assessment = apply_healthcare_parent_lock_to_assessment(
-        {
-            "sector_name": "CXO",
-            "scores": dict(scores),
-            "display": detail.get("display"),
-            "qualification": detail.get("qualification"),
-        },
-        fund_name=fund_name,
-        contract_text=_contract_text_from_detail(detail),
-    )
-    sector_name = str(assessment.get("sector_name") or locked).strip() or locked
+    restored_display = {
+        **dict(display),
+        "sector_name": "CXO",
+        "method": "holdings_driven_cxo_restore",
+    }
     record = PrimarySectorRecord(
         fund_code=code,
-        sector_name=sector_name,
-        intraday_index_name=infer_intraday_index_from_sector(sector_name),
+        sector_name="CXO",
+        intraday_index_name=infer_intraday_index_from_sector("CXO"),
         source=str(row.get("source") or "holdings_infer"),
         confidence=row.get("confidence"),
         detail={
             **detail,
-            "scores": assessment.get("scores") or scores,
-            "display": assessment.get("display"),
-            "cxo_override_blocked": True,
-            "locked_healthcare_parent": locked,
+            "display": restored_display,
+            "cxo_override_blocked": False,
+            "locked_healthcare_parent": None,
+            "fund_name": fund_name or detail.get("fund_name"),
         },
     )
     if persist:
@@ -514,11 +511,6 @@ def _is_trustworthy_sector_label(fund_name: str | None, sector_name: str | None)
     if not _is_valid_sector_label(sector_name):
         return False
     if _is_fund_name_residue_label(fund_name, sector_name):
-        return False
-    if (
-        normalize_sector_label(sector_name) == "CXO"
-        and healthcare_parent_lock_against_cxo(fund_name)
-    ):
         return False
     return True
 
@@ -1286,7 +1278,7 @@ def repair_uncertain_inferred_sector_identities() -> dict[str, str]:
 
 
 def repair_named_healthcare_cxo_overrides() -> dict[str, str]:
-    """把名字/合同已是医疗、医药、却被写成 CXO 的身份行改回父主题。"""
+    """把曾被锁回医疗/医药的 CXO 重仓身份恢复成重仓加权结果。"""
 
     from app.database import (
         list_fund_primary_sectors_all_users_by_sector_name,
@@ -1304,14 +1296,15 @@ def repair_named_healthcare_cxo_overrides() -> dict[str, str]:
 
     repaired: dict[str, str] = {}
     rows: list[Mapping[str, Any]] = []
-    try:
-        rows.extend(list_fund_primary_sectors_global_by_sector_name("CXO"))
-    except Exception:
-        logger.debug("repair healthcare cxo: skip global rows", exc_info=True)
-    try:
-        rows.extend(list_fund_primary_sectors_all_users_by_sector_name("CXO"))
-    except Exception:
-        logger.debug("repair healthcare cxo: skip user rows", exc_info=True)
+    for parent in ("医疗", "医药"):
+        try:
+            rows.extend(list_fund_primary_sectors_global_by_sector_name(parent))
+        except Exception:
+            logger.debug("repair healthcare cxo: skip global %s rows", parent, exc_info=True)
+        try:
+            rows.extend(list_fund_primary_sectors_all_users_by_sector_name(parent))
+        except Exception:
+            logger.debug("repair healthcare cxo: skip user %s rows", parent, exc_info=True)
     for row in rows:
         code = str(row.get("fund_code") or "").strip().zfill(6)
         if not code or code == "000000":
@@ -1451,18 +1444,6 @@ def apply_page_associated_sector(
 
     if record is None:
         return holding
-    locked = healthcare_parent_lock_against_cxo(holding.fund_name)
-    if locked and normalize_sector_label(record.sector_name) == "CXO":
-        from app.services.fund_profile import infer_intraday_index_from_sector
-
-        record = PrimarySectorRecord(
-            fund_code=record.fund_code,
-            sector_name=locked,
-            intraday_index_name=infer_intraday_index_from_sector(locked),
-            source=record.source,
-            confidence=record.confidence,
-            detail=record.detail,
-        )
     if associated_sector_is_page_visible(
         fund_name=holding.fund_name,
         sector_name=record.sector_name,

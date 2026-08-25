@@ -35,11 +35,10 @@ def test_authoritative_identity_does_not_stamp_timing_strategy_fund(monkeypatch)
         ]
     )
 
-    assert [item.sector_name for item in aligned] == [None, "医疗"]
-    assert aligned[1].intraday_index_name != "国证CXO"
+    assert [item.sector_name for item in aligned] == [None, "CXO"]
 
 
-def test_profile_guozheng_cxo_does_not_stick_on_named_healthcare_fund() -> None:
+def test_profile_guozheng_cxo_sticks_on_named_healthcare_fund() -> None:
     holding = service._overlay_profile_onto_holding(
         _holding("011373", "招商前沿医疗保健股票A", "CXO").model_copy(
             update={"intraday_index_name": "国证CXO"}
@@ -60,8 +59,86 @@ def test_profile_guozheng_cxo_does_not_stick_on_named_healthcare_fund() -> None:
         },
     )
 
-    assert holding.sector_name == "医疗"
-    assert holding.intraday_index_name != "国证CXO"
+    assert holding.sector_name == "CXO"
+    assert holding.intraday_index_name == "国证CXO"
+
+
+def _locked_healthcare_cxo_row() -> dict:
+    return {
+        "fund_code": "011373",
+        "sector_name": "医疗",
+        "intraday_index_name": "中证医疗",
+        "source": "holdings_infer",
+        "confidence": 0.92,
+        "detail": {
+            "cxo_override_blocked": True,
+            "display": {
+                "sector_name": "医疗",
+                "method": "named_healthcare_parent_lock",
+            },
+            "scores": {"CXO": 41.85, "医疗": 5.0},
+            "qualification": {"sector_inference_eligible": True},
+            "fund_name": "招商前沿医疗保健股票A",
+        },
+    }
+
+
+def test_authoritative_labels_restore_locked_healthcare_cxo(monkeypatch) -> None:
+    monkeypatch.setattr(
+        service,
+        "get_fund_primary_sectors_by_codes",
+        lambda codes: {"011373": _locked_healthcare_cxo_row()},
+    )
+    monkeypatch.setattr(
+        "app.database.update_fund_primary_sectors_for_code",
+        lambda *args, **kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.database.rewrite_fund_profile_associated_sector_for_code",
+        lambda *args, **kwargs: 0,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.promote_record_to_global",
+        lambda record: {},
+    )
+
+    aligned = service.apply_authoritative_sector_labels(
+        [_holding("011373", "招商前沿医疗保健股票A", "医疗")]
+    )
+
+    assert aligned[0].sector_name == "CXO"
+    assert aligned[0].intraday_index_name == "国证CXO"
+
+
+def test_profile_overlay_restores_locked_healthcare_cxo(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.database.update_fund_primary_sectors_for_code",
+        lambda *args, **kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.database.rewrite_fund_profile_associated_sector_for_code",
+        lambda *args, **kwargs: 0,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_primary_sector_service.promote_record_to_global",
+        lambda record: {},
+    )
+
+    holding = service._overlay_profile_onto_holding(
+        _holding("011373", "招商前沿医疗保健股票A", "医疗"),
+        FundProfile(
+            fund_code="011373",
+            fund_name="招商前沿医疗保健股票A",
+            aliases=["招商前沿医疗保健股票A"],
+            holding_amount=1000,
+            source="alipay-overview",
+            sector_name="医疗",
+        ),
+        identity_row=_locked_healthcare_cxo_row(),
+    )
+
+    assert holding.sector_name == "CXO"
+    assert holding.intraday_index_name == "国证CXO"
 
 
 def test_identity_label_that_is_not_a_board_name_keeps_the_usable_copy(monkeypatch) -> None:

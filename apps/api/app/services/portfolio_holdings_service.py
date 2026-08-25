@@ -32,10 +32,6 @@ from app.services.holding_estimates import (
 )
 from app.services.holding_filters import is_inactive_holding, is_test_holding, without_inactive_holdings, without_test_holdings
 from app.services.overview_pipeline import enrich_holdings_from_profiles
-from app.services.sector_labels import (
-    healthcare_parent_lock_against_cxo,
-    normalize_sector_label,
-)
 from app.services.portfolio_persistence import enrich_loaded_holdings, persist_holdings_after_sector_refresh
 from app.services.sector_quote_service import refresh_holdings_sector_quotes
 from app.services.portfolio_snapshot import save_daily_snapshot
@@ -139,6 +135,17 @@ def build_portfolio_holdings_response(
         fetch_benchmark=fetch_benchmark,
         profiles_snapshot=profiles,
         primary_sector_batch_context=batch_context,
+    )
+    from app.services.fund_holdings_return_estimate import (
+        holdings_missing_weighted_daily,
+        overlay_holdings_daily_estimates,
+    )
+
+    holdings = overlay_holdings_daily_estimates(
+        holdings,
+        allow_fetch=holdings_missing_weighted_daily(holdings),
+        allow_live_snapshot=False,
+        profiles=matched_profiles,
     )
     summary = get_portfolio_summary()
     payload = summary.model_dump(mode="json") if summary else {}
@@ -336,7 +343,10 @@ def build_fast_snapshot_holdings_response() -> dict | None:
         _fast_overlay_cached_official_nav(holding, trade_date, session_kind=session_kind)
         for holding in holdings
     ]
-    from app.services.fund_holdings_return_estimate import overlay_holdings_daily_estimates
+    from app.services.fund_holdings_return_estimate import (
+        holdings_missing_weighted_daily,
+        overlay_holdings_daily_estimates,
+    )
     from app.services.fund_primary_sector_service import (
         strip_unthemed_allocation_associated_sector,
     )
@@ -352,7 +362,7 @@ def build_fast_snapshot_holdings_response() -> dict | None:
     ]
     holdings = overlay_holdings_daily_estimates(
         holdings,
-        allow_fetch=False,
+        allow_fetch=holdings_missing_weighted_daily(holdings),
         allow_live_snapshot=False,
         profiles=matched_profiles,
     )
@@ -422,16 +432,20 @@ def load_dashboard_holdings() -> tuple[list[Holding], str, str | None, datetime 
         _fast_overlay_cached_official_nav(holding, trade_date, session_kind=session_kind)
         for holding in holdings
     ]
-    from app.services.fund_holdings_return_estimate import overlay_holdings_daily_estimates
+    from app.services.fund_holdings_return_estimate import (
+        holdings_missing_weighted_daily,
+        overlay_holdings_daily_estimates,
+    )
     from app.services.holding_estimates import enrich_holdings_estimates
 
-    holdings = overlay_holdings_daily_estimates(
-        holdings,
-        allow_fetch=False,
-        allow_live_snapshot=False,
-        profiles=match_profiles_to_holdings(holdings, list_fund_profiles()),
-    )
+    matched_profiles = match_profiles_to_holdings(holdings, list_fund_profiles())
     enriched = enrich_holdings_estimates(holdings)
+    enriched = overlay_holdings_daily_estimates(
+        enriched,
+        allow_fetch=holdings_missing_weighted_daily(enriched),
+        allow_live_snapshot=False,
+        profiles=matched_profiles,
+    )
     captured_at = _coerce_utc_datetime(snapshot.get("captured_at"))
     return (
         enriched,
@@ -520,13 +534,12 @@ def apply_authoritative_sector_labels(holdings: list[Holding]) -> list[Holding]:
         if is_unthemed_allocation_fund(holding.fund_name):
             aligned.append(strip_unthemed_allocation_associated_sector(holding))
             continue
-        row = identity_rows.get(holding.fund_code or "")
+        row = _restore_locked_cxo_identity(
+            identity_rows.get(holding.fund_code or ""),
+            code=holding.fund_code or "",
+            fund_name=holding.fund_name,
+        )
         label = str((row or {}).get("sector_name") or "").strip()
-        locked = healthcare_parent_lock_against_cxo(holding.fund_name)
-        if locked and normalize_sector_label(label) == "CXO":
-            label = locked
-        if locked and normalize_sector_label(holding.sector_name) == "CXO" and not label:
-            label = locked
         updates: dict[str, str | None] = {}
         if (
             label
@@ -534,20 +547,45 @@ def apply_authoritative_sector_labels(holdings: list[Holding]) -> list[Holding]:
             and _is_valid_sector_label(label)
         ):
             updates["sector_name"] = label
-        if locked and (
-            holding.intraday_index_name == "国证CXO"
-            or normalize_sector_label(holding.sector_name) == "CXO"
-        ):
-            from app.services.fund_profile import infer_intraday_index_from_sector
-
-            updates["intraday_index_name"] = infer_intraday_index_from_sector(
-                label or locked
-            )
+        identity_index = str((row or {}).get("intraday_index_name") or "").strip()
+        if identity_index and identity_index != holding.intraday_index_name:
+            updates["intraday_index_name"] = identity_index
         if updates:
             aligned.append(holding.model_copy(update=updates))
             continue
         aligned.append(holding)
     return aligned
+
+
+def _restore_locked_cxo_identity(
+    row: dict | None,
+    *,
+    code: str,
+    fund_name: str | None,
+) -> dict | None:
+    """列表读路径把曾锁回医疗/医药的 CXO 重仓身份恢复出来，避免还要手动改板块。"""
+
+    if not row or not code or code == "000000":
+        return row
+    current = str(row.get("sector_name") or "").strip()
+    if current not in {"医疗", "医药"}:
+        return row
+    from app.services.fund_primary_sector_service import _repair_named_healthcare_cxo_row
+
+    repaired = _repair_named_healthcare_cxo_row(
+        row,
+        code=code,
+        fund_name=fund_name,
+        persist=True,
+    )
+    if repaired is None:
+        return row
+    return {
+        **row,
+        "sector_name": repaired.sector_name,
+        "intraday_index_name": repaired.intraday_index_name,
+        "detail": repaired.detail,
+    }
 
 
 def _overlay_profile_onto_holding(
@@ -569,38 +607,24 @@ def _overlay_profile_onto_holding(
     if profile.exit_pending_until:
         patch["exit_pending_until"] = profile.exit_pending_until
         patch["exit_basis_amount"] = profile.exit_basis_amount or base.holding_amount
+    identity_row = _restore_locked_cxo_identity(
+        identity_row,
+        code=profile.fund_code or base.fund_code or "",
+        fund_name=profile.fund_name or base.fund_name,
+    )
     identity_sector = str((identity_row or {}).get("sector_name") or "").strip()
-    locked = healthcare_parent_lock_against_cxo(profile.fund_name or base.fund_name)
-    if locked and normalize_sector_label(identity_sector) == "CXO":
-        identity_sector = locked
     if _is_valid_sector_label(identity_sector):
         patch["sector_name"] = identity_sector
     elif _is_valid_sector_label(profile.sector_name):
         patch["sector_name"] = profile.sector_name
     elif _is_valid_sector_label(base.sector_name):
         patch["sector_name"] = base.sector_name
-    if locked and normalize_sector_label(str(patch.get("sector_name") or "")) == "CXO":
-        patch["sector_name"] = locked
     identity_index = str((identity_row or {}).get("intraday_index_name") or "").strip()
-    if locked and identity_index == "国证CXO":
-        identity_index = ""
     profile_index = str(profile.intraday_index_name or "").strip()
-    if locked and profile_index == "国证CXO":
-        profile_index = ""
     if identity_index:
         patch["intraday_index_name"] = identity_index
     elif profile_index:
         patch["intraday_index_name"] = profile_index
-    if locked and (
-        patch.get("intraday_index_name") == "国证CXO"
-        or (
-            "intraday_index_name" not in patch
-            and base.intraday_index_name == "国证CXO"
-        )
-    ):
-        from app.services.fund_profile import infer_intraday_index_from_sector
-
-        patch["intraday_index_name"] = infer_intraday_index_from_sector(locked)
     if base.sector_return_percent is None and profile.sector_return_percent is not None:
         patch["sector_return_percent"] = profile.sector_return_percent
     return base.model_copy(update=patch)

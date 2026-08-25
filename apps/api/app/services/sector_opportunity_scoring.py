@@ -129,6 +129,37 @@ EXIT_TREND_THRESHOLD = V3_GATE_THRESHOLDS["trend"] - 8.0
 #: 判断：资金分位已经内含在 participation 里。
 V3_INVALID_TREND_CEILING = 40.0
 V3_INVALID_PARTICIPATION_CEILING = 35.0
+#: 「反弹修复结构」分数算法（`structure_repair.2026-08.v1`）。
+#:
+#: 动机（2026-08 线上实测）：医疗方向 20 日深回撤把结构打成 weak_breakdown →
+#: `structure_broken` → invalid → 日报大幅减仓评估 −50%；而当日板块 +2.6%（估算）、
+#: 主力资金转为净流入、区间修复已在进行——这些证据在退出链路上完全没有发言权，日报
+#: 只能不加度量地复述"超跌反弹，结构未修复"。本分数把"反弹是否在修复结构"量化成
+#: 三个组件（0–100 加权）：
+#:
+#: * 区间修复度（40%）：`drawdown_recovery_20d_percent`，20 日回撤已收复的比例——
+#:   结构修复的直接度量，与 `recovery_ready` 位置标签用的是同一条证据；
+#: * 当日反弹强度（30%）：当日涨跌（盘中为估算值），达到
+#:   `V3_STRUCTURE_REPAIR_REBOUND_FULL_PERCENT` 拿满；下跌或缺数据为 0；
+#: * 资金回流确认（30%）：`flow_improving`（资金模式确认回流）拿满；仅当日转正、
+#:   模式未确认减半；其余为 0。
+#:
+#: 缺数据按 0 计：修复必须有证据，缺证据不等于在修复。权重与放宽线为**新设参数，
+#: 未经回测**（payload 里 `thresholds_validated=False` 如实披露）。它**不改变
+#: entry_state**——荐基的入场语义一分不动；唯一消费方是日报退出链路
+#: （`sector_direction_exit.assess_direction_exit`）：仅当结构破坏是 invalid 的唯一
+#: 触发条件（非双弱、非主线退潮）且修复分过线时，把大幅减仓 −50% 放宽为普通减仓
+#: 评估；连续跌破退出线的清仓升级不受影响。
+STRUCTURE_REPAIR_POLICY_VERSION = "structure_repair.2026-08.v1"
+V3_STRUCTURE_REPAIR_WEIGHTS: dict[str, float] = {
+    "range_recovery": 0.40,
+    "intraday_rebound": 0.30,
+    "flow_reflux": 0.30,
+}
+#: 当日反弹轴拿满分所需的涨幅（%）。
+V3_STRUCTURE_REPAIR_REBOUND_FULL_PERCENT = 3.0
+#: 修复分达到多少才允许日报放宽退出档位。
+V3_STRUCTURE_REPAIR_SOFTEN_THRESHOLD = 60.0
 #: 过热标记数量 → 本次机会金额缩放。过热方向不被拒绝，买入后的动作交由日报。
 V3_FIRST_TRANCHE_SCALE: dict[int, float] = {0: 1.0, 1: 0.6}
 V3_FIRST_TRANCHE_SCALE_CROWDED = 0.4
@@ -1048,6 +1079,69 @@ def classify_entry_state_v3(
     return ENTRY_READY_ON_PULLBACK
 
 
+def describe_structure_repair_v3(
+    *,
+    structure_broken: bool,
+    doubly_weak: bool,
+    mainline_status: str,
+    change_1d: float | None,
+    recovery_20d: float | None,
+    flow_improving: bool,
+    today_flow: float | None,
+    date_aligned: bool,
+) -> dict[str, Any]:
+    """「反弹修复结构」分数算法：量化当前反弹修复了多少已破坏的结构。
+
+    纯函数、只产出可观测 payload，不改变任何状态或分数（组件与动机见
+    `STRUCTURE_REPAIR_POLICY_VERSION` 的模块级注释）。两个布尔结论供退出链路消费：
+
+    * ``sole_invalid_driver``：结构破坏是否是 invalid 的**唯一**触发条件——双弱或主线
+      退潮同时在场时，反弹修复不足以说明方向还值得留，放宽不适用；
+    * ``active``：结构确实处于破坏状态且修复分已过放宽线。
+    """
+    range_recovery = (
+        _clamp(recovery_20d, 0.0, 100.0) if recovery_20d is not None else 0.0
+    )
+    intraday_rebound = _clamp(
+        (change_1d if change_1d is not None else 0.0)
+        / V3_STRUCTURE_REPAIR_REBOUND_FULL_PERCENT
+        * 100.0,
+        0.0,
+        100.0,
+    )
+    if flow_improving:
+        flow_reflux = 100.0
+    elif date_aligned and today_flow is not None and today_flow > 0:
+        flow_reflux = 50.0
+    else:
+        flow_reflux = 0.0
+    score = _clamp(
+        range_recovery * V3_STRUCTURE_REPAIR_WEIGHTS["range_recovery"]
+        + intraday_rebound * V3_STRUCTURE_REPAIR_WEIGHTS["intraday_rebound"]
+        + flow_reflux * V3_STRUCTURE_REPAIR_WEIGHTS["flow_reflux"],
+        0.0,
+        100.0,
+    )
+    return {
+        "policy_version": STRUCTURE_REPAIR_POLICY_VERSION,
+        "score": round(score, 2),
+        "active": bool(
+            structure_broken and score >= V3_STRUCTURE_REPAIR_SOFTEN_THRESHOLD
+        ),
+        "sole_invalid_driver": bool(
+            structure_broken and not doubly_weak and mainline_status != "fading"
+        ),
+        "threshold": V3_STRUCTURE_REPAIR_SOFTEN_THRESHOLD,
+        "components": {
+            "range_recovery": round(range_recovery, 2),
+            "intraday_rebound": round(intraday_rebound, 2),
+            "flow_reflux": round(flow_reflux, 2),
+        },
+        "weights": dict(V3_STRUCTURE_REPAIR_WEIGHTS),
+        "thresholds_validated": False,
+    }
+
+
 def classify_entry_state(
     *,
     evidence_quality: str,
@@ -1690,6 +1784,21 @@ def _entry_maturity_v3(
         and today_flow > 0
         and pattern in _IMPROVING_FLOW_PATTERNS
     )
+    # 反弹修复结构分：invalid 的双弱条件在 classify_entry_state_v3 里判，这里按同一
+    # 定义复算一份供 sole_invalid_driver 使用——两处共用同一对阈值常量，不会漂移。
+    structure_repair = describe_structure_repair_v3(
+        structure_broken=structure_broken,
+        doubly_weak=bool(
+            trend_strength < V3_INVALID_TREND_CEILING
+            and participation < V3_INVALID_PARTICIPATION_CEILING
+        ),
+        mainline_status=status,
+        change_1d=change_1d,
+        recovery_20d=_num(features.get("drawdown_recovery_20d_percent")),
+        flow_improving=flow_improving,
+        today_flow=today_flow,
+        date_aligned=date_aligned,
+    )
     formation = _trend_formation_probability_v3(
         trend_strength=trend_strength,
         participation=participation,
@@ -1919,6 +2028,9 @@ def _entry_maturity_v3(
             "mainline_status": status,
             "position_label": position_label or None,
         },
+        # 反弹修复结构分：可观测事实。不参与 entry_state；由日报退出链路消费
+        # （结构破坏是 invalid 唯一触发条件且修复分过线时，放宽退出档位）。
+        "structure_repair": structure_repair,
         "data_coverage": round(coverage, 2),
         "evidence_quality": evidence_quality,
         "entry_state": entry_state,
@@ -1968,6 +2080,14 @@ def _entry_maturity_v3(
             f"结构修复度 {position_risk:.1f} 分（权重 {V3_BLOCK_WEIGHTS['position_risk']:.0%}）",
         ]
         + (["今日资金已转正，处于回流改善阶段"] if flow_improving else [])
+        + (
+            [
+                f"当日反弹正在修复已破坏的结构（反弹修复分 "
+                f"{structure_repair['score']:.0f}/100）"
+            ]
+            if structure_repair["active"]
+            else []
+        )
         + list(formation["reasons"]),
         "penalties": penalties,
         "sector_label": label,
