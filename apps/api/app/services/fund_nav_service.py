@@ -298,6 +298,23 @@ def peek_cached_unit_nav(fund_code: str) -> float | None:
     return persisted
 
 
+def peek_stale_unit_nav(fund_code: str) -> float | None:
+    """忽略 24h TTL 的最近单位净值。加仓重算在 cache-only 路径上不能因为隔夜过期就改用份额隐含价。"""
+    fresh = peek_cached_unit_nav(fund_code)
+    if fresh is not None and fresh > 0:
+        return fresh
+    from app.services.sector_quote_cache import get_spot_snapshot_any_age
+
+    payload = get_spot_snapshot_any_age(_unit_nav_persist_key(fund_code))
+    if not payload or payload.get("value") is None:
+        return None
+    try:
+        value = round(float(payload["value"]), 4)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
 def _persisted_unit_nav(fund_code: str) -> float | None:
     payload = get_spot_snapshot(_unit_nav_persist_key(fund_code), ttl_seconds=TTL_HIT)
     if not payload or payload.get("value") is None:

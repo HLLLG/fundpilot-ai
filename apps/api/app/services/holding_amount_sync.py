@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 
 from app.database import get_fund_profile_by_code, list_fund_profiles, save_fund_profile
 from app.models import FundProfile, Holding
@@ -11,6 +12,12 @@ from app.services.fund_nav_service import (
     get_official_nav_return,
     get_unit_nav_on_date,
 )
+
+# 单位净值兜底：隐含价（结算额/旧份额）只允许落在正常基金净值区间。
+# 加仓后若再用「已按新份额计价的结算额 / 旧份额」，会得到天文数字单价。
+_PLAUSIBLE_IMPLIED_NAV_MIN = 0.05
+_PLAUSIBLE_IMPLIED_NAV_MAX = 50.0
+_MAX_SETTLED_AMOUNT_YUAN = 100_000_000.0
 from app.services.trading_session import (
     build_trading_session,
     get_effective_trade_date,
@@ -565,7 +572,7 @@ def _should_skip_official_nav_roll(
     return False
 
 
-def _latest_confirmed_nav(fund_code: str) -> float | None:
+def _latest_confirmed_nav(fund_code: str) -> tuple[float | None, str | None]:
     """已确认交易上的确认日净值，给加仓金额重算当缓存净值缺失时的兜底。"""
     from app.database import list_fund_transactions
 
@@ -575,14 +582,42 @@ def _latest_confirmed_nav(fund_code: str) -> float | None:
         transactions = list_fund_transactions(fund_code=fund_code)
     except Exception:
         logger.exception("读取 %s 确认净值失败", fund_code)
-        return None
+        return None, None
     for tx in transactions:
         if tx.status != "confirmed" or not tx.nav_on_confirm or tx.nav_on_confirm <= 0:
             continue
         if tx.confirm_date >= latest_date:
             latest_date = tx.confirm_date
             nav = float(tx.nav_on_confirm)
-    return nav
+    return nav, latest_date or None
+
+
+def _plausible_implied_unit_nav(value: float) -> bool:
+    return math.isfinite(value) and _PLAUSIBLE_IMPLIED_NAV_MIN <= value <= _PLAUSIBLE_IMPLIED_NAV_MAX
+
+
+def _plausible_settled_amount(value: float) -> bool:
+    return math.isfinite(value) and 0 < value <= _MAX_SETTLED_AMOUNT_YUAN
+
+
+def _implied_unit_nav_from_baseline(
+    settled: float,
+    old_shares: float,
+    *,
+    already_dated: bool,
+) -> float | None:
+    """仅在「结算额仍按旧份额计价」时用结算额/旧份额反推单价。
+
+    加仓覆盖表会把有效份额写成旧份额+新确认份额，但档案 ``holding_shares``
+    保持基线不变。若结算额已经按有效份额写过一次，再用旧份额去除，单价会被
+    放大 ``有效/基线`` 倍，下次刷新再乘一次，金额指数爆炸。
+    """
+    if already_dated or old_shares <= 0 or settled <= 0:
+        return None
+    implied = settled / old_shares
+    if not _plausible_implied_unit_nav(implied):
+        return None
+    return implied
 
 
 def _unit_nav_for_share_override(
@@ -592,22 +627,35 @@ def _unit_nav_for_share_override(
     settled: float,
     allow_nav_fetch: bool,
     official_unit_nav: float | None,
-) -> float | None:
-    """加仓后重算市值用的单价：官方净值 → 缓存 → 旧份额隐含价 → 确认日净值。"""
-    from app.services.fund_nav_service import peek_cached_unit_nav
+) -> tuple[float | None, str | None]:
+    """加仓后重算市值用的单价：官方净值 → 缓存（含过期）→ 确认日净值 → 旧份额隐含价。"""
+    from app.services.fund_nav_service import peek_cached_unit_nav, peek_stale_unit_nav
 
     if official_unit_nav and official_unit_nav > 0:
-        return official_unit_nav
+        return official_unit_nav, None
     peeked = peek_cached_unit_nav(fund_code)
     if peeked and peeked > 0:
-        return peeked
+        return peeked, None
     latest = get_latest_unit_nav(fund_code, allow_fetch=allow_nav_fetch)
     if latest and latest > 0:
-        return latest
+        return latest, None
+    stale = peek_stale_unit_nav(fund_code)
+    if stale and stale > 0:
+        return stale, None
+    confirmed, confirmed_as_of = _latest_confirmed_nav(fund_code)
+    if confirmed and confirmed > 0:
+        return confirmed, confirmed_as_of
     old_shares = profile.holding_shares if profile else None
-    if old_shares and old_shares > 0 and settled > 0:
-        return settled / old_shares
-    return _latest_confirmed_nav(fund_code)
+    already_dated = bool(profile and (profile.settled_amount_trade_date or "").strip())
+    if old_shares and old_shares > 0:
+        implied = _implied_unit_nav_from_baseline(
+            settled,
+            float(old_shares),
+            already_dated=already_dated,
+        )
+        if implied is not None:
+            return implied, None
+    return None, None
 
 
 def _ledger_shares_differ(override_value: float, profile: FundProfile | None) -> bool:
@@ -729,24 +777,41 @@ def _sync_one_holding(
             allow_nav_fetch=allow_nav_fetch,
         )
         if unit_nav is None:
-            unit_nav = _unit_nav_for_share_override(
+            unit_nav, fallback_as_of = _unit_nav_for_share_override(
                 code,
                 profile=profile,
                 settled=settled,
                 allow_nav_fetch=allow_nav_fetch,
                 official_unit_nav=None,
             )
+            if nav_as_of is None:
+                nav_as_of = fallback_as_of
         if unit_nav and unit_nav > 0:
             new_settled = round(shares * unit_nav, 2)
+            if not _plausible_settled_amount(new_settled):
+                logger.warning(
+                    "skip share-override amount for %s: shares=%.6f nav=%.6g -> %.6g",
+                    code,
+                    shares,
+                    unit_nav,
+                    new_settled,
+                )
+                return holding, profile
+            persist_date = nav_as_of or (
+                (profile.settled_amount_trade_date or "").strip() or None
+                if profile is not None
+                else None
+            )
             if persist_profile and profile is not None:
                 profile = save_fund_profile(
                     profile.model_copy(
                         update={
                             "settled_holding_amount": new_settled,
                             "holding_amount": new_settled,
-                            # 无日期保证的兜底单价（旧份额隐含价/确认日净值）
-                            # 写 None，后续滚动只信 shares×当日净值。
-                            "settled_amount_trade_date": nav_as_of,
+                            # 无日期保证时保留已有结算日，禁止写成 None：
+                            # 清空后下一次会把「已按新份额计价的金额 / 旧份额」
+                            # 当成单价再乘一遍。
+                            "settled_amount_trade_date": persist_date,
                         }
                     )
                 )
@@ -755,7 +820,7 @@ def _sync_one_holding(
                     update={
                         "holding_amount": new_settled,
                         "settled_holding_amount": new_settled,
-                        "amount_includes_today": nav_as_of == trade_date,
+                        "amount_includes_today": persist_date == trade_date,
                     }
                 ),
                 profile,
