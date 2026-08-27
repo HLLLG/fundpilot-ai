@@ -8,7 +8,7 @@ from app.services.fund_profile import (
     infer_intraday_index_from_fund_name,
     infer_intraday_index_from_sector,
 )
-from app.services.sector_labels import infer_sector_label_from_fund_name, normalize_sector_label
+from app.services.sector_labels import normalize_sector_label
 
 
 class _ProfileNotProvided:
@@ -102,13 +102,6 @@ def sector_quote_lookup_label(
         if canon:
             return canon.label
         return from_fund
-
-    inferred = infer_sector_label_from_fund_name(fund_name)
-    if inferred:
-        canon = get_canonical_sector(inferred)
-        if canon:
-            return canon.label
-        return inferred
     return None
 
 
@@ -139,9 +132,6 @@ def sector_display_label(holding: Holding) -> str | None:
             if _is_valid_sector_label(board):
                 return board
         return holding.intraday_index_name
-    inferred = infer_sector_label_from_fund_name(holding.fund_name)
-    if inferred:
-        return inferred
     return None
 
 

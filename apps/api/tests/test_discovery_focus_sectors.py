@@ -81,7 +81,7 @@ def test_focus_sector_labels_are_normalised_to_whitelist_labels() -> None:
 
 
 def test_full_market_targets_mix_flow_and_setup_not_just_heat() -> None:
-    """全市场第一层不能只按 1/5 日热度圈满 8 个目标。"""
+    """全市场第一层不能只按 1/5 日热度圈满 6 个目标。"""
     hot = [
         {
             "sector_label": f"热门{index}",
@@ -109,7 +109,30 @@ def test_full_market_targets_mix_flow_and_setup_not_just_heat() -> None:
 
     assert "资金拐点" in selected
     assert "安静蓄势" in selected
-    assert len(selected) == 8
+    assert len(selected) == 6
+
+
+def test_full_market_focus_occupies_shared_six_slots() -> None:
+    """关注方向占 6 席总名额，不再在自动 8 席之外另加。"""
+    heat = [
+        {
+            "sector_label": f"热门{index}",
+            "heat_score": 20.0 - index,
+            "change_1d_percent": 8.0,
+            "change_5d_percent": 15.0,
+        }
+        for index in range(12)
+    ]
+
+    selected = select_target_sectors(
+        [],
+        ["半导体", "医药", "银行"],
+        heat,
+        InvestorProfile(),
+    )
+
+    assert selected[:3] == ["半导体", "医药", "银行"]
+    assert len(selected) == 6
 
 
 def test_actionable_gold_adds_gold_equity_companion_for_vehicle_recall() -> None:

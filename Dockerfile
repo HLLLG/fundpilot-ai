@@ -16,6 +16,7 @@ COPY apps/api/app /app/app
 # apps/api/Dockerfile 是另一条路径。镜像逐个白名单拷贝脚本，漏了这行定时任务会
 # 直接报「No such file or directory」——已经实测踩过一次。
 COPY apps/api/scripts/capture_sector_direction_states.py /app/scripts/capture_sector_direction_states.py
+COPY apps/api/scripts/refresh_fund_research_profiles.py /app/scripts/refresh_fund_research_profiles.py
 # 板块身份运维脚本：细分规则（CPO/CXO/算力租赁…）上新后在容器里立即重算存量
 # 身份（`docker compose exec -T api python scripts/rescan_cpo_cxo_targets.py run`），
 # 以及排查"方向无合格载体"时逐门槛诊断候选。

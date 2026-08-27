@@ -213,7 +213,6 @@ class FundProfileService:
             record = resolve_primary_sector(
                 fund_code,
                 fund_name=fund_name,
-                allow_name_infer=False,
                 fetch_benchmark=fetch_benchmark,
                 fetch_holdings_infer=fetch_holdings_infer,
                 batch_context=primary_sector_batch_context,
@@ -273,7 +272,6 @@ class FundProfileService:
                 )
             fields = primary_sector_fields_for_holding(
                 holding,
-                allow_name_infer=False,
                 fetch_benchmark=fetch_benchmark,
                 fetch_holdings_infer=fetch_holdings_infer,
                 batch_context=primary_sector_batch_context,
@@ -295,7 +293,6 @@ class FundProfileService:
             fields = primary_sector_fields_for_holding(
                 holding,
                 fallback_code=profile.fund_code,
-                allow_name_infer=False,
                 fetch_benchmark=fetch_benchmark,
                 fetch_holdings_infer=fetch_holdings_infer,
                 batch_context=primary_sector_batch_context,

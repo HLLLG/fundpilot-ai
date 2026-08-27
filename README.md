@@ -246,6 +246,7 @@ GitHub Actions 的 `CI` 并行跑 API pytest、Web lint / typecheck / 单测，�
 
 - 新增由定时任务通过 `docker compose exec api python scripts/<name>` 调用的脚本时，必须同时更新根目录 `Dockerfile`、`apps/api/Dockerfile` 以及两份 `.dockerignore` 白名单。镜像刻意不整目录拷 `scripts/`。漏掉任何一处，任务只会在 Actions 日志里失败，界面上看不出来。`apps/api/tests/test_capture_script_is_packaged.py` 会把这四处锁住。
 - 方向退出判定依赖逐日账本。生产需跑 `.github/workflows/sector-direction-capture.yml`（每交易日 19:10，Asia/Shanghai）。不跑则连续跌破天数会停在 1。补历史见 `apps/api/scripts/README.md`。
+- 规模/经理档案表由后台 worker 保活，生产另有 `.github/workflows/fund-research-profile-refresh.yml`（每交易日 21:40，Asia/Shanghai）强制刷当日净值×份额。荐基路径只 JOIN，不再拉新浪四张全表。
 
 </details>
 

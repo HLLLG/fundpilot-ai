@@ -1461,10 +1461,23 @@ export type DiscoveryCandidatePoolItem = {
   return_3m_percent?: number | null;
   return_6m_percent?: number | null;
   fund_scale_yi?: number | null;
-  fund_scale_basis?: "nav_times_latest_shares" | "nav_times_xq_latest_shares" | string | null;
+  fund_scale_basis?: "quarterly_net_assets" | "nav_times_latest_shares" | "nav_times_xq_latest_shares" | string | null;
   fund_shares_yi?: number | null;
   fund_shares_basis?: "xq_latest_reported_shares" | string | null;
   fund_manager?: string | null;
+  fund_managers?: Array<{
+    manager_id?: string | null;
+    manager_name?: string | null;
+    company?: string | null;
+    career_days?: number | null;
+    career_tenure?: string | null;
+    current_best_tenure_return_percent?: number | null;
+    current_best_fund_code?: string | null;
+    source?: string | null;
+  }>;
+  manager_career_days?: number | null;
+  manager_career_tenure?: string | null;
+  manager_best_tenure_return_percent?: number | null;
   established_date?: string | null;
   nav_date?: string | null;
   profile_updated_at?: string | null;
@@ -1523,6 +1536,19 @@ export type DiscoveryCandidatePoolItem = {
     components?: Record<string, number | null>;
     thresholds?: Record<string, number | null>;
     invalidation_signals?: string[];
+  };
+  sharpe_1y?: number | null;
+  sharpe_3y?: number | null;
+  sharpe_research?: {
+    schema_version?: string | null;
+    source_label?: string | null;
+    risk_free_rate?: number | null;
+    as_of?: string | null;
+    available_at?: string | null;
+    horizons?: {
+      "1y"?: { sharpe?: number | null; sample_days?: number | null } | null;
+      "3y"?: { sharpe?: number | null; sample_days?: number | null } | null;
+    };
   };
   vehicle_quality_score?: number | null;
   vehicle_quality_status?: DiscoveryQualityGateStatus | string | null;

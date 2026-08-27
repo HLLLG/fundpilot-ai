@@ -14,18 +14,15 @@ describe("profileSector", () => {
     expect(isInvalidSectorLabel("中航机遇领航混合发起C")).toBe(true);
   });
 
-  it("resolves intraday from fund code seed when sector_name is missing", () => {
+  it("does not invent an associated sector from fund code or name", () => {
     const holding = {
       fund_code: "018957",
       fund_name: "中航机遇领航混合发起C",
       sector_name: null,
       intraday_index_name: null,
     };
-    expect(holdingDisplaySectorLabel(holding)).toBe("CPO");
-    expect(resolveIntradayQuery(holding)).toEqual({
-      source_type: "concept",
-      source_name: "CPO",
-    });
+    expect(holdingDisplaySectorLabel(holding)).toBe("—");
+    expect(resolveIntradayQuery(holding)).toBeNull();
   });
 
   it("falls back to sector_name based query when benchmark-derived index name is unusable", () => {
@@ -153,7 +150,7 @@ describe("profileSector", () => {
     expect(resolveIntradayFallbackQuery(holding, null)).toBeNull();
   });
 
-  it("does not infer the broad semiconductor board from a materials-equipment feeder", () => {
+  it("does not infer an associated sector from a materials-equipment feeder name", () => {
     expect(
       holdingDisplaySectorLabel({
         fund_code: "020356",
@@ -161,7 +158,7 @@ describe("profileSector", () => {
         sector_name: null,
         intraday_index_name: null,
       }),
-    ).toBe("半导体材料");
+    ).toBe("—");
   });
 
   it("keeps the medical board for healthcare industry funds", () => {

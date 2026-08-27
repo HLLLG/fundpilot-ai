@@ -7,6 +7,7 @@
 tests
 scripts/*
 !scripts/capture_sector_direction_states.py
+!scripts/refresh_fund_research_profiles.py
 !scripts/rescan_cpo_cxo_targets.py
 !scripts/diagnose_sector_vehicles.py
 !scripts/rerun_holdings_primary_sectors.py

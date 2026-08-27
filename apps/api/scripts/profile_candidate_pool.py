@@ -63,9 +63,6 @@ def main() -> None:
             pool_mod, "list_fund_primary_sectors_by_sector_names"
         ),
         "_candidates_for_sector": _wrap(pool_mod, "_candidates_for_sector"),
-        "_index_rank_rows_by_name_sectors": _wrap(
-            pool_mod, "_index_rank_rows_by_name_sectors"
-        ),
         "_verified_primary_sectors_by_code": _wrap(
             pool_mod, "_verified_primary_sectors_by_code"
         ),

@@ -59,7 +59,6 @@ def enrich_holdings_from_profiles(
                 record = resolve_primary_sector(
                     code,
                     fund_name=resolved.fund_name or profile.fund_name,
-                    allow_name_infer=False,
                     fetch_benchmark=fetch_benchmark,
                 )
                 if record:

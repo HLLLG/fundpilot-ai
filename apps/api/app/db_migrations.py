@@ -12,7 +12,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 27
 
 # 迁移在应用/后台线程首次建立连接时触发（例如板块快照刷新会 daemon 线程预取资金流历史，
 # 与主线程几乎同时首次打开 sqlite 连接）。同进程内多个线程各自用独立 connection 对同一
@@ -603,6 +603,153 @@ def _migrate_fund_sector_identity_v21(connection: sqlite3.Connection) -> None:
                 "fund_sector_identity.2026-08.v1",
                 detail_raw,
             ),
+        )
+
+
+def _migrate_fund_daily_catalogue_v25(connection: sqlite3.Connection) -> None:
+    """Persist the daily open-fund catalogue as queryable rows.
+
+    The previous 20k snapshot lived as one JSON blob in ``sector_spot_cache``.
+    That is still importable once; this table is the current-day source of
+    truth for code/name/type/NAV/returns.  Sector identity stays in
+    ``fund_sector_current`` and is joined at read time.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fund_daily_catalogue (
+            fund_code TEXT NOT NULL PRIMARY KEY,
+            fund_name TEXT NOT NULL,
+            fund_type TEXT,
+            source_fund_type TEXT,
+            nav_date TEXT,
+            latest_nav REAL,
+            daily_growth_percent REAL,
+            established_date TEXT,
+            return_3m_percent REAL,
+            return_6m_percent REAL,
+            return_1y_percent REAL,
+            return_3y_percent REAL,
+            rank_enriched INTEGER NOT NULL DEFAULT 0,
+            snapshot_available_at TEXT NOT NULL,
+            source TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_daily_catalogue_snapshot
+        ON fund_daily_catalogue (snapshot_available_at)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_daily_catalogue_established
+        ON fund_daily_catalogue (established_date)
+        """
+    )
+
+
+def _migrate_fund_research_tables_v26(connection: sqlite3.Connection) -> None:
+    """Persist Sina scale/manager and computed 1y risk metrics.
+
+    Scale and manager come from four open-end Sina category dumps. Sharpe and
+    one-year drawdown are computed from cached NAV for verified identities,
+    never scraped from Xueqiu or Eastmoney tesedata pages.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fund_research_profile (
+            fund_code TEXT NOT NULL PRIMARY KEY,
+            fund_name TEXT,
+            fund_category TEXT,
+            latest_nav REAL,
+            fund_shares_yi REAL,
+            fund_scale_yi REAL,
+            fund_scale_basis TEXT,
+            established_date TEXT,
+            fund_manager TEXT,
+            profile_updated_at TEXT,
+            snapshot_available_at TEXT NOT NULL,
+            source TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_research_profile_snapshot
+        ON fund_research_profile (snapshot_available_at)
+        """
+    )
+    if not _column_exists(connection, "fund_research_profile", "fund_shares_yi"):
+        connection.execute(
+            "ALTER TABLE fund_research_profile ADD COLUMN fund_shares_yi REAL"
+        )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fund_risk_metrics (
+            fund_code TEXT NOT NULL PRIMARY KEY,
+            sharpe_1y REAL,
+            sharpe_3y REAL,
+            max_drawdown_1y_percent REAL,
+            nav_as_of TEXT,
+            nav_point_count INTEGER,
+            schema_version TEXT NOT NULL,
+            snapshot_available_at TEXT NOT NULL,
+            source TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_risk_metrics_snapshot
+        ON fund_risk_metrics (snapshot_available_at)
+        """
+    )
+
+
+def _migrate_fund_manager_roster_v27(connection: sqlite3.Connection) -> None:
+    """Persist Eastmoney manager roster: career days keyed by fund + manager id.
+
+    The Sina research profile only keeps a manager name string. Career tenure
+    comes from the Eastmoney manager dump and must not live on that snapshot
+    table — a Sina replace would wipe it. Do not store career annualized
+    return: the dump has no such figure and we do not compute one.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fund_manager_roster (
+            fund_code TEXT NOT NULL,
+            manager_id TEXT NOT NULL,
+            manager_name TEXT NOT NULL,
+            company TEXT,
+            career_days INTEGER,
+            current_best_tenure_return_percent REAL,
+            current_best_fund_code TEXT,
+            current_aum_yi REAL,
+            snapshot_available_at TEXT NOT NULL,
+            source TEXT NOT NULL,
+            PRIMARY KEY (fund_code, manager_id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_manager_roster_code
+        ON fund_manager_roster (fund_code)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_manager_roster_snapshot
+        ON fund_manager_roster (snapshot_available_at)
+        """
+    )
+    if _column_exists(connection, "fund_manager_roster", "career_annual_return_percent"):
+        connection.execute(
+            "ALTER TABLE fund_manager_roster DROP COLUMN career_annual_return_percent"
         )
 
 
@@ -2206,6 +2353,9 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
         _migrate_admin_user_management(connection)
         _migrate_ops_observability_v23(connection)
         _migrate_langgraph_runs(connection)
+        _migrate_fund_daily_catalogue_v25(connection)
+        _migrate_fund_research_tables_v26(connection)
+        _migrate_fund_manager_roster_v27(connection)
         return
 
     connection.execute(
@@ -2284,4 +2434,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     _migrate_admin_user_management(connection)
     _migrate_ops_observability_v23(connection)
     _migrate_langgraph_runs(connection)
+    _migrate_fund_daily_catalogue_v25(connection)
+    _migrate_fund_research_tables_v26(connection)
+    _migrate_fund_manager_roster_v27(connection)
     _set_schema_version(connection, SCHEMA_VERSION)

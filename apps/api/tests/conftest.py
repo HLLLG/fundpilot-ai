@@ -570,6 +570,15 @@ def _auth_env(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _reset_manager_roster_memory(_auth_env):
+    from app.services.fund_manager_roster import _reset_roster_memory_for_tests
+
+    _reset_roster_memory_for_tests()
+    yield
+    _reset_roster_memory_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _default_user_context(_auth_env):
     from app.request_context import reset_request_user_id, set_request_user_id
 

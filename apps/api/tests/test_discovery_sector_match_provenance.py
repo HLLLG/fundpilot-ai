@@ -12,7 +12,6 @@ from app.services.discovery_allocation_service import (
 )
 from app.services.discovery_candidate_llm import slim_candidate_for_llm
 from app.services.discovery_candidate_pool import (
-    _index_rank_rows_by_name_sectors,
     _is_execution_verified_primary_mapping,
     _name_matches_direction,
     _name_matches_sector,
@@ -432,20 +431,86 @@ def test_discovery_keywords_cover_target_directions_without_single_cloud_false_p
     assert not _name_matches_sector("彩云成长混合A", cloud_keywords)
 
 
-def test_name_index_groups_each_row_without_rescanning_unrelated_names() -> None:
-    rows = [
-        {"fund_code": "000001", "fund_name": "某某半导体ETF联接A"},
-        {"fund_code": "000002", "fund_name": "某某白酒ETF联接A"},
-        {"fund_code": "000003", "fund_name": "某某成长混合A"},
-    ]
-
-    index = _index_rank_rows_by_name_sectors(rows, ["半导体", "白酒"])
-
-    assert [row["fund_code"] for row in index["半导体"]] == ["000001"]
-    assert [row["fund_code"] for row in index["白酒"]] == ["000002"]
-    assert "000003" not in {
-        row["fund_code"] for bucket in index.values() for row in bucket
+def _holdings_identity_row(code: str, name: str, sector: str = "半导体") -> dict:
+    return {
+        "fund_code": code,
+        "fund_name": name,
+        "sector_name": sector,
+        "source": "holdings_infer",
+        "identity_status": "verified",
+        "confidence": 0.9,
     }
+
+
+def _quality_rank_row(code: str, name: str, *, return_3m: float = 8.0) -> dict:
+    return {
+        "fund_code": code,
+        "fund_name": name,
+        "fund_scale_yi": 20,
+        "return_3m_percent": return_3m,
+        "return_6m_percent": 15,
+        "return_1y_percent": 24,
+        "max_drawdown_1y_percent": -12,
+        "established_date": "2020-01-01",
+    }
+
+
+def test_name_only_catalogue_row_is_not_recalled_when_identity_is_thin(
+    monkeypatch,
+) -> None:
+    verified_row = _holdings_identity_row("000111", "半导体持仓核验000111A")
+    name_only = _quality_rank_row("088888", "某某半导体ETF联接A", return_3m=80.0)
+
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.list_fund_primary_sectors",
+        lambda: [],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.list_fund_primary_sectors_by_sector_names",
+        lambda _labels, limit_per_sector=None: [verified_row],
+    )
+
+    built = build_candidate_pool(
+        ["半导体"],
+        per_sector=2,
+        pool_cap=2,
+        fetch_rank=lambda limit: [
+            _quality_rank_row(verified_row["fund_code"], verified_row["fund_name"]),
+            name_only,
+        ],
+        fetch_new_funds=lambda limit: [],
+        decision_at=_DECISION_AT,
+    )
+
+    assert [row["fund_code"] for row in built] == ["000111"]
+    assert built[0]["sector_match_kind"] == "primary"
+
+
+def test_empty_identity_index_does_not_fall_back_to_catalogue_name_scan(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.list_fund_primary_sectors",
+        lambda: [],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.list_fund_primary_sectors_by_sector_names",
+        lambda *_args, **_kwargs: [],
+    )
+
+    built = build_candidate_pool(
+        ["半导体"],
+        per_sector=2,
+        pool_cap=2,
+        fetch_rank=lambda limit: [
+            _quality_rank_row("088888", "某某半导体ETF联接A", return_3m=80.0),
+            _quality_rank_row("088889", "某某半导体指数C", return_3m=40.0),
+        ],
+        fetch_new_funds=lambda limit: [],
+        decision_at=_DECISION_AT,
+    )
+
+    assert built == []
 
 
 def test_primary_match_survives_build_enrich_finalize_llm_and_guard(
@@ -494,8 +559,7 @@ def test_primary_match_survives_build_enrich_finalize_llm_and_guard(
         decision_at=_DECISION_AT,
     )
 
-    # The same fund is discovered through both primary mapping and name matching;
-    # the stronger primary provenance must win and must already be persistable.
+    # Identity-index recall must already carry persistable primary provenance.
     assert built[0]["sector_match_kind"] == "primary"
     assert built[0]["sector_identity_status"] == SECTOR_IDENTITY_VERIFIED
     assert built[0]["sector_identity_eligible"] is True

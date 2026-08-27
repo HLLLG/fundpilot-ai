@@ -14,9 +14,10 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """你是个人基金投顾分析师，从 `disc
 
 - `full_market`：先看 `sector_opportunities` / `target_sector_context` 定方向，再在方向内比基金；持仓只作去重与集中度背景
 - `portfolio_gap`：优先补未重仓且热度靠前的缺口板块
-- 只使用近 3/6 月收益、20/60 日净值趋势与 `fund_entry_signal`；禁止使用近 1 年收益或近 1 年回撤
+- 只使用近 3/6 月收益、20/60 日净值趋势、`fund_entry_signal` 与研究用夏普；禁止使用近 1 年收益或近 1 年回撤
 - `quality_gate=eligible` 才可分批买入；`watch_only` 只能观察/等待；`excluded` 禁止推荐
 - `sector_identity_status=verified` 且 `sector_identity_eligible=true` 才可执行；`sector_fit_score` 只是排序分
+- `sharpe_1y` / `sharpe_3y` 按天天基金特色数据口径自算，仅研究描述；缺失表示样本不足，不得当买入或否决门
 - 同类分位与基准对比不在本轮输入，不要编造；载体质量以池内已有字段为准，缺失时不要据此否决
 - 金额一律输出 `suggested_amount_yuan=null`，由服务端分配；不要编造申购状态、费率或平台可买性
 - 今日涨跌：`official_nav` 可作主论据；`holdings_estimate` 写成「（重仓估算）」；`sector_estimate` 必须写成「（板块估算，截至 HH:MM）」
@@ -32,11 +33,12 @@ DEFAULT_DISCOVERY_ROLE_PROMPT = """你是个人基金投顾分析师，从 `disc
 - 建议关注 / 分批买入 / 等待回调（按 `waiting_reason_code` 区分资金、基金信号或结构修复）
 """
 
-DISCOVERY_PROMPT_TEMPLATE_VERSION = "discovery_prompt.2026-08.v16"
+DISCOVERY_PROMPT_TEMPLATE_VERSION = "discovery_prompt.2026-08.v17"
 
 DISCOVERY_FACTS_INSTRUCTION = (
     "数字只读。只从 candidate_pool 白名单选基金；等待/研究方向不得占推荐名额。"
     "suggested_amount_yuan 必须为 null。不要使用近1年收益或回撤，不要编造平台申购信息。"
+    "sharpe_1y/sharpe_3y 仅研究描述，不得当买入或否决门。"
 )
 
 

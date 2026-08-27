@@ -30,6 +30,7 @@ API_ROOT = Path(__file__).resolve().parents[1]
 #: 新增这类脚本时必须同时更新两份 Dockerfile 与两份 .dockerignore。
 SCHEDULED_SCRIPTS = (
     "capture_sector_direction_states.py",
+    "refresh_fund_research_profiles.py",
     "rescan_cpo_cxo_targets.py",
     "diagnose_sector_vehicles.py",
     "rerun_holdings_primary_sectors.py",
@@ -75,15 +76,34 @@ def test_both_dockerignore_allowlists_release_the_script(script: str) -> None:
     assert f"!scripts/{script}" in api_lines
 
 
-def test_capture_workflow_invokes_the_packaged_path() -> None:
+@pytest.mark.parametrize(
+    ("workflow_name", "container_path", "repo_path"),
+    [
+        (
+            "sector-direction-capture.yml",
+            "python scripts/capture_sector_direction_states.py",
+            "apps/api/scripts/capture_sector_direction_states.py",
+        ),
+        (
+            "fund-research-profile-refresh.yml",
+            "python scripts/refresh_fund_research_profiles.py",
+            "apps/api/scripts/refresh_fund_research_profiles.py",
+        ),
+    ],
+)
+def test_capture_workflow_invokes_the_packaged_path(
+    workflow_name: str,
+    container_path: str,
+    repo_path: str,
+) -> None:
     """workflow 里的调用路径必须与镜像里的落地路径一致。"""
     workflow = (
-        REPO_ROOT / ".github" / "workflows" / "sector-direction-capture.yml"
+        REPO_ROOT / ".github" / "workflows" / workflow_name
     ).read_text(encoding="utf-8")
-    assert "python scripts/capture_sector_direction_states.py" in workflow
+    assert container_path in workflow
     # 容器 WORKDIR 是 /app，脚本落在 /app/scripts/，因此调用侧必须是相对路径而不是
     # apps/api/scripts/...（后者在容器里不存在）。
-    assert "apps/api/scripts/capture_sector_direction_states.py" not in workflow
+    assert repo_path not in workflow
 
 
 # ---------------------------------------------------------------------------

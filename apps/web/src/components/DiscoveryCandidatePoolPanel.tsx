@@ -102,6 +102,13 @@ function formatScore(value: number | null | undefined): string {
   return Number(value).toFixed(2).replace(/\.00$/, "");
 }
 
+function formatSharpe(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return "—";
+  }
+  return Number(value).toFixed(2);
+}
+
 function decisionReasonLabel(
   reason: string,
   item: DiscoveryCandidatePoolItem,
@@ -528,6 +535,46 @@ function qualityPresentation(
   };
 }
 
+function formatCareerTenure(days?: number | null): string | null {
+  if (days == null || !Number.isFinite(days) || days < 0) {
+    return null;
+  }
+  const whole = Math.floor(days);
+  const years = Math.floor(whole / 365);
+  const rest = whole % 365;
+  if (years <= 0) {
+    return `${rest}天`;
+  }
+  if (rest <= 0) {
+    return `${years}年`;
+  }
+  return `${years}年又${rest}天`;
+}
+
+function formatManagerFact(item: DiscoveryCandidatePoolItem): string | null {
+  if (!item.fund_manager) {
+    return null;
+  }
+  const tenures = (item.fund_managers ?? [])
+    .map((manager) => manager.career_tenure ?? formatCareerTenure(manager.career_days))
+    .filter((value): value is string => Boolean(value));
+  const tenure =
+    tenures.length > 0
+      ? tenures.join(" / ")
+      : item.manager_career_tenure ?? formatCareerTenure(item.manager_career_days);
+  const returnText =
+    item.manager_best_tenure_return_percent != null
+      ? `在管最佳任期回报 ${formatScore(item.manager_best_tenure_return_percent)}%`
+      : null;
+  return [
+    `经理 ${item.fund_manager}`,
+    tenure ? `从业 ${tenure}` : null,
+    returnText,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 function QualityDetails({
   item,
   quality,
@@ -542,12 +589,14 @@ function QualityDetails({
   const profileFacts = [
     item.fund_scale_yi != null
       ? `规模 ${formatScore(item.fund_scale_yi)} 亿元（${
-          item.fund_scale_basis === "nav_times_xq_latest_shares"
+          item.fund_scale_basis === "quarterly_net_assets"
+            ? "季报净资产"
+            : item.fund_scale_basis === "nav_times_xq_latest_shares"
             ? "净值×雪球最近份额估算"
             : "净值×最近份额估算"
         }）`
       : null,
-    item.fund_manager ? `经理 ${item.fund_manager}` : null,
+    formatManagerFact(item),
     item.established_date ? `成立 ${item.established_date}` : null,
   ].filter(Boolean);
   const profileStatus = item.profile_status ?? item.quality_gate?.profile_status;
@@ -753,8 +802,9 @@ export function DiscoveryCandidatePoolPanel({
           <div className="px-3 pt-2.5">
             <MethodologyNote label="评级口径">
               核心字段缺失会触发质量降级，候选仅作研究观察；已剔除项不会进入推荐。
-              “字段完整”也不等于必然买入，仍需通过策略与风险守卫。同类分位只作描述性研究，
-              不参与金额；只有通过合同核验的正式基准才能用于超额收益判断。
+              “字段完整”也不等于必然买入，仍需通过策略与风险守卫。同类分位与近1年/近3年夏普
+              只作描述性研究，不参与金额；夏普按天天基金特色数据口径自算，样本不足显示为 —。
+              只有通过合同核验的正式基准才能用于超额收益判断。
             </MethodologyNote>
           </div>
 
@@ -895,6 +945,22 @@ export function DiscoveryCandidatePoolPanel({
                       </div>
                     ))}
                   </dl>
+                  <dl className="mt-1.5 grid grid-cols-2 gap-1.5 text-xs">
+                    {(
+                      [
+                        ["近1年夏普", formatSharpe(item.sharpe_1y)],
+                        ["近3年夏普", formatSharpe(item.sharpe_3y)],
+                      ] as const
+                    ).map(([label, value]) => (
+                      <div key={label} className="rounded-xl bg-white/80 px-2.5 py-2">
+                        <dt className="text-[11px] text-slate-500">{label}</dt>
+                        <dd className="mt-0.5 font-black tabular-nums text-slate-900">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <p className="mt-1 text-[10px] leading-4 text-slate-500">
+                    夏普按天天基金/Choice 零售口径自算，仅研究描述
+                  </p>
 
                   {researchSummary ? (
                     <div className="mt-2">

@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from threading import RLock, Thread
 
+from app.database import (
+    get_fund_daily_catalogue_meta,
+    list_fund_daily_catalogue,
+    replace_fund_daily_catalogue,
+)
 from app.services.cache_policy import jittered_ttl
 from app.services.cross_process_lock import CrossProcessLockError, cross_process_lock
 from app.services.sector_quote_cache import (
     get_spot_snapshot,
     get_spot_snapshot_any_age,
-    get_spot_snapshot_revalidated,
     save_spot_snapshot,
 )
 from app.services.shared_executors import get_shared_io_executor
@@ -23,11 +28,12 @@ _UNIVERSE_STAMPED_METRIC_FIELDS = (
     "return_3m_percent",
     "return_6m_percent",
     "return_1y_percent",
+    "return_3y_percent",
     "max_drawdown_1y_percent",
     "fund_scale_yi",
 )
 _UNIVERSE_TTL_SECONDS = 24 * 60 * 60
-# 只读路径向持久行复验的间隔。目录是日粒度数据，60s 足够，且是单行主键查询。
+# 只读路径向日频表 meta 复验的间隔。目录是日粒度，60s 足够，避免每请求扫全表。
 _UNIVERSE_MEMORY_REVALIDATE_SECONDS = 60.0
 _PROFILE_TTL_SECONDS = 36 * 60 * 60
 _INCOMPLETE_PROFILE_RETRY_SECONDS = 30 * 60
@@ -36,6 +42,11 @@ _PROFILE_REFRESH_LOCK = RLock()
 _UNIVERSE_FETCH_LOCK = RLock()
 _UNIVERSE_REFRESH_STATE_LOCK = RLock()
 _UNIVERSE_REFRESH_IN_FLIGHT = False
+_UNIVERSE_MEMORY_LOCK = RLock()
+_UNIVERSE_MEMORY_PAYLOAD: dict | None = None
+_UNIVERSE_MEMORY_LOADED_AT = 0.0
+_RISK_REFRESH_STATE_LOCK = RLock()
+_RISK_REFRESH_IN_FLIGHT = False
 
 logger = logging.getLogger(__name__)
 
@@ -43,41 +54,34 @@ logger = logging.getLogger(__name__)
 def fetch_discovery_fund_universe_cached(*, limit: int = 20_000) -> list[dict]:
     """Return one request-pinnable full-universe snapshot.
 
-    A fresh snapshot is preferred. Once it expires, keep serving the last
-    frozen snapshot and refresh it in the background. Discovery freezes its
-    decision clock after this function returns, so one request must not swap
-    to a snapshot captured later while it is already being evaluated.
+    ``fund_daily_catalogue`` is the authority. A fresh snapshot is preferred.
+    Once it expires, keep serving the last frozen table snapshot and refresh
+    it in the background. Discovery freezes its decision clock after this
+    function returns, so one request must not swap to a snapshot captured
+    later while it is already being evaluated.
 
-    On a true cold start there is no older snapshot to pin. The first caller
+    On a true cold start the table is empty. The first discovery caller
     therefore performs one bounded synchronous fetch; concurrent callers share
-    the fetch lock and reuse the saved result.
+    the fetch lock and reuse the saved result. Daily-report callers must use
+    ``fetch_discovery_fund_universe_cache_only`` instead.
     """
 
-    cached = get_spot_snapshot(
-        _UNIVERSE_CACHE_KEY,
-        ttl_seconds=jittered_ttl(
-            _UNIVERSE_CACHE_KEY,
-            _UNIVERSE_TTL_SECONDS,
-        ),
+    payload = _read_catalogue_payload(revalidate=True)
+    if payload is None:
+        payload = _import_legacy_universe_blob_if_needed()
+    if payload is not None:
+        if not _universe_snapshot_is_fresh(payload):
+            _schedule_discovery_universe_refresh(limit=limit)
+        return _universe_rows_with_research_overlay(
+            _universe_rows_with_snapshot_contract(payload)
+        )
+    return _universe_rows_with_research_overlay(
+        _refresh_discovery_universe_blocking(limit=limit, force=False)
     )
-    if _universe_snapshot_is_fresh(cached):
-        return _universe_rows_with_snapshot_contract(cached)
-
-    # ``get_spot_snapshot_any_age`` promotes a DB row into process memory with
-    # a new read timestamp. Prefer the payload already returned above and judge
-    # freshness from its immutable capture time, not that cache-read timestamp.
-    stale = cached if _valid_universe_snapshot(cached) else get_spot_snapshot_any_age(
-        _UNIVERSE_CACHE_KEY
-    )
-    if _valid_universe_snapshot(stale):
-        _schedule_discovery_universe_refresh(limit=limit)
-        return _universe_rows_with_snapshot_contract(stale)
-
-    return _refresh_discovery_universe_blocking(limit=limit, force=False)
 
 
 def fetch_discovery_fund_universe_cache_only() -> list[dict]:
-    """只读缓存地取全目录快照；没有缓存就返回空列表，**绝不触发拉源**。
+    """只读日频目录表；表空时最多导入一次旧 JSON blob，**绝不触发拉源**。
 
     日报给持仓算同类分位要用同一份目录，但不能走
     `fetch_discovery_fund_universe_cached`——冷启动时它会做一次有界但阻塞的全量拉取
@@ -87,17 +91,15 @@ def fetch_discovery_fund_universe_cache_only() -> list[dict]:
     与 `theme_board_snapshot.get_theme_board_snapshot_cache_only` 同一约定：
     函数名里的 `cache_only` 就是"不会有网络副作用"的承诺。
     """
-    # 复验读而不是 `get_spot_snapshot_any_age`：后者命中进程内存后永不回持久行，而这个
-    # key 只在走过荐基扫描的进程里被写。长命的 api 进程读到一次就会把那一版目录钉死，
-    # 之后即使别的进程刷新了全目录也看不见——日报的同类分位会一直用几天前的目录。
-    # PIT 契约本身不受影响（行上带 `snapshot_available_at`，冻结只影响新鲜度不影响可比性）。
-    payload = get_spot_snapshot_revalidated(
-        _UNIVERSE_CACHE_KEY,
-        memory_ttl_seconds=_UNIVERSE_MEMORY_REVALIDATE_SECONDS,
-    )
-    if not _valid_universe_snapshot(payload):
+
+    payload = _read_catalogue_payload(revalidate=True)
+    if payload is None:
+        payload = _import_legacy_universe_blob_if_needed()
+    if payload is None or not _valid_universe_snapshot(payload):
         return []
-    return _universe_rows_with_snapshot_contract(payload)
+    return _universe_rows_with_research_overlay(
+        _universe_rows_with_snapshot_contract(payload)
+    )
 
 
 def _valid_universe_snapshot(payload: object) -> bool:
@@ -145,6 +147,97 @@ def _build_universe_snapshot(rows: list[dict]) -> dict:
     }
 
 
+def _reset_universe_memory_for_tests() -> None:
+    global _UNIVERSE_MEMORY_PAYLOAD, _UNIVERSE_MEMORY_LOADED_AT
+    with _UNIVERSE_MEMORY_LOCK:
+        _UNIVERSE_MEMORY_PAYLOAD = None
+        _UNIVERSE_MEMORY_LOADED_AT = 0.0
+
+
+def _pin_universe_payload(payload: dict) -> None:
+    global _UNIVERSE_MEMORY_PAYLOAD, _UNIVERSE_MEMORY_LOADED_AT
+    with _UNIVERSE_MEMORY_LOCK:
+        _UNIVERSE_MEMORY_PAYLOAD = payload
+        _UNIVERSE_MEMORY_LOADED_AT = time.monotonic()
+
+
+def _load_catalogue_payload() -> dict | None:
+    meta = get_fund_daily_catalogue_meta()
+    if meta is None:
+        return None
+    rows = list_fund_daily_catalogue()
+    if not rows:
+        return None
+    available_at = str(meta["snapshot_available_at"])
+    source = str(meta.get("source") or _UNIVERSE_SNAPSHOT_SOURCE)
+    return {
+        "schema_version": "fund_universe_snapshot.v1",
+        "snapshot_available_at": available_at,
+        "source": source,
+        "rows": [
+            _stamp_universe_row(row, available_at=available_at, source=source)
+            for row in rows
+            if isinstance(row, dict)
+        ],
+    }
+
+
+def _read_catalogue_payload(*, revalidate: bool) -> dict | None:
+    global _UNIVERSE_MEMORY_PAYLOAD, _UNIVERSE_MEMORY_LOADED_AT
+    now = time.monotonic()
+    with _UNIVERSE_MEMORY_LOCK:
+        cached = _UNIVERSE_MEMORY_PAYLOAD
+        if cached is not None and (
+            not revalidate
+            or now - _UNIVERSE_MEMORY_LOADED_AT < _UNIVERSE_MEMORY_REVALIDATE_SECONDS
+        ):
+            return cached
+
+    meta = get_fund_daily_catalogue_meta()
+    with _UNIVERSE_MEMORY_LOCK:
+        cached = _UNIVERSE_MEMORY_PAYLOAD
+        cached_stamp = str((cached or {}).get("snapshot_available_at") or "")
+        meta_stamp = str((meta or {}).get("snapshot_available_at") or "")
+        if cached is not None and meta is not None and cached_stamp == meta_stamp:
+            _UNIVERSE_MEMORY_LOADED_AT = time.monotonic()
+            return cached
+        if meta is None:
+            _UNIVERSE_MEMORY_PAYLOAD = None
+            _UNIVERSE_MEMORY_LOADED_AT = 0.0
+            return None
+
+    payload = _load_catalogue_payload()
+    if payload is None:
+        return None
+    _pin_universe_payload(payload)
+    return payload
+
+
+def _import_legacy_universe_blob_if_needed() -> dict | None:
+    """One-time import of the old 20k JSON blob. Never hits Eastmoney."""
+
+    if get_fund_daily_catalogue_meta() is not None:
+        return _read_catalogue_payload(revalidate=False)
+    blob = get_spot_snapshot_any_age(_UNIVERSE_CACHE_KEY)
+    if not _valid_universe_snapshot(blob):
+        return None
+    rows = [row for row in blob.get("rows") or [] if isinstance(row, dict)]
+    available_at = str(blob.get("snapshot_available_at") or "").strip()
+    source = str(blob.get("source") or "legacy_sector_spot_cache").strip()
+    if not rows or not available_at:
+        return None
+    replace_fund_daily_catalogue(
+        rows,
+        snapshot_available_at=available_at,
+        source=source or "legacy_sector_spot_cache",
+    )
+    payload = _load_catalogue_payload()
+    if payload is None:
+        return None
+    _pin_universe_payload(payload)
+    return payload
+
+
 def _refresh_discovery_universe_blocking(
     *,
     limit: int,
@@ -163,9 +256,11 @@ def _refresh_discovery_universe_blocking(
                     force=force,
                 )
         except CrossProcessLockError:
-            stale = get_spot_snapshot_any_age(_UNIVERSE_CACHE_KEY)
-            if _valid_universe_snapshot(stale):
-                return _universe_rows_with_snapshot_contract(stale)
+            payload = _read_catalogue_payload(revalidate=True)
+            if payload is None:
+                payload = _import_legacy_universe_blob_if_needed()
+            if payload is not None:
+                return _universe_rows_with_snapshot_contract(payload)
             return []
 
 
@@ -176,14 +271,8 @@ def _refresh_discovery_universe_under_lock(
 ) -> list[dict]:
     # A different worker may have refreshed while this worker waited. Capture
     # time, rather than the in-memory promotion time, is the authority.
-    cached = get_spot_snapshot(
-        _UNIVERSE_CACHE_KEY,
-        ttl_seconds=jittered_ttl(
-            _UNIVERSE_CACHE_KEY,
-            _UNIVERSE_TTL_SECONDS,
-        ),
-    )
-    if not force and _universe_snapshot_is_fresh(cached):
+    cached = _read_catalogue_payload(revalidate=True)
+    if not force and cached is not None and _universe_snapshot_is_fresh(cached):
         return _universe_rows_with_snapshot_contract(cached)
 
     from app.services.akshare_subprocess import fetch_open_fund_universe
@@ -195,13 +284,52 @@ def _refresh_discovery_universe_under_lock(
         rows = []
     if rows:
         snapshot = _build_universe_snapshot(rows)
-        save_spot_snapshot(_UNIVERSE_CACHE_KEY, snapshot)
+        replace_fund_daily_catalogue(
+            snapshot["rows"],
+            snapshot_available_at=str(snapshot["snapshot_available_at"]),
+            source=str(snapshot.get("source") or _UNIVERSE_SNAPSHOT_SOURCE),
+        )
+        _pin_universe_payload(snapshot)
+        _schedule_risk_metrics_refresh()
         return _universe_rows_with_snapshot_contract(snapshot)
 
-    stale = get_spot_snapshot_any_age(_UNIVERSE_CACHE_KEY)
-    if _valid_universe_snapshot(stale):
-        return _universe_rows_with_snapshot_contract(stale)
+    if cached is not None:
+        return _universe_rows_with_snapshot_contract(cached)
+    imported = _import_legacy_universe_blob_if_needed()
+    if imported is not None:
+        return _universe_rows_with_snapshot_contract(imported)
     return []
+
+
+def _schedule_risk_metrics_refresh() -> None:
+    global _RISK_REFRESH_IN_FLIGHT
+    with _RISK_REFRESH_STATE_LOCK:
+        if _RISK_REFRESH_IN_FLIGHT:
+            return
+        _RISK_REFRESH_IN_FLIGHT = True
+    try:
+        Thread(
+            target=_run_risk_metrics_sidecar,
+            name="fund-risk-metrics-refresh",
+            daemon=True,
+        ).start()
+    except Exception:  # noqa: BLE001
+        with _RISK_REFRESH_STATE_LOCK:
+            _RISK_REFRESH_IN_FLIGHT = False
+        logger.exception("failed to start fund risk metrics refresh thread")
+
+
+def _run_risk_metrics_sidecar() -> None:
+    global _RISK_REFRESH_IN_FLIGHT
+    try:
+        from app.services.fund_risk_metrics import refresh_fund_risk_metrics_from_nav_cache
+
+        refresh_fund_risk_metrics_from_nav_cache()
+    except Exception:  # noqa: BLE001
+        logger.exception("scheduled fund risk metrics refresh failed")
+    finally:
+        with _RISK_REFRESH_STATE_LOCK:
+            _RISK_REFRESH_IN_FLIGHT = False
 
 
 def _schedule_discovery_universe_refresh(*, limit: int) -> None:
@@ -298,24 +426,96 @@ def _universe_rows_with_snapshot_contract(payload: dict) -> list[dict]:
     return result
 
 
-def fetch_fund_research_profiles_cached(fund_codes: list[str]) -> dict[str, dict]:
-    """按代码返回候选准入字段，并把双源结果合并到跨用户共享缓存。
+def _universe_rows_with_research_overlay(rows: list[dict]) -> list[dict]:
+    from app.services.fund_research_profile_store import overlay_research_on_universe_rows
 
-    完整缓存过期后必须重拉；不完整行按独立检查时点短周期重试。旧实现仅按
-    ``fund_code`` 判断命中，会让过期或半空的行永久阻止刷新。
+    return overlay_research_on_universe_rows(rows)
+
+
+def fetch_fund_research_profiles_cached(fund_codes: list[str]) -> dict[str, dict]:
+    """按代码返回候选准入字段。规模/经理只读研究档案表，缺经理/成立日再走雪球。
+
+    新浪四张全表由后台循环/定时任务整包刷新，荐基请求路径不再拉规模源。
     """
 
-    # 生产 Lighthouse 为单 worker；该锁同时防止同进程并发扫描重复拉源或以旧整包
-    # 覆盖新整包。缓存仍保存在共享数据库中，重启后继续可用。
+    from app.services.fund_research_profile_store import (
+        ensure_fund_research_profiles,
+        list_research_profiles_for_codes,
+        profile_row_for_candidate,
+    )
+
+    codes = {
+        str(code).strip().zfill(6)
+        for code in fund_codes
+        if str(code).strip().isdigit()
+    }
+    if not codes:
+        return {}
+
+    ensure_fund_research_profiles()
+    from app.services.fund_manager_roster import list_manager_roster_by_codes
+
+    roster = list_manager_roster_by_codes(codes)
+    result = {
+        code: profile_row_for_candidate(row, managers=roster.get(code))
+        for code, row in list_research_profiles_for_codes(codes).items()
+    }
+    missing = [
+        code
+        for code in codes
+        if _missing_profile_fields(result.get(code) or {})
+    ]
+    if not missing:
+        return {code: result[code] for code in codes if code in result}
+
     with _PROFILE_REFRESH_LOCK:
         try:
             with cross_process_lock(
                 f"discovery-profile-refresh:{_PROFILE_CACHE_KEY}",
                 timeout_seconds=3.0,
             ):
-                return _fetch_fund_research_profiles_cached_locked(fund_codes)
+                hole_rows = _fetch_fund_research_profiles_cached_locked(
+                    missing,
+                    skip_sina=True,
+                )
         except CrossProcessLockError:
-            return _cached_profile_rows(fund_codes)
+            hole_rows = _cached_profile_rows(missing)
+    for code, hole in hole_rows.items():
+        existing = result.get(code)
+        result[code] = (
+            _merge_table_and_hole_profile(existing, hole)
+            if existing
+            else hole
+        )
+    from app.services.fund_manager_roster import attach_manager_roster_to_rows
+
+    attach_manager_roster_to_rows(result)
+    return {code: result[code] for code in codes if code in result}
+
+
+def _merge_table_and_hole_profile(existing: dict, hole: dict) -> dict:
+    merged = _merge_profile_row(existing, hole, prefer_incoming=False)
+    merged["profile_missing_fields"] = _missing_profile_fields(merged)
+    stale_fields = [
+        str(field)
+        for field in hole.get("profile_stale_fields") or []
+        if str(field)
+    ]
+    if stale_fields:
+        merged["profile_stale_fields"] = stale_fields
+    else:
+        merged.pop("profile_stale_fields", None)
+    if hole.get("profile_checked_at"):
+        merged["profile_checked_at"] = hole["profile_checked_at"]
+    if hole.get("profile_source") and not merged.get("profile_source"):
+        merged["profile_source"] = hole["profile_source"]
+    if hole.get("profile_sources"):
+        merged["profile_sources"] = hole["profile_sources"]
+    if merged["profile_missing_fields"] or stale_fields:
+        merged["profile_status"] = str(hole.get("profile_status") or "partial")
+    else:
+        merged["profile_status"] = "complete"
+    return merged
 
 
 def _cached_profile_rows(fund_codes: list[str]) -> dict[str, dict]:
@@ -333,7 +533,11 @@ def _cached_profile_rows(fund_codes: list[str]) -> dict[str, dict]:
     }
 
 
-def _fetch_fund_research_profiles_cached_locked(fund_codes: list[str]) -> dict[str, dict]:
+def _fetch_fund_research_profiles_cached_locked(
+    fund_codes: list[str],
+    *,
+    skip_sina: bool = True,
+) -> dict[str, dict]:
 
     codes = {
         str(code).strip().zfill(6)
@@ -386,13 +590,17 @@ def _fetch_fund_research_profiles_cached_locked(fund_codes: list[str]) -> dict[s
             fetch_open_fund_research_profiles,
         )
 
-        # 两个源相互独立。并行拉取把冷缓存延迟限制在较慢的一方，同时避免
-        # Sina 全表请求暂时失败时，整批候选都丢失规模和经理字段。
+        # 规模整包只由后台/定时任务写表。请求路径永远 skip_sina，只走雪球
+        # 补经理/成立日；Sina 全表失败不得拖住荐基。
         executor = get_shared_io_executor()
-        sina_future = executor.submit(
-            fetch_open_fund_research_profiles,
-            refresh_codes,
-            timeout_seconds=35,
+        sina_future = (
+            None
+            if skip_sina
+            else executor.submit(
+                fetch_open_fund_research_profiles,
+                refresh_codes,
+                timeout_seconds=35,
+            )
         )
         xq_future = executor.submit(
             fetch_fund_basic_profiles_xq,
@@ -400,7 +608,7 @@ def _fetch_fund_research_profiles_cached_locked(fund_codes: list[str]) -> dict[s
             timeout_seconds=35,
         )
         try:
-            sina_rows = sina_future.result() or []
+            sina_rows = (sina_future.result() or []) if sina_future is not None else []
         except Exception:  # noqa: BLE001 - provider fallback is intentional
             sina_rows = []
         try:
@@ -408,7 +616,8 @@ def _fetch_fund_research_profiles_cached_locked(fund_codes: list[str]) -> dict[s
         except Exception:  # noqa: BLE001 - provider fallback is intentional
             xq_rows = []
         finally:
-            sina_future.cancel()
+            if sina_future is not None:
+                sina_future.cancel()
             xq_future.cancel()
 
         sina_by_code = _profile_rows_by_code(sina_rows, requested_codes=codes)
@@ -502,8 +711,8 @@ def _fetch_fund_research_profiles_cached_locked(fund_codes: list[str]) -> dict[s
                     merged.pop("fund_shares_yi", None)
                     merged.pop("fund_shares_basis", None)
                 # XQ 的 totshare 是份额而非 AUM。完整旧行已到期且 Sina
-                # 本轮又没有规模时，清除旧规模，交给候选层用份额×最新净值
-                # 重算；partial 行仍保留尚未到 36h 的已有 Sina 规模。
+                # 本轮又没有规模时，清除旧规模，交给候选层用份额重算；
+                # partial 行仍保留尚未到 36h 的已有 Sina 规模。
                 if (
                     replace_xq_values
                     and not _has_value((sina_by_code.get(code) or {}).get("fund_scale_yi"))
@@ -660,7 +869,7 @@ def _available_profile_fields(row: dict) -> set[str]:
         if _has_value(row.get(field))
     }
     # 蛋卷 totshare 只有份额口径；它可以作为规模估算的输入，但绝不能
-    # 直接当作亿元 AUM。候选层还需取得有效 latest_nav 才会生成规模值。
+    # 直接当作亿元 AUM。候选层用报告期单位净值才能生成季报净资产。
     if _has_value(row.get("fund_shares_yi")):
         available.add("fund_scale_yi")
     return available

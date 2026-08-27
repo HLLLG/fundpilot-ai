@@ -1127,7 +1127,7 @@ def test_pinned_focus_direction_is_kept_without_consuming_auto_slots() -> None:
     auto_only = select_scored_sector_opportunities(rows, max_total=3)
     with_focus = select_scored_sector_opportunities(
         rows,
-        # 生产链路按 `_AUTO_DIRECTION_SLOTS + len(pinned)` 传入，关注方向不占自动名额。
+        # 选择器仍支持「总席 > pin」时关注方向不挤掉自动席；生产总席是 6，含关注。
         max_total=3 + 1,
         pinned_labels=["冷门"],
     )

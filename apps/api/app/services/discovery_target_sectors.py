@@ -11,7 +11,7 @@ from app.services.sector_registry import get_sector_entry, list_theme_board_labe
 
 DiscoveryScanMode = Literal["full_market", "portfolio_gap"]
 
-_FULL_MARKET_MAX_SECTORS = 8
+_FULL_MARKET_MAX_SECTORS = 6
 _GAP_MAX_SECTORS = 5
 
 

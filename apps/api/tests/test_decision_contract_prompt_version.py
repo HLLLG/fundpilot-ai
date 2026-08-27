@@ -3,7 +3,7 @@
 回归背景：`decision_contract` 里曾有两个看起来像"实时模板号镜像"的常量——
 `ANALYSIS_PROMPT_VERSION = "analysis_prompt.2026-07.v4"` 与
 `DISCOVERY_PROMPT_VERSION = "discovery_prompt.2026-07.v4"`。荐基模板早已走到
-`discovery_prompt.2026-08.v16`，所以后者读起来就是"忘了同步"。
+`discovery_prompt.2026-08.v17`，所以后者读起来就是"忘了同步"。
 
 但把它们同步到实时模板是**错的**：`_prompt_version()` 只在报告没有冻结 `prompt_contract`
 时才回落到这里（A2 之前的历史报告）。给一份根本没记录 prompt 出处的报告贴上今天的模板号是伪造

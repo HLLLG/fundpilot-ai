@@ -175,6 +175,9 @@ def slim_candidate_for_llm(
         "management_fee",
         "fund_type",
         "fund_manager",
+        "manager_career_days",
+        "manager_career_tenure",
+        "manager_best_tenure_return_percent",
         "established_date",
         "share_class",
         "fund_quality_score",
@@ -183,6 +186,8 @@ def slim_candidate_for_llm(
         "opportunity_score_20_60d",
         "sector_fit_score",
         "selection_reason",
+        "sharpe_1y",
+        "sharpe_3y",
     )
     row: dict = {}
     for key in scalar_fields:

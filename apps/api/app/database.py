@@ -1854,13 +1854,16 @@ def list_fund_primary_sectors() -> list[dict[str, Any]]:
 def list_fund_primary_sectors_by_sector_names(
     sector_names: list[str],
     *,
-    limit_per_sector: int = 20,
+    limit_per_sector: int | None = None,
 ) -> list[dict[str, Any]]:
     """Return fresh, verified primary identities from the materialized view.
 
     The historical function name is retained for callers and monkeypatched
     tests.  Weak name/LLM mappings are stored for audit but are intentionally
     absent from this executable discovery lookup.
+
+    Discovery recall takes the full verified set for each sector.  Pass
+    ``limit_per_sector`` only when a caller still wants a truncated sample.
     """
 
     normalized: list[str] = []
@@ -1897,12 +1900,13 @@ def list_fund_primary_sectors_by_sector_names(
             """,
             (*normalized, now),
         ).fetchall()
+    cap = int(limit_per_sector) if limit_per_sector else 0
     counts: dict[str, int] = {}
     result: list[dict[str, Any]] = []
     for row in rows:
         payload = _row_to_dict(row)
         label = str(payload.get("sector_name") or "")
-        if counts.get(label, 0) >= limit_per_sector:
+        if cap > 0 and counts.get(label, 0) >= cap:
             continue
         payload["updated_at"] = payload.get("resolved_at")
         result.append(payload)
@@ -2190,6 +2194,808 @@ def get_fund_sector_resolution_stats() -> dict[str, int]:
     }
     result["total"] = sum(result.values())
     return result
+
+
+_FUND_DAILY_CATALOGUE_COLUMNS = (
+    "fund_code",
+    "fund_name",
+    "fund_type",
+    "source_fund_type",
+    "nav_date",
+    "latest_nav",
+    "daily_growth_percent",
+    "established_date",
+    "return_3m_percent",
+    "return_6m_percent",
+    "return_1y_percent",
+    "return_3y_percent",
+    "rank_enriched",
+    "snapshot_available_at",
+    "source",
+)
+_FUND_DAILY_CATALOGUE_INSERT_SQL = f"""
+    INSERT INTO fund_daily_catalogue (
+        {", ".join(_FUND_DAILY_CATALOGUE_COLUMNS)}
+    ) VALUES ({", ".join("?" * len(_FUND_DAILY_CATALOGUE_COLUMNS))})
+"""
+_FUND_DAILY_CATALOGUE_SELECT_SQL = f"""
+    SELECT {", ".join(_FUND_DAILY_CATALOGUE_COLUMNS)}
+    FROM fund_daily_catalogue
+"""
+_CATALOGUE_REPLACE_BATCH = 500
+
+
+def _optional_catalogue_text(value: object) -> str | None:
+    text = str(value or "").strip()
+    if not text or text in {"--", "None", "null"}:
+        return None
+    return text
+
+
+def _optional_catalogue_float(value: object) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number:  # NaN
+        return None
+    return number
+
+
+def _optional_catalogue_int(
+    value: object,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int | None:
+    number = _optional_catalogue_float(value)
+    if number is None:
+        return None
+    try:
+        integer = int(number)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if minimum is not None and integer < minimum:
+        return None
+    if maximum is not None and integer > maximum:
+        return None
+    return integer
+
+
+def _normalize_fund_daily_catalogue_row(
+    row: Mapping[str, Any],
+    *,
+    snapshot_available_at: str,
+    source: str,
+) -> tuple[Any, ...] | None:
+    code = str(row.get("fund_code") or "").strip().zfill(6)
+    name = str(row.get("fund_name") or "").strip()
+    if len(code) != 6 or not code.isdigit() or code == "000000" or not name:
+        return None
+    return (
+        code,
+        name,
+        _optional_catalogue_text(row.get("fund_type")),
+        _optional_catalogue_text(row.get("source_fund_type")),
+        _optional_catalogue_text(row.get("nav_date")),
+        _optional_catalogue_float(row.get("latest_nav")),
+        _optional_catalogue_float(row.get("daily_growth_percent")),
+        _optional_catalogue_text(row.get("established_date")),
+        _optional_catalogue_float(row.get("return_3m_percent")),
+        _optional_catalogue_float(row.get("return_6m_percent")),
+        _optional_catalogue_float(row.get("return_1y_percent")),
+        _optional_catalogue_float(row.get("return_3y_percent")),
+        1 if row.get("rank_enriched") else 0,
+        snapshot_available_at,
+        source,
+    )
+
+
+def _fund_daily_catalogue_payload(row: Mapping[str, Any]) -> dict[str, Any]:
+    payload = _row_to_dict(row)
+    payload["fund_code"] = str(payload.get("fund_code") or "").zfill(6)
+    payload["rank_enriched"] = bool(int(payload.get("rank_enriched") or 0))
+    return payload
+
+
+def replace_fund_daily_catalogue(
+    rows: list[Mapping[str, Any]],
+    *,
+    snapshot_available_at: str,
+    source: str,
+) -> int:
+    """Atomically replace the current-day catalogue snapshot."""
+
+    available_at = str(snapshot_available_at or "").strip()
+    origin = str(source or "").strip() or "eastmoney_fund_catalogue"
+    if not available_at:
+        raise ValueError("snapshot_available_at is required")
+    params = [
+        item
+        for row in rows
+        if isinstance(row, Mapping)
+        for item in (
+            _normalize_fund_daily_catalogue_row(
+                row,
+                snapshot_available_at=available_at,
+                source=origin,
+            ),
+        )
+        if item is not None
+    ]
+    with _connect() as connection:
+        connection.execute("DELETE FROM fund_daily_catalogue")
+        for start in range(0, len(params), _CATALOGUE_REPLACE_BATCH):
+            connection.executemany(
+                _FUND_DAILY_CATALOGUE_INSERT_SQL,
+                params[start : start + _CATALOGUE_REPLACE_BATCH],
+            )
+        connection.commit()
+    return len(params)
+
+
+def get_fund_daily_catalogue_meta() -> dict[str, Any] | None:
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT snapshot_available_at, MAX(source) AS source,
+                   COUNT(*) AS row_count
+            FROM fund_daily_catalogue
+            GROUP BY snapshot_available_at
+            ORDER BY snapshot_available_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    payload = _row_to_dict(row)
+    count = int(payload.get("row_count") or 0)
+    available_at = str(payload.get("snapshot_available_at") or "").strip()
+    if count <= 0 or not available_at:
+        return None
+    return {
+        "snapshot_available_at": available_at,
+        "source": str(payload.get("source") or ""),
+        "row_count": count,
+    }
+
+
+def list_fund_daily_catalogue() -> list[dict[str, Any]]:
+    with _connect() as connection:
+        rows = connection.execute(
+            _FUND_DAILY_CATALOGUE_SELECT_SQL + " ORDER BY fund_code"
+        ).fetchall()
+    return [_fund_daily_catalogue_payload(row) for row in rows]
+
+
+def list_fund_daily_catalogue_by_codes(
+    fund_codes: set[str] | list[str],
+) -> dict[str, dict[str, Any]]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in fund_codes:
+        code = str(raw or "").strip().zfill(6)
+        if len(code) == 6 and code.isdigit() and code != "000000" and code not in seen:
+            seen.add(code)
+            normalized.append(code)
+    if not normalized:
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    with _connect() as connection:
+        for start in range(0, len(normalized), _CATALOGUE_REPLACE_BATCH):
+            chunk = normalized[start : start + _CATALOGUE_REPLACE_BATCH]
+            placeholders = ",".join("?" * len(chunk))
+            rows = connection.execute(
+                _FUND_DAILY_CATALOGUE_SELECT_SQL
+                + f" WHERE fund_code IN ({placeholders})",
+                tuple(chunk),
+            ).fetchall()
+            for row in rows:
+                payload = _fund_daily_catalogue_payload(row)
+                result[payload["fund_code"]] = payload
+    return result
+
+
+def list_fund_daily_catalogue_by_verified_sectors(
+    sector_names: list[str],
+) -> list[dict[str, Any]]:
+    """Return current-day catalogue rows for fresh verified identities.
+
+    Identity still comes from ``fund_sector_current``.  This is the indexed
+    lookup discovery uses instead of scanning the whole catalogue by name.
+    """
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in sector_names:
+        label = str(raw or "").strip()
+        if label and label not in seen:
+            seen.add(label)
+            normalized.append(label)
+    if not normalized:
+        return []
+
+    placeholders = ",".join("?" * len(normalized))
+    now = datetime.now(timezone.utc).isoformat()
+    catalogue_select = ", ".join(
+        f"catalogue.{column} AS catalogue_{column}"
+        if column in {"fund_name", "source"}
+        else f"catalogue.{column}"
+        for column in _FUND_DAILY_CATALOGUE_COLUMNS
+        if column != "fund_code"
+    )
+    with _connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT current.fund_code, current.sector_name,
+                   current.source, current.confidence, current.detail,
+                   current.resolved_at, current.expires_at,
+                   current.identity_status, current.exposure_percent,
+                   current.evidence_snapshot_id, current.source_ref,
+                   current.report_period, current.as_of_date,
+                   current.available_at, current.mapping_version,
+                   {catalogue_select}
+            FROM fund_sector_current AS current
+            INNER JOIN fund_daily_catalogue AS catalogue
+              ON catalogue.fund_code = current.fund_code
+            WHERE current.sector_name IN ({placeholders})
+              AND current.is_primary = 1
+              AND current.identity_status = 'verified'
+              AND current.expires_at > ?
+            ORDER BY current.confidence DESC, current.resolved_at DESC
+            """,
+            (*normalized, now),
+        ).fetchall()
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        payload = _row_to_dict(row)
+        code = str(payload.get("fund_code") or "").zfill(6)
+        catalogue_name = str(payload.pop("catalogue_fund_name", "") or "").strip()
+        catalogue_source = str(payload.pop("catalogue_source", "") or "").strip()
+        payload["fund_code"] = code
+        payload["fund_name"] = catalogue_name or payload.get("fund_name")
+        payload["updated_at"] = payload.get("resolved_at")
+        payload["rank_enriched"] = bool(int(payload.get("rank_enriched") or 0))
+        payload["catalogue_source"] = catalogue_source
+        result.append(payload)
+    return result
+
+
+_FUND_RESEARCH_PROFILE_COLUMNS = (
+    "fund_code",
+    "fund_name",
+    "fund_category",
+    "latest_nav",
+    "fund_shares_yi",
+    "fund_scale_yi",
+    "fund_scale_basis",
+    "established_date",
+    "fund_manager",
+    "profile_updated_at",
+    "snapshot_available_at",
+    "source",
+)
+_FUND_RESEARCH_PROFILE_INSERT_SQL = f"""
+    INSERT INTO fund_research_profile (
+        {", ".join(_FUND_RESEARCH_PROFILE_COLUMNS)}
+    ) VALUES ({", ".join("?" * len(_FUND_RESEARCH_PROFILE_COLUMNS))})
+"""
+_FUND_RESEARCH_PROFILE_SELECT_SQL = f"""
+    SELECT {", ".join(_FUND_RESEARCH_PROFILE_COLUMNS)}
+    FROM fund_research_profile
+"""
+_FUND_RISK_METRICS_COLUMNS = (
+    "fund_code",
+    "sharpe_1y",
+    "sharpe_3y",
+    "max_drawdown_1y_percent",
+    "nav_as_of",
+    "nav_point_count",
+    "schema_version",
+    "snapshot_available_at",
+    "source",
+)
+_FUND_RISK_METRICS_INSERT_SQL = f"""
+    INSERT OR REPLACE INTO fund_risk_metrics (
+        {", ".join(_FUND_RISK_METRICS_COLUMNS)}
+    ) VALUES ({", ".join("?" * len(_FUND_RISK_METRICS_COLUMNS))})
+"""
+_FUND_RISK_METRICS_SELECT_SQL = f"""
+    SELECT {", ".join(_FUND_RISK_METRICS_COLUMNS)}
+    FROM fund_risk_metrics
+"""
+
+
+def _normalize_lookup_fund_codes(
+    fund_codes: set[str] | list[str],
+) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in fund_codes:
+        code = str(raw or "").strip().zfill(6)
+        if len(code) == 6 and code.isdigit() and code != "000000" and code not in seen:
+            seen.add(code)
+            normalized.append(code)
+    return normalized
+
+
+def _normalize_fund_research_profile_row(
+    row: Mapping[str, Any],
+    *,
+    snapshot_available_at: str,
+    source: str,
+) -> tuple[Any, ...] | None:
+    code = str(row.get("fund_code") or "").strip().zfill(6)
+    if len(code) != 6 or not code.isdigit() or code == "000000":
+        return None
+    name = _optional_catalogue_text(row.get("fund_name")) or ""
+    return (
+        code,
+        name,
+        _optional_catalogue_text(row.get("fund_category")),
+        _optional_catalogue_float(row.get("latest_nav")),
+        _optional_catalogue_float(row.get("fund_shares_yi")),
+        _optional_catalogue_float(row.get("fund_scale_yi")),
+        _optional_catalogue_text(row.get("fund_scale_basis")),
+        _optional_catalogue_text(row.get("established_date")),
+        _optional_catalogue_text(row.get("fund_manager")),
+        _optional_catalogue_text(row.get("profile_updated_at")),
+        snapshot_available_at,
+        source,
+    )
+
+
+def _fund_research_profile_payload(row: Mapping[str, Any]) -> dict[str, Any]:
+    payload = _row_to_dict(row)
+    payload["fund_code"] = str(payload.get("fund_code") or "").zfill(6)
+    return payload
+
+
+def replace_fund_research_profiles(
+    rows: list[Mapping[str, Any]],
+    *,
+    snapshot_available_at: str,
+    source: str,
+) -> int:
+    """Atomically replace the open-end scale/manager snapshot."""
+
+    available_at = str(snapshot_available_at or "").strip()
+    origin = str(source or "").strip() or "sina.fund_scale_open_sina"
+    if not available_at:
+        raise ValueError("snapshot_available_at is required")
+    params = [
+        item
+        for row in rows
+        if isinstance(row, Mapping)
+        for item in (
+            _normalize_fund_research_profile_row(
+                row,
+                snapshot_available_at=available_at,
+                source=origin,
+            ),
+        )
+        if item is not None
+    ]
+    with _connect() as connection:
+        connection.execute("DELETE FROM fund_research_profile")
+        for start in range(0, len(params), _CATALOGUE_REPLACE_BATCH):
+            connection.executemany(
+                _FUND_RESEARCH_PROFILE_INSERT_SQL,
+                params[start : start + _CATALOGUE_REPLACE_BATCH],
+            )
+        connection.commit()
+    return len(params)
+
+
+_FUND_RESEARCH_PROFILE_SCALE_UPDATE_SQL = """
+    UPDATE fund_research_profile
+    SET fund_scale_yi = ?, fund_scale_basis = ?
+    WHERE fund_code = ?
+"""
+
+
+def update_fund_research_profile_scales(rows: list[Mapping[str, Any]]) -> int:
+    """立刻覆盖已有档案行的规模，不改整包快照时点。"""
+
+    params: list[tuple[Any, ...]] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        code = str(row.get("fund_code") or "").strip().zfill(6)
+        if len(code) != 6 or not code.isdigit() or code == "000000" or code in seen:
+            continue
+        scale = _optional_catalogue_float(row.get("fund_scale_yi"))
+        basis = _optional_catalogue_text(row.get("fund_scale_basis"))
+        if scale is None or not basis:
+            continue
+        seen.add(code)
+        params.append((scale, basis, code))
+    if not params:
+        return 0
+    with _connect() as connection:
+        for start in range(0, len(params), _CATALOGUE_REPLACE_BATCH):
+            connection.executemany(
+                _FUND_RESEARCH_PROFILE_SCALE_UPDATE_SQL,
+                params[start : start + _CATALOGUE_REPLACE_BATCH],
+            )
+        connection.commit()
+    return len(params)
+
+
+def get_fund_research_profile_meta() -> dict[str, Any] | None:
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT snapshot_available_at, MAX(source) AS source,
+                   COUNT(*) AS row_count
+            FROM fund_research_profile
+            GROUP BY snapshot_available_at
+            ORDER BY snapshot_available_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    payload = _row_to_dict(row)
+    count = int(payload.get("row_count") or 0)
+    available_at = str(payload.get("snapshot_available_at") or "").strip()
+    if count <= 0 or not available_at:
+        return None
+    return {
+        "snapshot_available_at": available_at,
+        "source": str(payload.get("source") or ""),
+        "row_count": count,
+    }
+
+
+def list_fund_research_profiles() -> list[dict[str, Any]]:
+    with _connect() as connection:
+        rows = connection.execute(
+            _FUND_RESEARCH_PROFILE_SELECT_SQL + " ORDER BY fund_code"
+        ).fetchall()
+    return [_fund_research_profile_payload(row) for row in rows]
+
+
+def list_fund_research_profiles_by_codes(
+    fund_codes: set[str] | list[str],
+) -> dict[str, dict[str, Any]]:
+    normalized = _normalize_lookup_fund_codes(fund_codes)
+    if not normalized:
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    with _connect() as connection:
+        for start in range(0, len(normalized), _CATALOGUE_REPLACE_BATCH):
+            chunk = normalized[start : start + _CATALOGUE_REPLACE_BATCH]
+            placeholders = ",".join("?" * len(chunk))
+            rows = connection.execute(
+                _FUND_RESEARCH_PROFILE_SELECT_SQL
+                + f" WHERE fund_code IN ({placeholders})",
+                tuple(chunk),
+            ).fetchall()
+            for row in rows:
+                payload = _fund_research_profile_payload(row)
+                result[payload["fund_code"]] = payload
+    return result
+
+
+def _normalize_fund_risk_metrics_row(
+    row: Mapping[str, Any],
+    *,
+    snapshot_available_at: str,
+    source: str,
+    schema_version: str,
+) -> tuple[Any, ...] | None:
+    code = str(row.get("fund_code") or "").strip().zfill(6)
+    if len(code) != 6 or not code.isdigit() or code == "000000":
+        return None
+    drawdown = _optional_catalogue_float(row.get("max_drawdown_1y_percent"))
+    if drawdown is not None and not -100.0 <= drawdown <= 0.0:
+        drawdown = None
+    point_count = row.get("nav_point_count")
+    try:
+        nav_point_count = int(point_count) if point_count is not None else None
+    except (TypeError, ValueError):
+        nav_point_count = None
+    return (
+        code,
+        _optional_catalogue_float(row.get("sharpe_1y")),
+        _optional_catalogue_float(row.get("sharpe_3y")),
+        drawdown,
+        _optional_catalogue_text(row.get("nav_as_of")),
+        nav_point_count,
+        str(row.get("schema_version") or schema_version).strip() or schema_version,
+        snapshot_available_at,
+        str(row.get("source") or source).strip() or source,
+    )
+
+
+def _fund_risk_metrics_payload(row: Mapping[str, Any]) -> dict[str, Any]:
+    payload = _row_to_dict(row)
+    payload["fund_code"] = str(payload.get("fund_code") or "").zfill(6)
+    return payload
+
+
+def upsert_fund_risk_metrics(
+    rows: list[Mapping[str, Any]],
+    *,
+    snapshot_available_at: str,
+    source: str = "computed_nav",
+    schema_version: str = "fund_sharpe.alipay_style.v1",
+) -> int:
+    """Insert or replace computed Sharpe / 1y drawdown rows."""
+
+    available_at = str(snapshot_available_at or "").strip()
+    origin = str(source or "").strip() or "computed_nav"
+    version = str(schema_version or "").strip() or "fund_sharpe.alipay_style.v1"
+    if not available_at:
+        raise ValueError("snapshot_available_at is required")
+    params = [
+        item
+        for row in rows
+        if isinstance(row, Mapping)
+        for item in (
+            _normalize_fund_risk_metrics_row(
+                row,
+                snapshot_available_at=available_at,
+                source=origin,
+                schema_version=version,
+            ),
+        )
+        if item is not None
+    ]
+    if not params:
+        return 0
+    with _connect() as connection:
+        for start in range(0, len(params), _CATALOGUE_REPLACE_BATCH):
+            connection.executemany(
+                _FUND_RISK_METRICS_INSERT_SQL,
+                params[start : start + _CATALOGUE_REPLACE_BATCH],
+            )
+        connection.commit()
+    return len(params)
+
+
+def get_fund_risk_metrics_meta() -> dict[str, Any] | None:
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT MAX(snapshot_available_at) AS snapshot_available_at,
+                   MAX(source) AS source,
+                   COUNT(*) AS row_count
+            FROM fund_risk_metrics
+            """
+        ).fetchone()
+    payload = _row_to_dict(row)
+    count = int(payload.get("row_count") or 0)
+    if count <= 0:
+        return None
+    return {
+        "snapshot_available_at": str(payload.get("snapshot_available_at") or ""),
+        "source": str(payload.get("source") or ""),
+        "row_count": count,
+    }
+
+
+def list_fund_risk_metrics() -> list[dict[str, Any]]:
+    with _connect() as connection:
+        rows = connection.execute(
+            _FUND_RISK_METRICS_SELECT_SQL + " ORDER BY fund_code"
+        ).fetchall()
+    return [_fund_risk_metrics_payload(row) for row in rows]
+
+
+def list_fund_risk_metrics_by_codes(
+    fund_codes: set[str] | list[str],
+) -> dict[str, dict[str, Any]]:
+    normalized = _normalize_lookup_fund_codes(fund_codes)
+    if not normalized:
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    with _connect() as connection:
+        for start in range(0, len(normalized), _CATALOGUE_REPLACE_BATCH):
+            chunk = normalized[start : start + _CATALOGUE_REPLACE_BATCH]
+            placeholders = ",".join("?" * len(chunk))
+            rows = connection.execute(
+                _FUND_RISK_METRICS_SELECT_SQL
+                + f" WHERE fund_code IN ({placeholders})",
+                tuple(chunk),
+            ).fetchall()
+            for row in rows:
+                payload = _fund_risk_metrics_payload(row)
+                result[payload["fund_code"]] = payload
+    return result
+
+
+_FUND_MANAGER_ROSTER_COLUMNS = (
+    "fund_code",
+    "manager_id",
+    "manager_name",
+    "company",
+    "career_days",
+    "current_best_tenure_return_percent",
+    "current_best_fund_code",
+    "current_aum_yi",
+    "snapshot_available_at",
+    "source",
+)
+_FUND_MANAGER_ROSTER_INSERT_SQL = f"""
+    INSERT INTO fund_manager_roster (
+        {", ".join(_FUND_MANAGER_ROSTER_COLUMNS)}
+    ) VALUES ({", ".join("?" * len(_FUND_MANAGER_ROSTER_COLUMNS))})
+"""
+_FUND_MANAGER_ROSTER_SELECT_SQL = f"""
+    SELECT {", ".join(_FUND_MANAGER_ROSTER_COLUMNS)}
+    FROM fund_manager_roster
+"""
+_MAX_MANAGER_CAREER_DAYS = 80 * 365
+
+
+def _normalize_fund_manager_roster_row(
+    row: Mapping[str, Any],
+    *,
+    snapshot_available_at: str,
+    source: str,
+) -> tuple[Any, ...] | None:
+    code = str(row.get("fund_code") or "").strip().zfill(6)
+    manager_id = _optional_catalogue_text(row.get("manager_id"))
+    manager_name = _optional_catalogue_text(row.get("manager_name"))
+    if (
+        len(code) != 6
+        or not code.isdigit()
+        or code == "000000"
+        or not manager_id
+        or not manager_name
+    ):
+        return None
+    best_code = _optional_catalogue_text(row.get("current_best_fund_code"))
+    if best_code and best_code.isdigit():
+        best_code = best_code.zfill(6)
+        if best_code == "000000":
+            best_code = None
+    elif best_code:
+        best_code = None
+    return (
+        code,
+        manager_id,
+        manager_name,
+        _optional_catalogue_text(row.get("company")),
+        _optional_catalogue_int(
+            row.get("career_days"),
+            minimum=0,
+            maximum=_MAX_MANAGER_CAREER_DAYS,
+        ),
+        _optional_catalogue_float(row.get("current_best_tenure_return_percent")),
+        best_code,
+        _optional_catalogue_float(row.get("current_aum_yi")),
+        snapshot_available_at,
+        str(row.get("source") or source).strip() or source,
+    )
+
+
+def _fund_manager_roster_payload(row: Mapping[str, Any]) -> dict[str, Any]:
+    payload = _row_to_dict(row)
+    payload["fund_code"] = str(payload.get("fund_code") or "").zfill(6)
+    best_code = str(payload.get("current_best_fund_code") or "").strip()
+    if best_code.isdigit():
+        payload["current_best_fund_code"] = best_code.zfill(6)
+    return payload
+
+
+def replace_fund_manager_roster(
+    rows: list[Mapping[str, Any]],
+    *,
+    snapshot_available_at: str,
+    source: str,
+) -> int:
+    """Atomically replace the Eastmoney manager roster snapshot."""
+
+    available_at = str(snapshot_available_at or "").strip()
+    origin = str(source or "").strip() or "eastmoney.fund_manager_em"
+    if not available_at:
+        raise ValueError("snapshot_available_at is required")
+    seen: set[tuple[str, str]] = set()
+    params: list[tuple[Any, ...]] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        item = _normalize_fund_manager_roster_row(
+            row,
+            snapshot_available_at=available_at,
+            source=origin,
+        )
+        if item is None:
+            continue
+        key = (str(item[0]), str(item[1]))
+        if key in seen:
+            continue
+        seen.add(key)
+        params.append(item)
+    with _connect() as connection:
+        connection.execute("DELETE FROM fund_manager_roster")
+        for start in range(0, len(params), _CATALOGUE_REPLACE_BATCH):
+            connection.executemany(
+                _FUND_MANAGER_ROSTER_INSERT_SQL,
+                params[start : start + _CATALOGUE_REPLACE_BATCH],
+            )
+        connection.commit()
+    return len(params)
+
+
+def get_fund_manager_roster_meta() -> dict[str, Any] | None:
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT snapshot_available_at, MAX(source) AS source,
+                   COUNT(*) AS row_count
+            FROM fund_manager_roster
+            GROUP BY snapshot_available_at
+            ORDER BY snapshot_available_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    payload = _row_to_dict(row)
+    count = int(payload.get("row_count") or 0)
+    available_at = str(payload.get("snapshot_available_at") or "").strip()
+    if count <= 0 or not available_at:
+        return None
+    return {
+        "snapshot_available_at": available_at,
+        "source": str(payload.get("source") or ""),
+        "row_count": count,
+    }
+
+
+def list_fund_manager_roster() -> list[dict[str, Any]]:
+    with _connect() as connection:
+        rows = connection.execute(
+            _FUND_MANAGER_ROSTER_SELECT_SQL
+            + " ORDER BY fund_code, career_days DESC, manager_name"
+        ).fetchall()
+    return [_fund_manager_roster_payload(row) for row in rows]
+
+
+def list_fund_manager_roster_by_codes(
+    fund_codes: set[str] | list[str],
+) -> dict[str, list[dict[str, Any]]]:
+    normalized = _normalize_lookup_fund_codes(fund_codes)
+    if not normalized:
+        return {}
+    result: dict[str, list[dict[str, Any]]] = {code: [] for code in normalized}
+    with _connect() as connection:
+        for start in range(0, len(normalized), _CATALOGUE_REPLACE_BATCH):
+            chunk = normalized[start : start + _CATALOGUE_REPLACE_BATCH]
+            placeholders = ",".join("?" * len(chunk))
+            rows = connection.execute(
+                _FUND_MANAGER_ROSTER_SELECT_SQL
+                + f" WHERE fund_code IN ({placeholders})"
+                + " ORDER BY fund_code, career_days DESC, manager_name",
+                tuple(chunk),
+            ).fetchall()
+            for row in rows:
+                payload = _fund_manager_roster_payload(row)
+                result.setdefault(payload["fund_code"], []).append(payload)
+    return {code: rows for code, rows in result.items() if rows}
+
+
+def list_fresh_verified_identity_fund_codes() -> list[str]:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT fund_code
+            FROM fund_sector_current
+            WHERE is_primary = 1
+              AND identity_status = 'verified'
+              AND expires_at > ?
+            ORDER BY fund_code
+            """,
+            (now,),
+        ).fetchall()
+    codes: list[str] = []
+    for row in rows:
+        code = str(_row_to_dict(row).get("fund_code") or "").zfill(6)
+        if len(code) == 6 and code.isdigit() and code != "000000":
+            codes.append(code)
+    return codes
 
 
 def get_fund_primary_sector_global(fund_code: str) -> dict[str, Any] | None:

@@ -12,7 +12,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-MYSQL_SCHEMA_VERSION = 24
+MYSQL_SCHEMA_VERSION = 27
 
 MYSQL_MIGRATION_GUARD_NAME = "sqlite_to_mysql"
 MYSQL_SCHEMA_LOCK_NAME = "fundpilot.mysql_schema.v18"
@@ -1823,6 +1823,75 @@ def _ensure_mysql_schema_locked(
             INDEX idx_langgraph_run_events_run_seq (run_id, seq)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
+        """
+        CREATE TABLE IF NOT EXISTS fund_daily_catalogue (
+            fund_code VARCHAR(16) NOT NULL PRIMARY KEY,
+            fund_name VARCHAR(255) NOT NULL,
+            fund_type VARCHAR(16) NULL,
+            source_fund_type VARCHAR(64) NULL,
+            nav_date VARCHAR(32) NULL,
+            latest_nav DOUBLE NULL,
+            daily_growth_percent DOUBLE NULL,
+            established_date VARCHAR(32) NULL,
+            return_3m_percent DOUBLE NULL,
+            return_6m_percent DOUBLE NULL,
+            return_1y_percent DOUBLE NULL,
+            return_3y_percent DOUBLE NULL,
+            rank_enriched TINYINT NOT NULL DEFAULT 0,
+            snapshot_available_at VARCHAR(64) NOT NULL,
+            source VARCHAR(128) NOT NULL,
+            INDEX idx_fund_daily_catalogue_snapshot (snapshot_available_at),
+            INDEX idx_fund_daily_catalogue_established (established_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS fund_research_profile (
+            fund_code VARCHAR(16) NOT NULL PRIMARY KEY,
+            fund_name VARCHAR(255) NULL,
+            fund_category VARCHAR(64) NULL,
+            latest_nav DOUBLE NULL,
+            fund_shares_yi DOUBLE NULL,
+            fund_scale_yi DOUBLE NULL,
+            fund_scale_basis VARCHAR(64) NULL,
+            established_date VARCHAR(32) NULL,
+            fund_manager VARCHAR(255) NULL,
+            profile_updated_at VARCHAR(32) NULL,
+            snapshot_available_at VARCHAR(64) NOT NULL,
+            source VARCHAR(128) NOT NULL,
+            INDEX idx_fund_research_profile_snapshot (snapshot_available_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS fund_risk_metrics (
+            fund_code VARCHAR(16) NOT NULL PRIMARY KEY,
+            sharpe_1y DOUBLE NULL,
+            sharpe_3y DOUBLE NULL,
+            max_drawdown_1y_percent DOUBLE NULL,
+            nav_as_of VARCHAR(32) NULL,
+            nav_point_count INT NULL,
+            schema_version VARCHAR(64) NOT NULL,
+            snapshot_available_at VARCHAR(64) NOT NULL,
+            source VARCHAR(128) NOT NULL,
+            INDEX idx_fund_risk_metrics_snapshot (snapshot_available_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS fund_manager_roster (
+            fund_code VARCHAR(16) NOT NULL,
+            manager_id VARCHAR(32) NOT NULL,
+            manager_name VARCHAR(64) NOT NULL,
+            company VARCHAR(128) NULL,
+            career_days INT NULL,
+            current_best_tenure_return_percent DOUBLE NULL,
+            current_best_fund_code VARCHAR(16) NULL,
+            current_aum_yi DOUBLE NULL,
+            snapshot_available_at VARCHAR(64) NOT NULL,
+            source VARCHAR(128) NOT NULL,
+            PRIMARY KEY (fund_code, manager_id),
+            INDEX idx_fund_manager_roster_code (fund_code),
+            INDEX idx_fund_manager_roster_snapshot (snapshot_available_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
     ]
     for statement in statements:
         cursor.execute(statement)
@@ -1971,6 +2040,9 @@ def _ensure_mysql_schema_locked(
                 "trend_evidence_coverage": "DOUBLE NULL",
                 "source": "VARCHAR(32) NULL",
             },
+            "fund_research_profile": {
+                "fund_shares_yi": "DOUBLE NULL",
+            },
         }
         for table, columns in performance_columns.items():
             for column, definition in columns.items():
@@ -1986,6 +2058,19 @@ def _ensure_mysql_schema_locked(
                     cursor.execute(
                         f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
                     )
+        cursor.execute(
+            """
+            SELECT 1 FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'fund_manager_roster'
+              AND COLUMN_NAME = 'career_annual_return_percent'
+            """
+        )
+        if fetchone() is not None:
+            cursor.execute(
+                "ALTER TABLE fund_manager_roster "
+                "DROP COLUMN career_annual_return_percent"
+            )
         for table in ("analysis_jobs", "discovery_jobs"):
             cursor.execute(
                 f"""

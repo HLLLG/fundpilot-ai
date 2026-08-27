@@ -156,6 +156,26 @@ def test_identity_label_that_is_not_a_board_name_keeps_the_usable_copy(monkeypat
     assert [item.sector_name for item in aligned] == ["国防军工"]
 
 
+def test_name_or_llm_identity_is_not_stamped_onto_holdings(monkeypatch) -> None:
+    monkeypatch.setattr(
+        service,
+        "get_fund_primary_sectors_by_codes",
+        lambda codes: {
+            "018957": {"sector_name": "CPO", "source": "llm_infer"},
+            "001048": {"sector_name": "国防军工", "source": "name_infer"},
+        },
+    )
+
+    aligned = service.apply_authoritative_sector_labels(
+        [
+            _holding("018957", "中航机遇领航混合发起C", "CPO"),
+            _holding("001048", "富国国防军工混合A", "国防军工"),
+        ]
+    )
+
+    assert [item.sector_name for item in aligned] == [None, None]
+
+
 def test_missing_identity_row_leaves_the_holding_untouched(monkeypatch) -> None:
     monkeypatch.setattr(
         service,

@@ -86,12 +86,12 @@ def select_balanced_target_labels(
     focus_sectors: list[str],
     *,
     flow_inflection_labels: list[str] | None = None,
-    max_labels: int = 8,
+    max_labels: int = 6,
 ) -> list[str]:
     """全市场目标方向：关注优先，其余按资金拐点 / 热度 / 弹性 / 蓄势轮转，不单吃短热度。
 
     1/5 日热度只是其中一路。资金拐点、价格弹性与安静蓄势已经在证据预筛里算过，
-    这里把它们提升为与热度并列的目标席，避免 8 个自动方向全被短热度占满。
+    这里把它们提升为与热度并列的目标席，避免自动方向全被短热度占满。
     """
 
     limit = max(1, int(max_labels))

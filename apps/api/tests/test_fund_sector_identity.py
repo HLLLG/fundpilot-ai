@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.database import (
     get_fund_sector_resolution_stats,
@@ -88,6 +88,49 @@ def test_materializes_multi_sector_snapshot_and_fast_verified_lookup() -> None:
     assert [row["sector_name"] for row in discovery_rows] == ["医药"]
     assert discovery_rows[0]["identity_status"] == "verified"
     assert discovery_rows[0]["exposure_percent"] == 35.0
+
+
+def test_discovery_lookup_returns_all_verified_identities_without_sector_cap() -> None:
+    now = datetime(2026, 8, 26, tzinfo=timezone.utc)
+    expires = (now + timedelta(days=30)).isoformat()
+    resolved = now.isoformat()
+    for index in range(25):
+        code = f"{900000 + index:06d}"
+        replace_fund_sector_current(
+            fund_code=code,
+            rows=[
+                {
+                    "fund_code": code,
+                    "sector_name": "半导体",
+                    "exposure_percent": 80.0,
+                    "is_primary": True,
+                    "identity_status": "verified",
+                    "source": "precompute_holdings",
+                    "confidence": 0.9,
+                    "evidence_snapshot_id": f"snap-{code}",
+                    "source_ref": f"snap-{code}",
+                    "report_period": "2026Q2",
+                    "as_of_date": "2026-06-30",
+                    "available_at": "2026-07-21T09:00:00+08:00",
+                    "resolved_at": resolved,
+                    "expires_at": expires,
+                    "mapping_version": "fund_sector_identity.2026-08.v1",
+                    "detail": {},
+                }
+            ],
+        )
+
+    rows = list_fund_primary_sectors_by_sector_names(["半导体"])
+    assert len(rows) == 25
+    assert {row["fund_code"] for row in rows} == {
+        f"{900000 + index:06d}" for index in range(25)
+    }
+    assert len(
+        list_fund_primary_sectors_by_sector_names(
+            ["半导体"],
+            limit_per_sector=20,
+        )
+    ) == 20
 
 
 def test_research_only_holdings_are_persisted_but_never_executable() -> None:

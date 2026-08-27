@@ -12,6 +12,7 @@ COPY app /app/app
 # `docker compose exec api` 调用）。镜像逐个白名单拷贝脚本，漏了这行定时任务会直接
 # 报「找不到文件」。
 COPY scripts/capture_sector_direction_states.py /app/scripts/capture_sector_direction_states.py
+COPY scripts/refresh_fund_research_profiles.py /app/scripts/refresh_fund_research_profiles.py
 # 板块身份运维脚本（与根目录生产 Dockerfile 保持一致）。
 COPY scripts/rescan_cpo_cxo_targets.py /app/scripts/rescan_cpo_cxo_targets.py
 COPY scripts/diagnose_sector_vehicles.py /app/scripts/diagnose_sector_vehicles.py

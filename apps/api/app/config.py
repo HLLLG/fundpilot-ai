@@ -289,6 +289,10 @@ class Settings(BaseSettings):
     market_shared_idle_interval_seconds: int = 10800  # 非 A 股/美股活跃时段后台刷新间隔
     # 基金涨跌分布后台预热；关闭后诊断接口只读已有缓存，不在请求内同步打源
     fund_return_distribution_refresh_enabled: bool = True
+    # 开放式基金规模/经理档案：后台整包刷新；荐基请求路径只读表
+    fund_research_profile_refresh_enabled: bool = True
+    fund_research_profile_refresh_poll_seconds: int = 3600
+    fund_research_profile_refresh_startup_delay_seconds: int = 45
     # 持仓共享行情缓存：后台时钟按时段刷新；请求路径只读缓存
     holding_detail_cache_ttl_seconds: int = 300
     holding_intraday_warmup_enabled: bool = True
@@ -317,9 +321,7 @@ class Settings(BaseSettings):
     fund_primary_sector_precompute_pending_retry_days: int = 14
     fund_primary_sector_precompute_research_retry_days: int = 30
     fund_primary_sector_precompute_unmapped_retry_days: int = 30
-    # 规则（业绩基准/持仓穿透）都推不出主题时，用 DeepSeek 兜底分类（按基金代码全局缓存，只调用一次）
-    fund_primary_sector_llm_infer_enabled: bool = True
-    # 应用启动后延迟一次性扫描存量持仓，把历史遗留的空板块用最新规则链（含 LLM）补全
+    # 应用启动后延迟一次性扫描存量持仓，把历史遗留的空板块用最新规则链补全
     fund_primary_sector_backfill_enabled: bool = True
     fund_primary_sector_backfill_startup_delay_seconds: int = 90
     # 组合风险指标无风险利率（年化，小数；夏普/索提诺/Alpha 使用）

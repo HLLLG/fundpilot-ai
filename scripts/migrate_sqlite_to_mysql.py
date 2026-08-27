@@ -104,6 +104,42 @@ TABLES = [
         ],
     ),
     (
+        "fund_daily_catalogue",
+        [
+            "fund_code", "fund_name", "fund_type", "source_fund_type",
+            "nav_date", "latest_nav", "daily_growth_percent",
+            "established_date", "return_3m_percent", "return_6m_percent",
+            "return_1y_percent", "return_3y_percent", "rank_enriched",
+            "snapshot_available_at", "source",
+        ],
+    ),
+    (
+        "fund_research_profile",
+        [
+            "fund_code", "fund_name", "fund_category", "latest_nav",
+            "fund_shares_yi", "fund_scale_yi", "fund_scale_basis",
+            "established_date", "fund_manager", "profile_updated_at",
+            "snapshot_available_at", "source",
+        ],
+    ),
+    (
+        "fund_risk_metrics",
+        [
+            "fund_code", "sharpe_1y", "sharpe_3y",
+            "max_drawdown_1y_percent", "nav_as_of", "nav_point_count",
+            "schema_version", "snapshot_available_at", "source",
+        ],
+    ),
+    (
+        "fund_manager_roster",
+        [
+            "fund_code", "manager_id", "manager_name", "company",
+            "career_days",
+            "current_best_tenure_return_percent", "current_best_fund_code",
+            "current_aum_yi", "snapshot_available_at", "source",
+        ],
+    ),
+    (
         "discovery_jobs",
         [
             "id", "status", "request_payload", "dedup_key",

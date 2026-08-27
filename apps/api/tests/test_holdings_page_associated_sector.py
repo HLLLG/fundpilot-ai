@@ -114,6 +114,37 @@ def test_flexible_mixed_fund_hides_holdings_inferred_sector() -> None:
     assert holding.sector_return_percent is None
 
 
+def test_name_and_llm_sources_are_not_page_visible() -> None:
+    assert (
+        associated_sector_is_page_visible(
+            fund_name="富国国防军工混合A",
+            sector_name="国防军工",
+            source="name_infer",
+        )
+        is False
+    )
+    assert (
+        associated_sector_is_page_visible(
+            fund_name="中航机遇领航混合发起C",
+            sector_name="CPO",
+            source="llm_infer",
+        )
+        is False
+    )
+    holding = apply_page_associated_sector(
+        _holding("018957", "中航机遇领航混合发起C", sector_name="CPO"),
+        PrimarySectorRecord(
+            fund_code="018957",
+            sector_name="CPO",
+            source="llm_infer",
+            confidence=0.6,
+            intraday_index_name=None,
+        ),
+    )
+    assert holding.sector_name is None
+    assert holding.intraday_index_name is None
+
+
 def test_industry_equity_fund_keeps_holdings_infer_theme() -> None:
     assert (
         associated_sector_is_page_visible(

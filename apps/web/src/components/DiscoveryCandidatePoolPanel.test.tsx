@@ -51,7 +51,9 @@ describe("DiscoveryCandidatePoolPanel", () => {
     expect(card).toHaveTextContent("关联排序分");
     expect(card).toHaveTextContent("近3月");
     expect(card).toHaveTextContent("近6月");
-    expect(card).not.toHaveTextContent("近1年");
+    expect(card).toHaveTextContent("近1年夏普");
+    expect(card).toHaveTextContent("近3年夏普");
+    expect(card).not.toHaveTextContent("26.13");
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(screen.getByText("查看数据完整性与质量依据").closest("summary")).toHaveClass("min-h-11");
     expect(card).toHaveTextContent("待补/刷新 1 项");
@@ -74,6 +76,8 @@ describe("DiscoveryCandidatePoolPanel", () => {
         entry_ready: true,
         high_elasticity: true,
       },
+      sharpe_1y: 0.74,
+      sharpe_3y: 0.49,
     };
     render(<DiscoveryCandidatePoolPanel pool={[elastic]} selectedCodes={[]} />);
     fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
@@ -85,6 +89,10 @@ describe("DiscoveryCandidatePoolPanel", () => {
     expect(card).toHaveTextContent("20日波动42.8%");
     expect(card).toHaveTextContent("20日修复68%");
     expect(card).toHaveTextContent("近20日18.6%");
+    expect(card).toHaveTextContent("近1年夏普");
+    expect(card).toHaveTextContent("0.74");
+    expect(card).toHaveTextContent("近3年夏普");
+    expect(card).toHaveTextContent("0.49");
   });
 
   it("shows the actual vehicle threshold and an exact sector mismatch", () => {
@@ -182,7 +190,7 @@ describe("DiscoveryCandidatePoolPanel", () => {
       fund_code: "006082",
       fund_name: "字段完整基金",
       fund_scale_yi: 3.2,
-      fund_scale_basis: "nav_times_latest_shares",
+      fund_scale_basis: "quarterly_net_assets",
       fund_manager: "测试经理",
       established_date: "2020-01-01",
       profile_status: "complete",
@@ -205,7 +213,7 @@ describe("DiscoveryCandidatePoolPanel", () => {
         ...completeCandidate.quality_gate!,
         eligible: false,
         status: "excluded",
-        reasons: ["最新估算规模低于0.5亿元"],
+        reasons: ["最新估算规模低于2亿元"],
       },
     };
 
@@ -538,5 +546,38 @@ describe("DiscoveryCandidatePoolPanel", () => {
     expect(research).not.toHaveTextContent("不得用于正式超额收益判断");
     expect(research).toHaveTextContent("近6月正式超额");
     expect(research).toHaveTextContent("+1.25%");
+  });
+
+  it("shows manager career tenure and best tenure return without calling it annualized", () => {
+    const withTenure: DiscoveryCandidatePoolItem = {
+      ...candidate,
+      fund_code: "001924",
+      fund_name: "华夏国企改革混合",
+      fund_scale_yi: 1.36,
+      fund_scale_basis: "quarterly_net_assets",
+      fund_manager: "艾邦妮",
+      manager_career_days: 1456,
+      manager_career_tenure: "3年又361天",
+      manager_best_tenure_return_percent: 38.06,
+      established_date: "2015-06-02",
+      quality_penalties: [],
+      quality_gate: {
+        eligible: true,
+        status: "eligible",
+        reasons: [],
+        missing_fields: [],
+        coverage_percent: 100,
+        data_as_of: "2026-08-26",
+      },
+    };
+
+    render(<DiscoveryCandidatePoolPanel pool={[withTenure]} />);
+    fireEvent.click(screen.getByRole("button", { name: /本次候选池/ }));
+    fireEvent.click(screen.getByText("查看数据完整性与质量依据"));
+
+    expect(
+      screen.getByText(/经理 艾邦妮 · 从业 3年又361天 · 在管最佳任期回报 38\.06%/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/年化回报/)).not.toBeInTheDocument();
   });
 });

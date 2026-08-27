@@ -26,6 +26,7 @@ def _disabled_settings(**overrides):
         "prompt_shadow_assignment_secret": None,
         "deepseek_configured": False,
         "holding_intraday_warmup_enabled": False,
+        "fund_research_profile_refresh_enabled": False,
         "background_worker_heartbeat_stale_seconds": 45.0,
         "background_worker_heartbeat_interval_seconds": 10.0,
     }
@@ -86,6 +87,21 @@ def test_holding_market_cache_job_registers_when_warmup_enabled(monkeypatch) -> 
     jobs = background_worker.configured_background_jobs()
 
     assert [job.name for job in jobs] == ["shared-holding-market-cache"]
+
+
+def test_research_profile_refresh_job_registers_when_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(
+        background_worker,
+        "get_settings",
+        lambda: _disabled_settings(
+            runtime_role="worker",
+            fund_research_profile_refresh_enabled=True,
+        ),
+    )
+
+    jobs = background_worker.configured_background_jobs()
+
+    assert [job.name for job in jobs] == ["fund-research-profile-refresh"]
 
 
 def test_worker_heartbeat_is_atomic_current_and_process_bound(tmp_path) -> None:
@@ -243,6 +259,7 @@ def test_sqlite_worker_acquires_leadership_and_serves_healthcheck(
     monkeypatch.setenv("FUND_AI_FUND_PRIMARY_SECTOR_BACKFILL_ENABLED", "false")
     monkeypatch.setenv("FUND_AI_PROMPT_SHADOW_ENABLED", "false")
     monkeypatch.setenv("FUND_AI_HOLDING_INTRADAY_WARMUP_ENABLED", "false")
+    monkeypatch.setenv("FUND_AI_FUND_RESEARCH_PROFILE_REFRESH_ENABLED", "false")
     refresh_settings()
 
     stop_event = threading.Event()

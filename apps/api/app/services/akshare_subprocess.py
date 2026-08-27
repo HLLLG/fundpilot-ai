@@ -1360,6 +1360,7 @@ def fetch_catalogue():
             "return_1y_percent": None,
             "return_6m_percent": None,
             "return_3m_percent": None,
+            "return_3y_percent": None,
             "max_drawdown_1y_percent": None,
             "fund_scale_yi": None,
         }})
@@ -1416,6 +1417,7 @@ def parse_rank_rows(payload):
             "return_1y_percent": number(parts, 11),
             "return_6m_percent": number(parts, 10),
             "return_3m_percent": number(parts, 9),
+            "return_3y_percent": number(parts, 13),
         }}
     return rows
 
@@ -1491,7 +1493,7 @@ def fetch_open_fund_research_profiles(
     *,
     timeout_seconds: int | float = 45,
 ) -> list[dict] | None:
-    """读取候选基金的规模、经理和成立日期，供荐基准入守卫使用。
+    """读取候选基金的份额、经理和成立日期。规模在父进程用报告期净值自算。
 
     Sina 的开放式基金规模接口按大类返回全表。这里在子进程内只序列化目标代码，
     并在目标全部命中后停止继续拉取，避免把数万行明细传回 API 进程。
@@ -1551,9 +1553,9 @@ for symbol in symbols:
                 continue
             nav = number(row.get("单位净值"))
             shares = number(row.get("最近总份额"))
-            current_scale_yi = (
-                nav * shares / 100_000_000
-                if nav is not None and shares is not None and nav > 0 and shares > 0
+            shares_yi = (
+                shares / 100_000_000
+                if shares is not None and shares > 0
                 else None
             )
             rows[code] = {{
@@ -1561,8 +1563,9 @@ for symbol in symbols:
                 "fund_name": str(row.get("基金简称") or "").strip(),
                 "fund_category": symbol.replace("基金", ""),
                 "latest_nav": nav,
-                "fund_scale_yi": round(current_scale_yi, 4) if current_scale_yi is not None else None,
-                "fund_scale_basis": "nav_times_latest_shares",
+                "fund_shares_yi": round(shares_yi, 4) if shares_yi is not None else None,
+                "fund_scale_yi": None,
+                "fund_scale_basis": None,
                 "established_date": iso_date(row.get("成立日期")),
                 "fund_manager": str(row.get("基金经理") or "").strip() or None,
                 "profile_updated_at": iso_date(row.get("更新日期")),
@@ -1583,7 +1586,168 @@ print(json.dumps({{"data": list(rows.values()), "errors": errors}}, ensure_ascii
     if isinstance(payload, dict):
         rows = payload.get("data")
         if isinstance(rows, list):
-            return rows
+            from app.services.fund_scale import attach_quarterly_net_assets
+
+            return attach_quarterly_net_assets(rows)
+    return None
+
+
+def fetch_open_fund_scale_universe(
+    *,
+    timeout_seconds: int | float = 90,
+) -> list[dict] | None:
+    """拉取开放式基金全表（股票/混合/债券/QDII）。份额来自新浪，规模优先季报净资产。"""
+
+    script = """
+import akshare as ak
+import json
+
+symbols = (
+    "股票型基金",
+    "混合型基金",
+    "债券型基金",
+    "QDII基金",
+)
+
+def number(value):
+    if value is None or str(value).strip().lower() in ("", "nan", "--", "nat"):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+def iso_date(value):
+    if value is None or str(value).strip().lower() in ("", "nan", "nat", "--"):
+        return None
+    if hasattr(value, "date"):
+        try:
+            return value.date().isoformat()
+        except Exception:
+            pass
+    text = str(value).strip().replace("/", "-")
+    return text[:10] if len(text) >= 10 else text
+
+rows = {}
+errors = []
+for symbol in symbols:
+    try:
+        frame = ak.fund_scale_open_sina(symbol=symbol)
+        if frame is None or frame.empty:
+            continue
+        for _, row in frame.iterrows():
+            raw_code = str(row.get("基金代码", "")).strip().split(".", 1)[0]
+            code = raw_code.zfill(6)
+            if not code.isdigit() or len(code) != 6 or code == "000000" or code in rows:
+                continue
+            nav = number(row.get("单位净值"))
+            shares = number(row.get("最近总份额"))
+            shares_yi = (
+                shares / 100_000_000
+                if shares is not None and shares > 0
+                else None
+            )
+            rows[code] = {
+                "fund_code": code,
+                "fund_name": str(row.get("基金简称") or "").strip(),
+                "fund_category": symbol.replace("基金", ""),
+                "latest_nav": nav,
+                "fund_shares_yi": round(shares_yi, 4) if shares_yi is not None else None,
+                "fund_scale_yi": None,
+                "fund_scale_basis": None,
+                "established_date": iso_date(row.get("成立日期")),
+                "fund_manager": str(row.get("基金经理") or "").strip() or None,
+                "profile_updated_at": iso_date(row.get("更新日期")),
+                "profile_source": "sina.fund_scale_open_sina",
+            }
+    except Exception as exc:
+        errors.append(f"{symbol}:{type(exc).__name__}")
+
+print(json.dumps({"data": list(rows.values()), "errors": errors}, ensure_ascii=False))
+"""
+    payload = run_akshare_json_script(
+        script,
+        label="fund_scale_universe",
+        timeout=timeout_seconds,
+    )
+    if isinstance(payload, dict):
+        rows = payload.get("data")
+        if isinstance(rows, list):
+            from app.services.fund_scale import attach_quarterly_net_assets
+
+            return attach_quarterly_net_assets(rows)
+    return None
+
+
+def fetch_eastmoney_fund_manager_roster(
+    *,
+    timeout_seconds: int | float = 180,
+) -> list[list[object]] | None:
+    """拉取天天基金经理大全原始行（一人一行，现任基金代码逗号拼接）。
+
+    只给后台/定时任务用。荐基请求路径不得调用。返回值再由
+    ``explode_eastmoney_manager_rows`` 按基金代码拆开。
+    """
+
+    script = """
+import json
+import requests
+from akshare.utils import demjson
+
+url = "https://fund.eastmoney.com/Data/FundDataPortfolio_Interface.aspx"
+params = {
+    "dt": "14",
+    "mc": "returnjson",
+    "ft": "all",
+    "pn": "500",
+    "pi": "1",
+    "sc": "abbname",
+    "st": "asc",
+}
+session = requests.Session()
+session.headers.update(
+    {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+)
+
+def decode(response):
+    response.encoding = response.apparent_encoding or "utf-8"
+    text = response.text.strip()
+    prefix = "var returnjson="
+    if text.startswith(prefix):
+        text = text[len(prefix):].strip()
+    return demjson.decode(text)
+
+first = session.get(url, params=params, timeout=30)
+payload = decode(first)
+pages = int(payload.get("pages") or 1)
+rows = list(payload.get("data") or [])
+errors = []
+for page in range(2, pages + 1):
+    params["pi"] = str(page)
+    try:
+        chunk = decode(session.get(url, params=params, timeout=30))
+        rows.extend(chunk.get("data") or [])
+    except Exception as exc:
+        errors.append(f"{page}:{type(exc).__name__}")
+        break
+
+print(json.dumps({"data": rows, "pages": pages, "errors": errors}, ensure_ascii=False))
+"""
+    payload = run_akshare_json_script(
+        script,
+        label="fund_manager_roster",
+        timeout=timeout_seconds,
+    )
+    if isinstance(payload, dict):
+        rows = payload.get("data")
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, list)]
     return None
 
 
@@ -1666,7 +1830,7 @@ def fetch_one(code):
             "fund_category": clean(mapping.get("基金类型")),
             # AKShare 将蛋卷接口的 totshare 重命名为“最新规模”，但原始
             # 字段实际是基金份额，不是资产净值。这里只保存亿份，待候选
-            # 已取得最新单位净值后再估算 AUM，避免把 12.46 亿份误写成
+            # 取得报告期单位净值后再算季报净资产，避免把 12.46 亿份误写成
             # 12.46 亿元并参与清盘阈值判断。
             "fund_shares_yi": shares_yi(mapping.get("最新规模")),
             "fund_shares_basis": "xq_latest_reported_shares",

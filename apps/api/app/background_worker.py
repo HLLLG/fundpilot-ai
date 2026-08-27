@@ -104,6 +104,19 @@ def configured_background_jobs() -> tuple[BackgroundJobSpec, ...]:
             )
         )
 
+    if getattr(settings, "fund_research_profile_refresh_enabled", False):
+        from app.services.fund_research_profile_refresh_loop import (
+            fund_research_profile_refresh_loop,
+        )
+
+        jobs.append(
+            BackgroundJobSpec(
+                name="fund-research-profile-refresh",
+                target=fund_research_profile_refresh_loop,
+                persistent=True,
+            )
+        )
+
     if (
         settings.fund_primary_sector_global_enabled
         and settings.fund_primary_sector_precompute_enabled

@@ -103,7 +103,7 @@ def _needs_backfill(
 
     像"alipay_overview"总览推断、"semantic_name_freeform"自由主题猜测这类来源即使
     格式上"看起来合法"（_is_valid_sector_label 通过），也可能是历史误判（例如把基金
-    自身营销短语当成板块），值得再用完整规则链+LLM 兜底重新尝试一次；只要新结果的
+    自身营销短语当成板块），值得再用完整规则链重新尝试一次；只要新结果的
     来源优先级更高，_record_should_override_holding_sector 会负责实际是否采用。
     """
     code = (holding.fund_code or "").strip()
@@ -172,7 +172,7 @@ def backfill_primary_sectors_for_existing_holdings(*, force: bool = False) -> di
             reset_request_user_id(token)
 
     # 增量核心：只解析这轮新出现的代码。已尝试过的（含上次成功解析的）直接跳过，
-    # 否则每次进程启动都会把它们重新走一遍规则链 + 网络 + LLM。
+    # 否则每次进程启动都会把它们重新走一遍规则链 + 网络。
     new_codes = {
         code: name
         for code, name in pending_codes.items()
@@ -200,7 +200,6 @@ def backfill_primary_sectors_for_existing_holdings(*, force: bool = False) -> di
             record = resolve_primary_sector(
                 code,
                 fund_name=name,
-                allow_name_infer=True,
                 fetch_benchmark=True,
                 fetch_holdings_infer=True,
             )

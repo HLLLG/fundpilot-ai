@@ -275,7 +275,6 @@ def refresh_holdings_sector_quotes(
             holding = holding.model_copy(update={"sector_name": None})
         repair_fields = primary_sector_fields_for_holding(
             holding,
-            allow_name_infer=False,
             fetch_benchmark=fetch_missing_benchmark,
             fetch_holdings_infer=fetch_holdings_infer,
             batch_context=batch_context,

@@ -287,7 +287,7 @@ def test_enrichment_derives_drawdown_from_fetched_nav_when_diagnostics_is_missin
         decision_at=_DECISION_AT,
     )[0]
 
-    assert "max_drawdown_1y_percent" not in item
+    assert item["max_drawdown_1y_percent"] == -20.0
     assert "max_drawdown_1y_percent" not in item["quality_gate"]["missing_fields"]
 
 
@@ -364,12 +364,29 @@ def test_enrichment_backfills_three_month_return_from_short_nav_history(
     assert item["nav_quality_return_coverage"] == 1.0
 
 
-def test_enrichment_converts_xq_shares_with_latest_nav_instead_of_treating_as_aum(
+def test_enrichment_converts_xq_shares_with_report_nav_instead_of_treating_as_aum(
     monkeypatch,
 ):
     monkeypatch.setattr(
+        "app.services.fund_risk_metrics.persist_risk_metrics_from_points",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.services.fund_sharpe.attach_alipay_style_sharpes",
+        lambda row, *_args, **_kwargs: row,
+    )
+    monkeypatch.setattr(
         "app.services.discovery_candidate_pool.FundDataService._snapshot_and_trend_for_holding",
-        lambda *_args, **_kwargs: (_snapshot(), None),
+        lambda *_args, **_kwargs: (
+            _snapshot(),
+            SimpleNamespace(
+                source="akshare",
+                points=[
+                    FundNavPoint(date="2026-03-31", nav=1.2),
+                    FundNavPoint(date="2026-07-10", nav=1.2),
+                ],
+            ),
+        ),
     )
     monkeypatch.setattr(
         "app.services.discovery_candidate_pool.fetch_fund_research_profiles_cached",
@@ -400,7 +417,7 @@ def test_enrichment_converts_xq_shares_with_latest_nav_instead_of_treating_as_au
     )[0]
 
     assert item["fund_scale_yi"] == 2.4
-    assert item["fund_scale_basis"] == "nav_times_xq_latest_shares"
+    assert item["fund_scale_basis"] == "quarterly_net_assets"
     assert item["quality_gate"]["status"] == "eligible"
 
 
@@ -435,13 +452,32 @@ def test_small_or_incomplete_fund_cannot_become_actionable(monkeypatch):
         ]
     )[0]
     assert item["quality_gate"]["status"] == "excluded"
-    assert any("0.5亿元" in reason for reason in item["quality_gate"]["reasons"])
+    assert any("2亿元" in reason for reason in item["quality_gate"]["reasons"])
 
 
-def test_borderline_scale_fund_is_eligible_to_buy():
+def test_scale_below_2yi_is_excluded():
     item = _with_data_quality_gate(
         {
-            "fund_scale_yi": 0.56,
+            "fund_scale_yi": 1.99,
+            "return_3m_percent": 8.0,
+            "return_6m_percent": 12.0,
+            "max_drawdown_1y_percent": -18.0,
+            "established_date": "2024-01-01",
+            "fund_manager": "测试经理",
+            "nav_date": "2026-07-10",
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    assert item["quality_gate"]["status"] == "excluded"
+    assert item["quality_gate"]["eligible"] is False
+    assert any("低于2亿元" in reason for reason in item["quality_gate"]["reasons"])
+    assert "max_drawdown_1y_percent" not in item
+
+
+def test_scale_at_2yi_is_eligible():
+    item = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 2.0,
             "return_3m_percent": 8.0,
             "return_6m_percent": 12.0,
             "max_drawdown_1y_percent": -18.0,
@@ -456,12 +492,12 @@ def test_borderline_scale_fund_is_eligible_to_buy():
     assert "max_drawdown_1y_percent" not in item
 
 
-def test_fund_established_90_days_is_eligible():
+def test_fund_established_one_year_is_eligible():
     item = _with_data_quality_gate(
         {
-            "fund_scale_yi": 0.8,
+            "fund_scale_yi": 2.0,
             "return_3m_percent": 6.0,
-            "established_date": "2026-04-15",
+            "established_date": "2025-07-14",
             "fund_manager": "测试经理",
             "nav_date": "2026-07-10",
         },
@@ -470,19 +506,19 @@ def test_fund_established_90_days_is_eligible():
     assert item["quality_gate"]["status"] == "eligible"
 
 
-def test_fund_established_89_days_is_excluded():
+def test_fund_established_under_one_year_is_excluded():
     item = _with_data_quality_gate(
         {
             "fund_scale_yi": 2.0,
             "return_3m_percent": 6.0,
-            "established_date": "2026-04-16",
+            "established_date": "2025-07-15",
             "fund_manager": "测试经理",
             "nav_date": "2026-07-10",
         },
         as_of_date=_DECISION_DATE,
     )
     assert item["quality_gate"]["status"] == "excluded"
-    assert any("成立不足90天" in reason for reason in item["quality_gate"]["reasons"])
+    assert any("成立不足1年" in reason for reason in item["quality_gate"]["reasons"])
 
 
 def test_stale_profile_fallback_is_watch_only_even_when_fields_are_complete():
@@ -524,7 +560,7 @@ def test_stale_profile_fields_do_not_trigger_hard_exclusion_or_full_coverage():
         "established_date",
         "fund_manager",
     }
-    assert not any("低于0.5亿元" in reason for reason in item["quality_gate"]["reasons"])
+    assert not any("低于2亿元" in reason for reason in item["quality_gate"]["reasons"])
 
 
 def test_zero_returns_and_drawdown_are_valid_core_values_but_non_finite_values_are_not():
@@ -794,7 +830,7 @@ def test_guard_removes_excluded_candidate_and_clears_non_buy_amounts():
         "quality_gate": {
             "status": "excluded",
             "eligible": False,
-            "reasons": ["最新估算规模低于0.5亿元"],
+            "reasons": ["最新估算规模低于2亿元"],
         },
     }
     observed = {

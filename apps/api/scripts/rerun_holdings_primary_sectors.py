@@ -110,7 +110,6 @@ def run() -> int:
                     record = resolve_primary_sector(
                         code,
                         fund_name=holding.fund_name,
-                        allow_name_infer=False,
                         fetch_benchmark=True,
                         fetch_holdings_infer=False,
                     )
@@ -126,7 +125,6 @@ def run() -> int:
                         record = resolve_primary_sector(
                             code,
                             fund_name=holding.fund_name,
-                            allow_name_infer=True,
                             fetch_benchmark=True,
                             fetch_holdings_infer=False,
                         )

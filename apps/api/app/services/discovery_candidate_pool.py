@@ -5,11 +5,13 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import date, datetime
 import hashlib
 import json
+import logging
 from math import isfinite
 import threading
 
 from app.database import (
     get_fund_profile_by_code,
+    list_fund_daily_catalogue_by_codes,
     list_fund_primary_sectors,
     list_fund_primary_sectors_by_sector_names,
 )
@@ -38,6 +40,7 @@ from app.services.fund_peer_ranking import (
     resolve_benchmark_comparison,
 )
 from app.services.fund_sector_identity import is_current_identity_row_fresh
+from app.services.fund_nav_cache import CANONICAL_NAV_TRADING_DAYS
 from app.services.fund_vehicle_quality import assess_candidate_vehicle_quality
 from app.services.news_freshness import normalize_news_now
 from app.services.sector_canonical import get_canonical_sector
@@ -45,6 +48,7 @@ from app.services.shared_executors import get_discovery_context_executor
 from app.services.sector_opportunity_scoring import ENTRY_INVALID
 from app.services.streaming_heartbeat import raise_if_stream_cancelled
 
+logger = logging.getLogger(__name__)
 _INVALID_SECTOR_CANDIDATES = 2
 
 _POOL_CAP = 28
@@ -54,9 +58,12 @@ _PER_SECTOR = 5
 # decision pool was complete. Keep the evidence bounded, but retain one full
 # normal scan so recall validation describes the real funnel.
 _MAX_RECALL_AUDIT_CANDIDATES = 1024
-_HARD_MIN_SCALE_YI = 0.5
-_MIN_HISTORY_DAYS = 90
-_NAV_LOOKBACK_TRADING_DAYS = 90
+_HARD_MIN_SCALE_YI = 2.0
+_MIN_HISTORY_DAYS = 365
+_HARD_MIN_SCALE_LABEL = f"{_HARD_MIN_SCALE_YI:g}亿元"
+_MIN_HISTORY_LABEL = "1年"
+# 近 3 年夏普约需 750 个交易日；与持仓/详情共用 800 日规范缓存，避免短序列覆盖长缓存。
+_NAV_LOOKBACK_TRADING_DAYS = CANONICAL_NAV_TRADING_DAYS
 # 3 个月收益窗口约 60 个交易日；少一天则 `window_return_percent(..., 60)` 会从更早的点起算。
 _NAV_QUALITY_MIN_POINTS = 61
 _QUALITY_SCORE_VERSION = "fund_quality.v5"
@@ -78,9 +85,9 @@ _SECTOR_MATCH_STRENGTH = {
     "primary": 4,
 }
 # Only independently observed mappings may satisfy the executable sector-fit
-# gate.  LLM/name/free-form inference remains useful for broad recall, but it
-# must not turn an active financial-real-estate fund into a verified fintech
-# vehicle (or create an equivalent cross-theme false positive).
+# gate.  LLM/name/free-form inference must not turn an active
+# financial-real-estate fund into a verified fintech vehicle.
+# Discovery recall no longer scans the 20k catalogue by name.
 _DIRECTLY_VERIFIED_PRIMARY_SOURCES = frozenset(
     {
         "ocr_detail",
@@ -186,10 +193,11 @@ def build_candidate_pool(
             for identity_sector in _acceptable_identity_sectors(sector)
         )
     )
-    primary_rows = tenant_primary_rows + list_fund_primary_sectors_by_sector_names(
+    identity_rows = list_fund_primary_sectors_by_sector_names(
         identity_sector_names,
-        limit_per_sector=20,
     )
+    identity_rows = _overlay_catalogue_on_identity_rows(identity_rows)
+    primary_rows = tenant_primary_rows + identity_rows
     new_issue_rows: list[dict] = []
     if selection_strategy == "with_new_issue":
         new_issue_rows = fetch_new_funds(limit=300) or []
@@ -208,7 +216,6 @@ def build_candidate_pool(
         if recall_audit_sink is not None
         else None
     )
-    name_index = _index_rank_rows_by_name_sectors(rank_rows, target_sectors)
     verified_primary_sectors_by_code = _verified_primary_sectors_by_code(primary_rows)
 
     for index, sector_label in enumerate(target_sectors):
@@ -223,7 +230,6 @@ def build_candidate_pool(
         )
         sector_candidates = _candidates_for_sector(
             sector_label,
-            rank_rows=name_index.get(sector_label, []),
             rank_by_code=rank_by_code,
             primary_rows=primary_rows,
             new_issue_rows=new_issue_rows,
@@ -239,7 +245,6 @@ def build_candidate_pool(
             recall_audit_state=recall_state,
             recall_audit_limit=recall_audit_limit,
             verified_primary_sectors_by_code=verified_primary_sectors_by_code,
-            name_prefiltered=True,
         )
         for candidate in sector_candidates:
             candidate["candidate_universe_mode"] = universe_mode
@@ -247,34 +252,6 @@ def build_candidate_pool(
         collected.extend(sector_candidates[:sector_limit])
         if len(collected) >= pool_cap and recall_audit_sink is None:
             break
-
-    if len(collected) < 3 and len(collected) < pool_cap:
-        raise_if_stream_cancelled(stop_event)
-        fallback_ranked = rank_candidates_balanced_fallback(
-            rank_rows,
-            excluded,
-            seen_codes,
-            fund_type_preference,
-            selection_strategy,
-            discovery_strategy=discovery_strategy,
-            family_seen=family_seen,
-            as_of_date=decision_date,
-        )
-        if recall_state is not None:
-            _record_scored_recall_candidates(
-                recall_state,
-                fallback_ranked,
-                limit=recall_audit_limit,
-                matched_sector="综合",
-            )
-        for entry in fallback_ranked:
-            entry["candidate_universe_mode"] = universe_mode
-            entry["candidate_universe_size"] = len(rank_rows)
-            collected.append(entry)
-            seen_codes.add(str(entry.get("fund_code", "")).zfill(6))
-            family_seen.add(_family_key(str(entry.get("fund_name") or "")))
-            if len(collected) >= pool_cap:
-                break
 
     selected = collected[:pool_cap]
     if recall_state is not None:
@@ -582,7 +559,7 @@ def enrich_candidates(
             holding,
             trading_days=_NAV_LOOKBACK_TRADING_DAYS,
             include_diagnostics=False,
-            canonical_backfill=False,
+            canonical_backfill=True,
         )
         row = dict(item)
         _drop_one_year_horizon_fields(row)
@@ -603,11 +580,28 @@ def enrich_candidates(
         row["latest_nav"] = _first_present(snapshot.latest_nav, row.get("latest_nav"))
         row["nav_date"] = _first_present(snapshot.nav_date, row.get("nav_date"))
         if trend is not None and getattr(trend, "points", None):
+            from app.services.fund_risk_metrics import persist_risk_metrics_from_points
+            from app.services.fund_sharpe import attach_alipay_style_sharpes
             from app.services.nav_trend_summary import summarize_nav_history
 
+            row["_scale_nav_points"] = list(trend.points)
             row["nav_trend"] = summarize_nav_history(
                 trend, recent_sample=5, window_days=66
             )
+            attach_alipay_style_sharpes(
+                row,
+                trend.points,
+                as_of=decision_date,
+                available_at=decision_moment.isoformat(),
+            )
+            persisted = persist_risk_metrics_from_points(
+                code,
+                trend.points,
+                as_of=decision_date,
+                available_at=decision_moment.isoformat(),
+            )
+            if persisted is not None:
+                row["_computed_risk_metrics"] = persisted
         return row
 
     # 只给家族代表拉净值。A/C 份额净值几乎同一条曲线，再拉备选只浪费 IO，
@@ -632,6 +626,9 @@ def enrich_candidates(
     finally:
         profile_future.cancel()
 
+    from app.services.fund_risk_metrics import apply_risk_metrics_to_row
+    from app.services.fund_scale import apply_quarterly_net_assets_to_row
+
     rescored: list[dict] = []
     for raw in enriched:
         raise_if_stream_cancelled(stop_event)
@@ -652,6 +649,13 @@ def enrich_candidates(
             "fund_scale_basis",
             "fund_shares_yi",
             "fund_shares_basis",
+            "latest_nav",
+            "fund_managers",
+            "manager_career_days",
+            "manager_career_tenure",
+            "manager_career_days_basis",
+            "manager_best_tenure_return_percent",
+            "manager_best_tenure_return_basis",
             "tracking_reference_text",
             "benchmark_text",
             "benchmark_text_kind",
@@ -662,12 +666,14 @@ def enrich_candidates(
         row["fund_scale_yi"] = _first_present(
             profile.get("fund_scale_yi"), row.get("fund_scale_yi")
         )
-        if row.get("fund_scale_yi") is None:
-            shares_yi = _num(profile.get("fund_shares_yi"))
-            latest_nav = _num(row.get("latest_nav"))
-            if shares_yi is not None and shares_yi > 0 and latest_nav is not None and latest_nav > 0:
-                row["fund_scale_yi"] = round(shares_yi * latest_nav, 4)
-                row["fund_scale_basis"] = "nav_times_xq_latest_shares"
+        apply_quarterly_net_assets_to_row(
+            row,
+            shares_yi=_first_present(
+                profile.get("fund_shares_yi"), row.get("fund_shares_yi")
+            ),
+            points=row.pop("_scale_nav_points", None),
+            as_of=decision_date,
+        )
         row["fund_type"] = _first_present(
             profile.get("fund_category"), row.get("fund_type")
         )
@@ -683,7 +689,15 @@ def enrich_candidates(
             discovery_strategy=discovery_strategy,
         )
         row = assess_candidate_vehicle_quality(row)
+        apply_risk_metrics_to_row(row, row.pop("_computed_risk_metrics", None))
         rescored.append(row)
+
+    try:
+        from app.services.fund_research_profile_store import persist_computed_fund_scales
+
+        persist_computed_fund_scales(rescored)
+    except Exception:  # noqa: BLE001 - scale persist must not fail the scan
+        logger.exception("persist computed fund scales failed")
 
     rescored.sort(
         key=lambda item: (
@@ -1205,39 +1219,9 @@ def _verified_primary_sectors_by_code(
     return verified
 
 
-def _index_rank_rows_by_name_sectors(
-    rank_rows: list[dict],
-    target_sectors: list[str],
-) -> dict[str, list[dict]]:
-    """每只基金只做一次名称匹配，再按方向回放。"""
-
-    labels = [
-        str(label).strip()
-        for label in dict.fromkeys(target_sectors)
-        if str(label).strip()
-    ]
-    keywords_by_sector = {
-        label: _sector_keywords(label, get_canonical_sector(label)) for label in labels
-    }
-    index: dict[str, list[dict]] = {label: [] for label in labels}
-    if not keywords_by_sector:
-        return index
-    for row in rank_rows:
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("fund_name") or "")
-        if not name:
-            continue
-        for label, keywords in keywords_by_sector.items():
-            if _name_matches_direction(name, keywords, label):
-                index[label].append(row)
-    return index
-
-
 def _candidates_for_sector(
     sector_label: str,
     *,
-    rank_rows: list[dict],
     rank_by_code: dict[str, dict],
     primary_rows: list[dict],
     new_issue_rows: list[dict],
@@ -1253,7 +1237,6 @@ def _candidates_for_sector(
     recall_audit_state: dict | None = None,
     recall_audit_limit: int = _MAX_RECALL_AUDIT_CANDIDATES,
     verified_primary_sectors_by_code: dict[str, set[str]] | None = None,
-    name_prefiltered: bool = False,
 ) -> list[dict]:
     canon = get_canonical_sector(sector_label)
     keywords = _sector_keywords(sector_label, canon)
@@ -1279,13 +1262,6 @@ def _candidates_for_sector(
         verified_primary = identity_sector in verified_primary_sectors_by_code.get(
             code, set()
         )
-        inferred_match_kind = (
-            "primary"
-            if verified_primary
-            else "name"
-            if _name_matches_direction(name, keywords, sector_label)
-            else "fallback"
-        )
         entry = _merge_rank_metrics(
             {
                 "fund_code": code,
@@ -1298,45 +1274,27 @@ def _candidates_for_sector(
                 else "推断板块映射待核验",
                 "sector_source": source or None,
                 "sector_confidence": row.get("confidence"),
-                "sector_match_kind": inferred_match_kind,
+                "sector_match_kind": "primary" if verified_primary else "fallback",
                 "sector_mapping_verified": verified_primary,
                 "identity_sector_label": identity_sector,
+                "fund_type": row.get("fund_type"),
+                "nav_date": row.get("nav_date"),
+                "latest_nav": row.get("latest_nav"),
+                "established_date": row.get("established_date"),
+                "fund_scale_yi": row.get("fund_scale_yi"),
+                "fund_manager": row.get("fund_manager"),
+                "fund_managers": row.get("fund_managers"),
+                "manager_career_days": row.get("manager_career_days"),
+                "manager_career_tenure": row.get("manager_career_tenure"),
+                "manager_best_tenure_return_percent": row.get("manager_best_tenure_return_percent"),
+                "return_3m_percent": row.get("return_3m_percent"),
+                "return_6m_percent": row.get("return_6m_percent"),
+                "return_1y_percent": row.get("return_1y_percent"),
+                "return_3y_percent": row.get("return_3y_percent"),
             },
             rank_by_code.get(code),
         )
         entries_by_code[code] = _with_opportunity(entry, opportunity)
-
-    for row in rank_rows:
-        code = str(row.get("fund_code", "")).zfill(6)
-        if code in excluded or (code in seen_codes and recall_audit_state is None):
-            continue
-        verified_sectors = verified_primary_sectors_by_code.get(code, set())
-        if verified_sectors and acceptable_identity_sectors.isdisjoint(
-            verified_sectors
-        ):
-            # A substring recall must not consume the code before its verified
-            # target is processed. This is especially important when both
-            # 黄金 and 黄金股 are selected in the same scan.
-            continue
-        name = str(row.get("fund_name", ""))
-        family = _family_key(name)
-        if family and family in family_seen and recall_audit_state is None:
-            continue
-        if not name_prefiltered and not _name_matches_direction(name, keywords, sector_label):
-            continue
-        if not _passes_quality(row, as_of_date=as_of_date):
-            continue
-        if not _matches_fund_type_preference(name, fund_type_preference):
-            continue
-        ranked_entry = _with_opportunity(
-            _entry_from_rank(row, sector_label=sector_label, selection_reason="排行筛选"),
-            opportunity,
-        )
-        ranked_entry["sector_match_kind"] = "name"
-        if code in entries_by_code:
-            entries_by_code[code] = _merge_entries(entries_by_code[code], ranked_entry)
-        else:
-            entries_by_code[code] = ranked_entry
 
     if selection_strategy == "with_new_issue":
         for entry in _new_issue_entries_for_sector(
@@ -1464,6 +1422,77 @@ def _sector_candidate_limit(
     return base_limit
 
 
+_CATALOGUE_OVERLAY_FIELDS = (
+    "fund_type",
+    "nav_date",
+    "latest_nav",
+    "established_date",
+    "return_3m_percent",
+    "return_6m_percent",
+    "return_1y_percent",
+    "return_3y_percent",
+)
+
+
+def _overlay_catalogue_on_identity_rows(identity_rows: list[dict]) -> list[dict]:
+    codes = {
+        str(row.get("fund_code") or "").zfill(6)
+        for row in identity_rows
+        if isinstance(row, dict)
+    }
+    catalogue = list_fund_daily_catalogue_by_codes(codes)
+    from app.services.fund_research_profile_store import list_research_profiles_for_codes
+    from app.services.fund_risk_metrics import (
+        apply_risk_metrics_to_row,
+        list_risk_metrics_for_codes,
+    )
+
+    profiles = list_research_profiles_for_codes(codes)
+    risks = list_risk_metrics_for_codes(codes)
+    from app.services.fund_manager_roster import (
+        apply_manager_roster_to_row,
+        list_manager_roster_by_codes,
+    )
+
+    roster = list_manager_roster_by_codes(codes)
+    if not catalogue and not profiles and not risks and not roster:
+        return identity_rows
+    merged_rows: list[dict] = []
+    for row in identity_rows:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("fund_code") or "").zfill(6)
+        extra = catalogue.get(code)
+        extra_p = profiles.get(code)
+        extra_r = risks.get(code)
+        extra_m = roster.get(code)
+        if extra is None and extra_p is None and extra_r is None and not extra_m:
+            merged_rows.append(row)
+            continue
+        item = dict(row)
+        if extra is not None:
+            if extra.get("fund_name") and not item.get("fund_name"):
+                item["fund_name"] = extra["fund_name"]
+            for key in _CATALOGUE_OVERLAY_FIELDS:
+                if item.get(key) is None and extra.get(key) is not None:
+                    item[key] = extra[key]
+            item.setdefault("snapshot_available_at", extra.get("snapshot_available_at"))
+        if extra_p is not None:
+            for key in (
+                "fund_scale_yi",
+                "fund_shares_yi",
+                "fund_manager",
+                "established_date",
+                "fund_scale_basis",
+            ):
+                if item.get(key) is None and extra_p.get(key) is not None:
+                    item[key] = extra_p[key]
+        apply_risk_metrics_to_row(item, extra_r)
+        apply_manager_roster_to_row(item, extra_m)
+        merged_rows.append(item)
+    return merged_rows
+
+
 def _merge_rank_metrics(entry: dict, rank_row: dict | None) -> dict:
     if not rank_row:
         return dict(entry)
@@ -1471,7 +1500,11 @@ def _merge_rank_metrics(entry: dict, rank_row: dict | None) -> dict:
     for key in (
         "return_6m_percent",
         "return_3m_percent",
+        "return_1y_percent",
+        "return_3y_percent",
+        "latest_nav",
         "fund_scale_yi",
+        "fund_manager",
         "fund_type",
         "nav_date",
         "established_date",
@@ -1490,21 +1523,6 @@ def _merge_rank_metrics(entry: dict, rank_row: dict | None) -> dict:
         or rank_row.get("snapshot_available_at")
         or rank_row.get("membership_available_at"),
     )
-    return merged
-
-
-def _merge_entries(primary: dict, ranked: dict) -> dict:
-    merged = dict(primary)
-    for key, value in ranked.items():
-        if key in {"selection_reason", "sector_match_kind", "_sector_match_kind"}:
-            continue
-        if merged.get(key) is None and value is not None:
-            merged[key] = value
-    merged["sector_match_kind"] = max(
-        (_resolve_sector_match_kind(primary), _resolve_sector_match_kind(ranked)),
-        key=_SECTOR_MATCH_STRENGTH.__getitem__,
-    )
-    merged.pop("_sector_match_kind", None)
     return merged
 
 
@@ -1616,6 +1634,11 @@ def _entry_from_rank(
         "return_6m_percent": row.get("return_6m_percent"),
         "return_3m_percent": row.get("return_3m_percent"),
         "fund_scale_yi": row.get("fund_scale_yi"),
+        "fund_manager": row.get("fund_manager"),
+        "fund_managers": row.get("fund_managers"),
+        "manager_career_days": row.get("manager_career_days"),
+        "manager_career_tenure": row.get("manager_career_tenure"),
+        "manager_best_tenure_return_percent": row.get("manager_best_tenure_return_percent"),
         "fund_type": row.get("fund_type"),
         "nav_date": row.get("nav_date"),
         "established_date": row.get("established_date"),
@@ -1771,11 +1794,17 @@ def _with_data_quality_gate(
     status = "eligible"
 
     scale = _num(row.get("fund_scale_yi"))
-    scale_label = "最新估算规模"
+    scale_label = (
+        "季报净资产"
+        if row.get("fund_scale_basis") == "quarterly_net_assets"
+        else "最新估算规模"
+    )
     scale_is_stale = "fund_scale_yi" in stale_fields
     if not scale_is_stale and scale is not None and scale < _HARD_MIN_SCALE_YI:
         status = "excluded"
-        reasons.append(f"{scale_label}低于0.5亿元，清盘与流动性风险偏高")
+        reasons.append(
+            f"{scale_label}低于{_HARD_MIN_SCALE_LABEL}，清盘与流动性风险偏高"
+        )
 
     established = _parse_iso_date(row.get("established_date"))
     if (
@@ -1784,7 +1813,9 @@ def _with_data_quality_gate(
         and ((as_of_date or date.today()) - established).days < _MIN_HISTORY_DAYS
     ):
         status = "excluded"
-        reasons.append("成立不足90天，净值样本不足以判断近期趋势")
+        reasons.append(
+            f"成立不足{_MIN_HISTORY_LABEL}，净值样本不足以判断近期趋势"
+        )
 
     _ = discovery_strategy
     nav_date = _parse_iso_date(row.get("nav_date"))
@@ -1878,7 +1909,7 @@ def _quality_metrics_from_nav_history(
     effective_trade_date: str,
     observed_at: str,
 ) -> dict[str, object]:
-    """从已拉取的短窗口净值补近 3 月收益；不再回填一年收益或一年回撤。"""
+    """从已拉取的净值序列取近端窗口补近 3 月收益；不回填一年收益或一年回撤。"""
 
     points = list(getattr(history, "points", None) or [])
     if len(points) < _NAV_QUALITY_MIN_POINTS:

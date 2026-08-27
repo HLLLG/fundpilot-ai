@@ -386,3 +386,24 @@ python scripts/capture_sector_direction_states.py --backfill-days 6
 
 诚实前提：本仓库沙箱到东财 `push2his` 的出站被阻断（与 `run_sector_direction_backtest.py` 同一
 处划界）。受限环境下捕获会以趋势证据 0 收场并返回非零退出码，而不是假装成功。
+
+---
+
+## 开放式基金规模/经理档案刷新
+
+`fund_research_profile` 由后台 worker 保活（空表或超过 24h TTL 才拉新浪四张全表），
+同一循环也整包写入 `fund_manager_roster`（天天基金经理累计从业天数）。
+生产另有 `.github/workflows/fund-research-profile-refresh.yml` 每交易日 21:40
+（Asia/Shanghai）强制刷新。荐基请求路径只 JOIN，不再拉这些全表。
+
+```bash
+# 强制整包刷新（生产定时任务默认这样）
+python scripts/refresh_fund_research_profiles.py
+python scripts/refresh_fund_research_profiles.py --json var/fund_research_profile_refresh.json
+
+# 仅在空表或过期时拉源（与 worker 循环同一口径）
+python scripts/refresh_fund_research_profiles.py --if-stale
+```
+
+退出码 0 = 表里已有可用快照（本轮新写入，或拉源失败但上一份仍在）；1 = 表仍为空。
+规模口径：能取到报告期净值时写 `报告期单位净值 × 最近总份额 / 1e8`（`quarterly_net_assets`）；否则用新浪当日净值 × 上季份额（`nav_times_latest_shares`）。算出来立刻写库；荐基富化也会立刻覆盖表行。

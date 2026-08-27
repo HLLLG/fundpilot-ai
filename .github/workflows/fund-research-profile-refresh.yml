@@ -1,0 +1,74 @@
+name: Fund Research Profile Refresh
+
+# 每交易日把新浪四张开放式大类表整包写入 fund_research_profile。
+#
+# 为什么必须是定时任务：规模/经理不能等用户手动跑一次发现基金才拉。
+# 四张全表大约 90 秒，东财经理大全大约再 1～2 分钟；放进荐基请求会拖住扫描。
+# 表空时请求路径现在只 JOIN，不再阻塞拉源。
+#
+# 21:40（Asia/Shanghai）：收盘后净值与份额更可能已结算；同时避开 19:10 的
+# 方向状态捕获和 20:30 的 Factor IC Universe Capture。
+#
+# 整包 DELETE + INSERT，失败保留上一份快照。节假日若落在周一到周五，
+# 当晚这次运行会用当时能读到的新浪横截面重写——数值等价或更新，不构成污染。
+on:
+  schedule:
+    - cron: "40 21 * * 1-5"
+      timezone: "Asia/Shanghai"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fund-research-profile-refresh-production
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: vars.LIGHTHOUSE_DEPLOY_ENABLED == 'true' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - name: Configure Lighthouse SSH identity
+        env:
+          LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
+          LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
+          LIGHTHOUSE_SSH_PRIVATE_KEY: ${{ secrets.LIGHTHOUSE_SSH_PRIVATE_KEY }}
+          LIGHTHOUSE_KNOWN_HOSTS: ${{ secrets.LIGHTHOUSE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          SSH_KEY_PATH=$RUNNER_TEMP/fundpilot-research-profile-key
+          SSH_KNOWN_HOSTS_PATH=$RUNNER_TEMP/fundpilot-research-profile-known-hosts
+          printf 'SSH_KEY_PATH=%s\nSSH_KNOWN_HOSTS_PATH=%s\n' \
+            "$SSH_KEY_PATH" "$SSH_KNOWN_HOSTS_PATH" >> "$GITHUB_ENV"
+          [[ -n "$LIGHTHOUSE_HOST" ]] || { echo "::error::LIGHTHOUSE_HOST is empty"; exit 1; }
+          [[ -n "$LIGHTHOUSE_USER" ]] || { echo "::error::LIGHTHOUSE_USER is empty"; exit 1; }
+          [[ -n "$LIGHTHOUSE_SSH_PRIVATE_KEY" ]] || { echo "::error::LIGHTHOUSE_SSH_PRIVATE_KEY is empty"; exit 1; }
+          [[ -n "$LIGHTHOUSE_KNOWN_HOSTS" ]] || { echo "::error::LIGHTHOUSE_KNOWN_HOSTS is empty"; exit 1; }
+          printf '%s\n' "$LIGHTHOUSE_SSH_PRIVATE_KEY" | tr -d '\r' > "$SSH_KEY_PATH"
+          printf '%s\n' "$LIGHTHOUSE_KNOWN_HOSTS" | tr -d '\r' > "$SSH_KNOWN_HOSTS_PATH"
+          chmod 600 "$SSH_KEY_PATH" "$SSH_KNOWN_HOSTS_PATH"
+          ssh-keygen -y -f "$SSH_KEY_PATH" >/dev/null
+
+      - name: Refresh open-end fund research profiles
+        id: refresh
+        env:
+          LIGHTHOUSE_HOST: ${{ secrets.LIGHTHOUSE_HOST }}
+          LIGHTHOUSE_USER: ${{ secrets.LIGHTHOUSE_USER }}
+        run: |
+          set -euo pipefail
+          target="${LIGHTHOUSE_USER}@${LIGHTHOUSE_HOST}"
+          ssh_options=(-i "$SSH_KEY_PATH" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$SSH_KNOWN_HOSTS_PATH")
+          ssh "${ssh_options[@]}" "$target" \
+            "cd /srv/fundpilot/repo && docker compose --env-file .env.production -f docker-compose.production.yml exec -T api python scripts/refresh_fund_research_profiles.py"
+
+      - name: Record refresh contract
+        if: always()
+        run: |
+          echo "Refresh step outcome: ${{ steps.refresh.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "口径：新浪开放式股票/混合/债券/QDII 四张全表整包替换 fund_research_profile。" >> "$GITHUB_STEP_SUMMARY"
+          echo "口径：规模优先季报净资产；没有报告期净值时用当日净值×上季份额兜底。" >> "$GITHUB_STEP_SUMMARY"
+          echo "口径：同一脚本整包写入 fund_manager_roster（东财经理累计从业天数）。" >> "$GITHUB_STEP_SUMMARY"
+          echo "口径：荐基请求路径只 JOIN，不再拉这四张表或经理全表；表空时脚本返回非零。" >> "$GITHUB_STEP_SUMMARY"

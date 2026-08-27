@@ -92,9 +92,8 @@ from app.services.trading_session import build_trading_session
 logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, str], None]
 
-# 自动扫描的方向名额。用户手选的关注方向在此之外额外占位，见
-# `_score_select_and_persist_directions`。
-_AUTO_DIRECTION_SLOTS = 8
+# 扫描方向总数：用户手选 + 自动补齐合计 6 个。关注方向占席，不再另加名额。
+_DIRECTION_SLOT_TOTAL = 6
 # 每个方向的最终候选配额，以及候选池基础容量。每个关注方向按 `per_sector` 额外扩容，
 # 避免新增的关注方向把排序靠后的自动方向挤出板块配额。
 _PER_SECTOR_CANDIDATES = 3
@@ -281,7 +280,7 @@ def run_discovery_impl(
         target_sectors,
         keyword="decision_at",
         decision_at=decision_at,
-        exclude_codes=held_codes,
+        exclude_codes=None,
         fund_type_preference="any",
         selection_strategy=selection_strategy,
         discovery_strategy=request.discovery_strategy,
@@ -724,7 +723,7 @@ def _score_select_and_persist_directions(
 ) -> list[dict]:
     """打分 → 跨日滞回 → 选择 → 落盘当日状态。
 
-    滞回必须在**选择之前**生效：`entry_state` 是排序的第一优先级，如果先选 8 个再改状态，
+    滞回必须在**选择之前**生效：`entry_state` 是排序的第一优先级，如果先选再改状态，
     展示出来的状态和入选依据就是两套东西。
     """
     from app.services.sector_direction_state import (
@@ -790,11 +789,11 @@ def _score_select_and_persist_directions(
     ]
     return select_scored_sector_opportunities(
         selectable,
-        # 关注方向是**额外**分析，不占用自动扫描的方向名额，否则选满 3 个关注方向就会
-        # 把市场自动覆盖面从 8 个压到 5 个。
-        max_total=_AUTO_DIRECTION_SLOTS + len(pinned_labels),
-        momentum_slots=4,
-        setup_slots=4,
+        # 关注方向占 6 个总席，剩余席位给自动方向。pin 只保证关注方向不被
+        # 相关性去重挤掉，不再额外加席。
+        max_total=_DIRECTION_SLOT_TOTAL,
+        momentum_slots=3,
+        setup_slots=3,
         return_series_by_label=_return_series_from_positions(sector_position_by_label),
         pinned_labels=pinned_labels,
     )

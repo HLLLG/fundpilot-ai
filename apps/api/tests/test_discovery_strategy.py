@@ -218,7 +218,17 @@ def test_opportunity_first_recall_selects_elastic_candidate_before_nav_enrichmen
     )
     monkeypatch.setattr(
         "app.services.discovery_candidate_pool.list_fund_primary_sectors_by_sector_names",
-        lambda *_args, **_kwargs: [],
+        lambda *_args, **_kwargs: [
+            {
+                "fund_code": row["fund_code"],
+                "fund_name": row["fund_name"],
+                "sector_name": "半导体",
+                "source": "holdings_infer",
+                "identity_status": "verified",
+                "confidence": 0.9,
+            }
+            for row in rows
+        ],
     )
     monkeypatch.setattr(
         "app.services.discovery_candidate_pool._attach_descriptive_peer_research",
@@ -236,6 +246,60 @@ def test_opportunity_first_recall_selects_elastic_candidate_before_nav_enrichmen
 
     assert selected[0]["fund_code"] == "100002"
     assert selected[0]["recall_upside_score"] > 0
+
+
+def test_held_fund_stays_in_recall_when_exclude_codes_empty(monkeypatch):
+    rows = [
+        {
+            "fund_code": "015945",
+            "fund_name": "易方达国防军工混合C",
+            "fund_scale_yi": 20.0,
+            "return_3m_percent": 8.0,
+            "return_6m_percent": 12.0,
+            "established_date": "2018-01-01",
+        }
+    ]
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.list_fund_primary_sectors",
+        lambda: [],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool.list_fund_primary_sectors_by_sector_names",
+        lambda *_args, **_kwargs: [
+            {
+                "fund_code": "015945",
+                "fund_name": "易方达国防军工混合C",
+                "sector_name": "军工",
+                "source": "holdings_infer",
+                "identity_status": "verified",
+                "confidence": 0.9,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "app.services.discovery_candidate_pool._attach_descriptive_peer_research",
+        lambda *_args, **_kwargs: None,
+    )
+
+    kept = build_candidate_pool(
+        ["军工"],
+        exclude_codes=None,
+        per_sector=1,
+        pool_cap=1,
+        fetch_rank=lambda limit: rows,
+        fetch_new_funds=lambda limit: [],
+    )
+    dropped = build_candidate_pool(
+        ["军工"],
+        exclude_codes={"015945"},
+        per_sector=1,
+        pool_cap=1,
+        fetch_rank=lambda limit: rows,
+        fetch_new_funds=lambda limit: [],
+    )
+
+    assert kept[0]["fund_code"] == "015945"
+    assert dropped == []
 
 
 def test_fund_entry_position_recognizes_repaired_pullback():

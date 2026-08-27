@@ -174,14 +174,18 @@ def test_v24_drops_unused_users_cloudbase_uid() -> None:
     assert "cloudbaseUid" not in columns
     assert connection.execute(
         "SELECT version FROM schema_meta WHERE id = 1"
-    ).fetchone()[0] == 24
+    ).fetchone()[0] == 27
+    assert connection.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='table' AND name='fund_daily_catalogue'"
+    ).fetchone() is not None
     assert connection.execute(
         "SELECT userAccount FROM users WHERE userAccount = 'a@test'"
     ).fetchone() is not None
 
 
 def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
-    assert SCHEMA_VERSION == 24
+    assert SCHEMA_VERSION == 27
     connection = sqlite3.connect(":memory:")
     connection.execute(
         "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
@@ -198,6 +202,190 @@ def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
         "WHERE type='table' AND name='factor_ic_snapshots'"
     ).fetchone()
     assert table is not None
+
+
+def test_v25_creates_fund_daily_catalogue() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
+    )
+    connection.execute("INSERT INTO schema_meta VALUES (1, 24)")
+
+    run_migrations(connection)
+
+    assert connection.execute(
+        "SELECT version FROM schema_meta WHERE id = 1"
+    ).fetchone()[0] == 27
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(fund_daily_catalogue)")
+    }
+    assert {
+        "fund_code",
+        "fund_name",
+        "fund_type",
+        "source_fund_type",
+        "nav_date",
+        "latest_nav",
+        "daily_growth_percent",
+        "established_date",
+        "return_3m_percent",
+        "return_6m_percent",
+        "return_1y_percent",
+        "return_3y_percent",
+        "rank_enriched",
+        "snapshot_available_at",
+        "source",
+    } <= columns
+
+
+def test_v26_creates_research_tables() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
+    )
+    connection.execute("INSERT INTO schema_meta VALUES (1, 25)")
+
+    run_migrations(connection)
+
+    assert connection.execute(
+        "SELECT version FROM schema_meta WHERE id = 1"
+    ).fetchone()[0] == 27
+    profile_columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(fund_research_profile)")
+    }
+    risk_columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(fund_risk_metrics)")
+    }
+    assert {
+        "fund_code",
+        "fund_name",
+        "fund_shares_yi",
+        "fund_scale_yi",
+        "fund_scale_basis",
+        "established_date",
+        "fund_manager",
+        "snapshot_available_at",
+        "source",
+    } <= profile_columns
+    assert {
+        "fund_code",
+        "sharpe_1y",
+        "sharpe_3y",
+        "max_drawdown_1y_percent",
+        "nav_as_of",
+        "schema_version",
+        "snapshot_available_at",
+        "source",
+    } <= risk_columns
+    roster_columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(fund_manager_roster)")
+    }
+    assert {
+        "fund_code",
+        "manager_id",
+        "manager_name",
+        "career_days",
+        "current_best_tenure_return_percent",
+        "snapshot_available_at",
+        "source",
+    } <= roster_columns
+    assert "career_annual_return_percent" not in roster_columns
+
+
+def test_existing_v26_profile_table_gains_shares_column() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
+    )
+    connection.execute("INSERT INTO schema_meta VALUES (1, 26)")
+    connection.execute(
+        """
+        CREATE TABLE fund_research_profile (
+            fund_code TEXT NOT NULL PRIMARY KEY,
+            fund_name TEXT,
+            fund_category TEXT,
+            latest_nav REAL,
+            fund_scale_yi REAL,
+            fund_scale_basis TEXT,
+            established_date TEXT,
+            fund_manager TEXT,
+            profile_updated_at TEXT,
+            snapshot_available_at TEXT NOT NULL,
+            source TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE fund_risk_metrics (
+            fund_code TEXT NOT NULL PRIMARY KEY,
+            sharpe_1y REAL,
+            sharpe_3y REAL,
+            max_drawdown_1y_percent REAL,
+            nav_as_of TEXT,
+            nav_point_count INTEGER,
+            schema_version TEXT NOT NULL,
+            snapshot_available_at TEXT NOT NULL,
+            source TEXT NOT NULL
+        )
+        """
+    )
+
+    run_migrations(connection)
+
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(fund_research_profile)")
+    }
+    assert "fund_shares_yi" in columns
+    roster_columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(fund_manager_roster)")
+    }
+    assert {"fund_code", "manager_id", "career_days"} <= roster_columns
+    assert "career_annual_return_percent" not in roster_columns
+    assert connection.execute(
+        "SELECT version FROM schema_meta WHERE id = 1"
+    ).fetchone()[0] == 27
+
+
+def test_existing_roster_drops_unused_annual_return_column() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
+    )
+    connection.execute("INSERT INTO schema_meta VALUES (1, 27)")
+    connection.execute(
+        """
+        CREATE TABLE fund_manager_roster (
+            fund_code TEXT NOT NULL,
+            manager_id TEXT NOT NULL,
+            manager_name TEXT NOT NULL,
+            company TEXT,
+            career_days INTEGER,
+            career_annual_return_percent REAL,
+            current_best_tenure_return_percent REAL,
+            current_best_fund_code TEXT,
+            current_aum_yi REAL,
+            snapshot_available_at TEXT NOT NULL,
+            source TEXT NOT NULL,
+            PRIMARY KEY (fund_code, manager_id)
+        )
+        """
+    )
+
+    run_migrations(connection)
+
+    roster_columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(fund_manager_roster)")
+    }
+    assert "career_annual_return_percent" not in roster_columns
+    assert {"fund_code", "manager_id", "career_days"} <= roster_columns
 
 
 def test_current_schema_still_ensures_sector_direction_state_table() -> None:
@@ -253,7 +441,7 @@ def test_v19_and_v20_add_only_performance_metadata_to_operational_tables() -> No
 
     assert connection.execute(
         "SELECT version FROM schema_meta WHERE id = 1"
-    ).fetchone()[0] == 24
+    ).fetchone()[0] == 27
     report_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(reports)")
     }

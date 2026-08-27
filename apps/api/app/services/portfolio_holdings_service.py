@@ -314,9 +314,6 @@ def build_fast_snapshot_holdings_response() -> dict | None:
     holdings = without_inactive_holdings(without_test_holdings(holdings))
     if not holdings:
         return None
-    from app.services.fund_primary_sector_service import repair_stale_cross_market_sectors
-
-    holdings = repair_stale_cross_market_sectors(holdings)
     from app.services.trading_session import build_trading_session
 
     session = build_trading_session()
@@ -525,6 +522,8 @@ def apply_authoritative_sector_labels(holdings: list[Holding]) -> list[Holding]:
         return holdings
 
     from app.services.fund_primary_sector_service import (
+        _clear_holding_associated_sector,
+        is_name_or_llm_associated_sector_source,
         is_unthemed_allocation_fund,
         strip_unthemed_allocation_associated_sector,
     )
@@ -534,8 +533,12 @@ def apply_authoritative_sector_labels(holdings: list[Holding]) -> list[Holding]:
         if is_unthemed_allocation_fund(holding.fund_name):
             aligned.append(strip_unthemed_allocation_associated_sector(holding))
             continue
+        raw_row = identity_rows.get(holding.fund_code or "")
+        if is_name_or_llm_associated_sector_source(str((raw_row or {}).get("source") or "")):
+            aligned.append(_clear_holding_associated_sector(holding))
+            continue
         row = _restore_locked_cxo_identity(
-            identity_rows.get(holding.fund_code or ""),
+            raw_row,
             code=holding.fund_code or "",
             fund_name=holding.fund_name,
         )

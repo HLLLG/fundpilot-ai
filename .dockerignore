@@ -31,6 +31,7 @@ apps/api/.venv
 apps/api/tests
 apps/api/scripts/*
 !apps/api/scripts/capture_sector_direction_states.py
+!apps/api/scripts/refresh_fund_research_profiles.py
 !apps/api/scripts/rescan_cpo_cxo_targets.py
 !apps/api/scripts/diagnose_sector_vehicles.py
 !apps/api/scripts/rerun_holdings_primary_sectors.py

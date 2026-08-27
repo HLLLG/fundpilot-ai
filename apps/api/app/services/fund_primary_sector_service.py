@@ -28,11 +28,9 @@ from app.services.fund_profile import (
     _is_valid_sector_label,
     infer_intraday_index_from_fund_name,
 )
-from app.services.fund_type_classification import has_positive_qdii_marker
 from app.services.sector_canonical import get_canonical_sector
 from app.services.sector_labels import (
     fund_name_has_registered_theme,
-    infer_sector_label_from_fund_name,
     infer_semantic_sector_from_fund_name,
     normalize_sector_label,
 )
@@ -73,7 +71,8 @@ _HIGH_TRUST_SECTOR_SOURCES = frozenset({"ocr_detail", "manual"})
 # 修正后必须重新校验，否则旧标签会一直挡住正确结果（用户行没有 TTL）。
 _BENCHMARK_DERIVED_SOURCES = frozenset({"benchmark_index", "precompute_benchmark"})
 _HOLDINGS_INFER_SOURCES = frozenset({"holdings_infer", "precompute_holdings"})
-# 持仓页「关联板块」只展示合同跟踪 / 名称主题 / 手工档案。
+# 持仓页「关联板块」只展示可核验来源：OCR/手动、合同跟踪基准、过门的季报穿透。
+# 名称推断 / LLM 猜测不再赋值，也不再把旧脏行投影到页面。
 # 名称没有主题的灵活配置 / 滚动持有：关联板块本身不确定，身份表也不许写死。
 _PAGE_ASSOCIATED_SECTOR_SOURCES = frozenset(
     {
@@ -81,17 +80,22 @@ _PAGE_ASSOCIATED_SECTOR_SOURCES = frozenset(
         "manual",
         "benchmark_index",
         "precompute_benchmark",
-        "semantic_name",
-        "name_infer",
     }
 )
 _RESEARCH_ASSOCIATED_SECTOR_SOURCES = frozenset(
     {
         "holdings_infer",
         "precompute_holdings",
-        "llm_infer",
-        "semantic_name_freeform",
         "benchmark_freeform",
+    }
+)
+_NAME_OR_LLM_ASSOCIATED_SECTOR_SOURCES = frozenset(
+    {
+        "name_infer",
+        "semantic_name",
+        "semantic_name_freeform",
+        "llm_infer",
+        "precompute_llm",
     }
 )
 
@@ -189,14 +193,22 @@ class PrimarySectorBatchContext:
         self.global_rows_by_code.pop(code, None)
 
 
-def _is_cross_market_theme_fund(fund_name: str | None) -> bool:
-    if not fund_name:
-        return False
-    return (
-        has_positive_qdii_marker(fund_name)
-        or "全球" in fund_name
-        or "海外" in fund_name
-    )
+def _is_name_or_llm_associated_sector_source(source: str | None) -> bool:
+    return str(source or "") in _NAME_OR_LLM_ASSOCIATED_SECTOR_SOURCES
+
+
+def is_name_or_llm_associated_sector_source(source: str | None) -> bool:
+    return _is_name_or_llm_associated_sector_source(source)
+
+
+def _usable_identity_row(row: Mapping[str, Any] | None) -> dict | None:
+    """名称/LLM 旧行当作没有身份，避免继续挡住基准或穿透。"""
+
+    if not row:
+        return None
+    if _is_name_or_llm_associated_sector_source(str(row.get("source") or "")):
+        return None
+    return dict(row)
 
 
 def _is_passive_index_fund_name(fund_name: str | None) -> bool:
@@ -379,7 +391,7 @@ def _is_fund_name_residue_label(fund_name: str | None, sector_name: str | None) 
     典型场景：总览页 OCR/第三方展示把"中航机遇领航混合发起C"直接截断展示为
     "中航机遇领航"。这类值格式上能通过 `_is_valid_sector_label` 校验（看起来像
     合法短标签），但其实只是基金自身名字的前缀，不是任何行业/主题分类。
-    一旦被当作高置信度来源写入，会永久挡住持仓穿透 / LLM 兜底给出的正确结果
+    一旦被当作高置信度来源写入，会永久挡住持仓穿透给出的正确结果
     （因为后续所有"当前板块是否已存在"的判断都会认为它"已经有值"而跳过重新推断）。
     """
     if not fund_name or not sector_name:
@@ -515,24 +527,6 @@ def _is_trustworthy_sector_label(fund_name: str | None, sector_name: str | None)
     return True
 
 
-def _semantic_record_from_candidate(
-    code: str,
-    fund_name: str,
-    candidate,
-) -> PrimarySectorRecord:
-    return PrimarySectorRecord(
-        fund_code=code,
-        sector_name=candidate.sector_name,
-        intraday_index_name=(
-            infer_intraday_index_from_fund_name(fund_name)
-            if candidate.quote_key
-            else None
-        ),
-        source=candidate.source or "semantic_name",
-        confidence=candidate.confidence,
-    )
-
-
 def _usable_intraday_index_name(
     intraday_index_name: str | None, sector_name: str | None
 ) -> str | None:
@@ -572,31 +566,8 @@ def _with_tracking_index_display(record: PrimarySectorRecord) -> PrimarySectorRe
     )
 
 
-def _should_prefer_semantic_before_market_sources(fund_name: str | None, candidate) -> bool:
-    if candidate is None:
-        return False
-    if not _is_cross_market_theme_fund(fund_name):
-        return False
-    return float(candidate.confidence or 0) >= 0.55
-
-
 def _record_should_override_holding_sector(holding: Holding, record: PrimarySectorRecord) -> bool:
-    semantic_candidate = (
-        infer_semantic_sector_from_fund_name(holding.fund_name) if holding.fund_name else None
-    )
-    prefer_semantic = _should_prefer_semantic_before_market_sources(
-        holding.fund_name, semantic_candidate
-    )
-    if (
-        prefer_semantic
-        and record.source in {"benchmark_index", "benchmark_freeform"}
-        and semantic_candidate is not None
-        and normalize_sector_label(record.sector_name)
-        != normalize_sector_label(semantic_candidate.sector_name)
-    ):
-        # 跨市场主题基金（QDII/全球/海外）：业绩基准抠出来的往往只是境内细分行业
-        # （如"机械设备"），不如基金自身名称主题（如"全球高端制造"）准确，不应该
-        # 用它反复覆盖/抢占已经更贴切的主题标签，否则两个来源会来回"打架"。
+    if _is_name_or_llm_associated_sector_source(record.source):
         return False
     if record.source in {
         "manual",
@@ -606,19 +577,12 @@ def _record_should_override_holding_sector(holding: Holding, record: PrimarySect
         "benchmark_freeform",
     }:
         return True
-    if (
-        record.source in {"semantic_name", "semantic_name_freeform"}
-        and prefer_semantic
-        and float(record.confidence or 0) >= 0.55
-    ):
-        return True
-    # 其余来源（holdings_infer / llm_infer / semantic_name_freeform 等）：只有确实比
-    # "当前 sector_name 记录在案的来源"更可信时才覆盖。这样持仓穿透/LLM 兜底（结合重仓股）
+    # 其余来源（持仓穿透等）：只有确实比当前身份行更可信时才覆盖。这样季报穿透
     # 才能纠正历史上由 alipay_overview、freeform 猜测等低置信度来源写入、但格式上
     # "看起来合法"从而被 _is_valid_sector_label 永久放行的错误标签
     # （例如把"中航机遇领航"这种基金自身营销短语误当成板块）。
     if holding.fund_code and holding.fund_code != "000000":
-        existing_row = get_fund_primary_sector(holding.fund_code)
+        existing_row = _usable_identity_row(get_fund_primary_sector(holding.fund_code))
         existing_source = str(existing_row.get("source") or "") if existing_row else ""
         existing_sector_name = existing_row.get("sector_name") if existing_row else None
     else:
@@ -633,34 +597,9 @@ def _record_should_override_holding_sector(holding: Holding, record: PrimarySect
     return new_priority > old_priority
 
 
-def repair_stale_cross_market_sector(holding: Holding) -> Holding:
-    """纯内存、零网络/数据库开销地修正 QDII/全球/海外基金的板块名。
-
-    仅依据基金名称做语义推断，用于冷启动快照直出路径（不能有网络往返），
-    修正诸如"华夏全球科技先锋混合(QDII)C"被历史 OCR 误记为「电子」等 A 股板块的问题。
-    """
-    candidate = (
-        infer_semantic_sector_from_fund_name(holding.fund_name)
-        if _is_cross_market_theme_fund(holding.fund_name)
-        else None
-    )
-    if candidate is None or float(candidate.confidence or 0) < 0.55:
-        return holding
-    if holding.sector_name == candidate.sector_name:
-        return holding
-    fields: dict[str, str | None] = {"sector_name": candidate.sector_name}
-    if candidate.quote_key:
-        fields["intraday_index_name"] = infer_intraday_index_from_fund_name(holding.fund_name)
-    return holding.model_copy(update=fields)
-
-
-def repair_stale_cross_market_sectors(holdings: list[Holding]) -> list[Holding]:
-    return [repair_stale_cross_market_sector(item) for item in holdings]
-
-
 # 名称残留（如"中航机遇领航"）一旦被写成 alipay_overview，会因为数字优先级
-# （50）高于 llm_infer/holdings_infer 而永久挡住更可信的纠正结果。这里给残留
-# 标签一个远低于 llm_infer 的"有效优先级"，让持仓穿透/LLM 兜底始终能覆盖它。
+# （50）高于 holdings_infer 而永久挡住更可信的纠正结果。这里给残留标签一个
+# 远低于穿透的"有效优先级"，让季报穿透始终能覆盖它。
 _RESIDUE_LABEL_EFFECTIVE_PRIORITY = 5
 
 
@@ -737,7 +676,7 @@ def upsert_primary_sector_from_profile(
         profile.fund_name, profile.sector_name
     ):
         # 总览页展示的只是基金名称残留（非真实主题），不值得当作可信来源写入，
-        # 避免其数字优先级挡住后续持仓穿透/LLM 兜底给出的正确结果。
+        # 避免其数字优先级挡住后续持仓穿透给出的正确结果。
         return
     existing = (
         batch_context.user_row(profile.fund_code)
@@ -805,7 +744,6 @@ def resolve_primary_sector(
     fund_code: str,
     *,
     fund_name: str | None = None,
-    allow_name_infer: bool = False,
     fetch_benchmark: bool = True,
     fetch_holdings_infer: bool = False,
     batch_context: PrimarySectorBatchContext | None = None,
@@ -823,36 +761,15 @@ def resolve_primary_sector(
         )
         return None
 
-    # 跨市场主题基金（QDII/全球/海外）的"名称主题优先"判断需要始终生效，不受
-    # allow_name_infer 影响——否则慢路径（fetch_holdings_infer=True 时习惯性
-    # 传 allow_name_infer=False）算出的业绩基准板块和快路径算出的名称主题会
-    # 在两次刷新之间来回打架（如"机械设备"⇄"全球高端制造"反复横跳）。
-    # allow_name_infer 仍然用于控制"弱"名称推断（非跨市场基金）的启用与否。
-    semantic_candidate = (
-        infer_semantic_sector_from_fund_name(fund_name)
-        if fund_name and (allow_name_infer or _is_cross_market_theme_fund(fund_name))
-        else None
-    )
-
-    row = (
+    row = _usable_identity_row(
         batch_context.user_row(code)
         if batch_context is not None
         else get_fund_primary_sector(code)
     )
     if row and _is_valid_sector_label(row.get("sector_name")):
         source = str(row.get("source") or "")
-        if source == "manual":
+        if source == "manual" or source in _HIGH_TRUST_SECTOR_SOURCES:
             return _record_from_row(row)
-        if source in _HIGH_TRUST_SECTOR_SOURCES:
-            if (
-                _should_prefer_semantic_before_market_sources(fund_name, semantic_candidate)
-                and row.get("sector_name") != semantic_candidate.sector_name
-            ):
-                return _semantic_record_from_candidate(code, fund_name or "", semantic_candidate)
-            return _record_from_row(row)
-
-    if _should_prefer_semantic_before_market_sources(fund_name, semantic_candidate):
-        return _semantic_record_from_candidate(code, fund_name or "", semantic_candidate)
 
     # 已有/新拉取的持仓穿透证据优先于第三方业绩基准。基准文本对主动基金只是
     # 业绩比较参考，不应抢占“主要关联板块”。被动指数基金相反：合同跟踪指数
@@ -875,7 +792,7 @@ def resolve_primary_sector(
         if _is_trustworthy_sector_label(fund_name, row.get("sector_name")):
             return _record_from_row(row)
 
-    global_row = (
+    global_row = _usable_identity_row(
         batch_context.fresh_global_row(code)
         if batch_context is not None
         else load_fresh_global_sector(code)
@@ -945,23 +862,6 @@ def resolve_primary_sector(
             if repaired is not None:
                 return repaired
 
-    # 存量行是名称残留（如"中航机遇领航"），且规则/持仓穿透都推不出更好结果时，
-    # 再给 LLM 兜底一次机会——否则残留标签会在没有 fetch_holdings_infer 的
-    # 调用里（如 profile 之外的路径）被反复当作"已经有值"而永远无法纠正。
-    if (
-        fetch_holdings_infer
-        and fund_name
-        and row
-        and _is_valid_sector_label(row.get("sector_name"))
-    ):
-        llm_record = _resolve_from_llm_infer(
-            code,
-            fund_name,
-            batch_context=batch_context,
-        )
-        if llm_record is not None:
-            return llm_record
-
     profile = (
         batch_context.profile(code)
         if batch_context is not None
@@ -977,34 +877,6 @@ def resolve_primary_sector(
                 source="alipay_overview",
                 confidence=0.9,
             )
-
-    if allow_name_infer and fund_name:
-        candidate = semantic_candidate
-        if candidate is not None:
-            return _semantic_record_from_candidate(code, fund_name, candidate)
-
-        inferred = infer_sector_label_from_fund_name(fund_name)
-        if inferred and get_canonical_sector(inferred):
-            return PrimarySectorRecord(
-                fund_code=code,
-                sector_name=inferred,
-                intraday_index_name=infer_intraday_index_from_fund_name(fund_name),
-                source="name_infer",
-                confidence=0.35,
-            )
-
-    # 规则全部推不出主题时的最后一道兜底：借用 LLM 判断主题短标签。
-    # 复用 fetch_holdings_infer 作为"当前调用方愿意接受网络时延"的信号——
-    # 与持仓穿透（同样发子进程/网络请求）共享同一开关，不新增参数、也不会
-    # 悄悄拖慢默认的冷启动/低时延路径。
-    if fetch_holdings_infer and allow_name_infer and fund_name:
-        llm_record = _resolve_from_llm_infer(
-            code,
-            fund_name,
-            batch_context=batch_context,
-        )
-        if llm_record is not None:
-            return llm_record
     return None
 
 
@@ -1012,7 +884,6 @@ def primary_sector_fields_for_holding(
     holding: Holding,
     *,
     fallback_code: str | None = None,
-    allow_name_infer: bool = False,
     fetch_benchmark: bool = True,
     fetch_holdings_infer: bool = False,
     batch_context: PrimarySectorBatchContext | None = None,
@@ -1025,7 +896,6 @@ def primary_sector_fields_for_holding(
     record = resolve_primary_sector(
         code,
         fund_name=holding.fund_name,
-        allow_name_infer=allow_name_infer,
         fetch_benchmark=fetch_benchmark,
         fetch_holdings_infer=fetch_holdings_infer,
         batch_context=batch_context,
@@ -1048,13 +918,11 @@ def apply_primary_sector_to_holding(
     holding: Holding,
     *,
     fetch_benchmark: bool = True,
-    allow_name_infer: bool = True,
     batch_context: PrimarySectorBatchContext | None = None,
 ) -> Holding:
     return _apply_primary_sector_to_holding_impl(
         holding,
         fetch_benchmark=fetch_benchmark,
-        allow_name_infer=allow_name_infer,
         batch_context=batch_context,
     )
 
@@ -1063,7 +931,6 @@ def _apply_primary_sector_to_holding_impl(
     holding: Holding,
     *,
     fetch_benchmark: bool = True,
-    allow_name_infer: bool = True,
     batch_context: PrimarySectorBatchContext | None = None,
 ) -> Holding:
     if holding.sector_name and not _is_trustworthy_sector_label(
@@ -1071,24 +938,12 @@ def _apply_primary_sector_to_holding_impl(
     ):
         holding = holding.model_copy(update={"sector_name": None})
 
-    from app.services.sector_labels import infer_sector_label_from_fund_name
-
-    inferred = infer_sector_label_from_fund_name(holding.fund_name)
-    if (
-        inferred
-        and holding.sector_name == inferred
-        and holding.fund_name
-        and "指数" in holding.fund_name
-    ):
-        holding = holding.model_copy(update={"sector_name": None, "intraday_index_name": None})
-
     code = holding.fund_code if holding.fund_code != "000000" else ""
     record = None
     if code:
         record = resolve_primary_sector(
             code,
             fund_name=holding.fund_name,
-            allow_name_infer=allow_name_infer,
             fetch_benchmark=fetch_benchmark,
             batch_context=batch_context,
         )
@@ -1115,12 +970,6 @@ def _apply_primary_sector_to_holding_impl(
             return updated
 
     if _is_valid_sector_label(holding.sector_name):
-        if holding.fund_code and holding.fund_code != "000000":
-            upsert_primary_sector_from_holding(
-                holding,
-                source="alipay_overview",
-                batch_context=batch_context,
-            )
         return holding
 
     if record is None:
@@ -1383,43 +1232,26 @@ def associated_sector_is_page_visible(
 ) -> bool:
     """持仓页是否展示该关联板块。
 
-    合同跟踪、名称主题、行业股票的重仓穿透可以展示；012200 这类灵活配置
-    上的研究标签不展示，对齐养基宝「暂无」。
+    只认 OCR/手动、合同跟踪基准，以及过门的季报穿透。
+    名称推断 / LLM 猜测即使碰巧和基金名对得上也不展示。
+    012200 这类灵活配置上的研究标签不展示，对齐养基宝「暂无」。
     """
 
     if not _is_valid_sector_label(sector_name):
         return False
     if _is_unthemed_allocation_fund(fund_name):
         return False
-    if _is_passive_index_fund_name(fund_name):
-        return True
+    if _is_name_or_llm_associated_sector_source(source):
+        return False
     resolved_source = str(source or "")
     if resolved_source in _PAGE_ASSOCIATED_SECTOR_SOURCES:
         return _is_trustworthy_sector_label(fund_name, sector_name)
-    named = infer_sector_label_from_fund_name(fund_name)
-    named_key = normalize_sector_label(named)
-    sector_key = normalize_sector_label(sector_name)
-    if named_key and sector_key and (
-        named_key == sector_key or named_key in sector_key or sector_key in named_key
-    ):
+    if resolved_source in _HOLDINGS_INFER_SOURCES:
         return True
-    if resolved_source in _RESEARCH_ASSOCIATED_SECTOR_SOURCES:
-        return not _is_unthemed_allocation_fund(fund_name)
     return False
 
 
 def _clear_holding_associated_sector(holding: Holding) -> Holding:
-    named = infer_sector_label_from_fund_name(holding.fund_name)
-    if named:
-        index_name = infer_intraday_index_from_fund_name(holding.fund_name)
-        updates: dict[str, str | None] = {"sector_name": named}
-        if index_name:
-            updates["intraday_index_name"] = index_name
-        elif holding.sector_name != named:
-            updates["intraday_index_name"] = None
-            updates["sector_return_percent"] = None
-            updates["sector_return_percent_source"] = None
-        return holding.model_copy(update=updates)
     if (
         holding.sector_name is None
         and holding.intraday_index_name is None
@@ -1444,6 +1276,8 @@ def apply_page_associated_sector(
 
     if record is None:
         return holding
+    if _is_name_or_llm_associated_sector_source(record.source):
+        return _clear_holding_associated_sector(holding)
     if associated_sector_is_page_visible(
         fund_name=holding.fund_name,
         sector_name=record.sector_name,
@@ -1480,7 +1314,7 @@ def refresh_benchmark_sectors_for_holdings(
         if not code or code == "000000":
             refreshed.append(holding)
             continue
-        row = (
+        row = _usable_identity_row(
             batch_context.user_row(code)
             if batch_context is not None
             else get_fund_primary_sector(code)
@@ -1516,11 +1350,8 @@ def refresh_benchmark_sectors_for_holdings(
         updated = apply_primary_sector_to_holding(
             holding,
             fetch_benchmark=fetch_missing_benchmark,
-            allow_name_infer=not fetch_holdings_infer,
             batch_context=batch_context,
         )
-        stocks_for_code = None
-        holdings_evidence_for_code = None
         if (
             fetch_holdings_infer
             and infer_missing_only
@@ -1555,23 +1386,7 @@ def refresh_benchmark_sectors_for_holdings(
                 if _can_upsert_primary_sector(
                     existing_after, "holdings_infer", fund_name=updated.fund_name
                 ):
-                    # 持仓穿透可以落研究身份，但不能写进持仓页关联板块。
                     updated = apply_page_associated_sector(updated, record)
-        if (
-            fetch_holdings_infer
-            and not _is_trustworthy_sector_label(updated.fund_name, updated.sector_name)
-            and updated.fund_name
-        ):
-            # 复用上面已经拉取过的重仓股名称，避免同一只基金重复发子进程/网络请求。
-            top_holdings = [s.name for s in (stocks_for_code or []) if s.name]
-            llm_record = _resolve_from_llm_infer(
-                code,
-                updated.fund_name,
-                top_holdings=top_holdings,
-                batch_context=batch_context,
-            )
-            if llm_record is not None:
-                updated = updated.model_copy(update={"sector_name": llm_record.sector_name})
         refreshed.append(updated)
     return refreshed
 
@@ -1827,79 +1642,6 @@ def _resolve_from_holdings_infer(
         global_row = promote_record_to_global(record)
         if batch_context is not None:
             batch_context.remember_global_row(global_row)
-    return record
-
-
-def _fetch_top_holding_names_for_llm(fund_code: str) -> list[str]:
-    """给 LLM 兜底喂前几大重仓股名称（不依赖脆弱的个股行业接口，只要股票名称）。"""
-    try:
-        from app.services.fund_holdings_sector_infer import fetch_portfolio_stocks_with_industry
-
-        stocks = fetch_portfolio_stocks_with_industry(fund_code)
-    except Exception:
-        return []
-    return [row.name for row in stocks if row.name][:8]
-
-
-def _resolve_from_llm_infer(
-    fund_code: str,
-    fund_name: str,
-    *,
-    top_holdings: list[str] | None = None,
-    batch_context: PrimarySectorBatchContext | None = None,
-) -> PrimarySectorRecord | None:
-    from app.services.fund_sector_llm_infer import infer_sector_via_llm
-
-    code = fund_code.strip().zfill(6)
-    if _is_unthemed_allocation_fund(fund_name):
-        forget_uncertain_inferred_sector_identity(
-            code,
-            fund_name=fund_name,
-            batch_context=batch_context,
-        )
-        return None
-    global_row = (
-        batch_context.fresh_global_row(code)
-        if batch_context is not None
-        else load_fresh_global_sector(code)
-    )
-    if global_row and str(global_row.get("source") or "") in {"llm_infer", "precompute_llm"}:
-        return _record_from_row({**global_row, "fund_code": code})
-
-    if top_holdings is None:
-        top_holdings = _fetch_top_holding_names_for_llm(code)
-    result = infer_sector_via_llm(code, fund_name, top_holdings=top_holdings)
-    if result is None:
-        return None
-    sector_name, confidence = result
-    record = PrimarySectorRecord(
-        fund_code=code,
-        sector_name=sector_name,
-        intraday_index_name=None,
-        source="llm_infer",
-        confidence=confidence,
-        detail={"fund_name": fund_name},
-    )
-    if try_get_request_user_id() is not None:
-        existing = (
-            batch_context.user_row(code)
-            if batch_context is not None
-            else get_fund_primary_sector(code)
-        )
-        if _can_upsert_primary_sector(existing, "llm_infer", fund_name=fund_name):
-            saved = save_fund_primary_sector(
-                fund_code=code,
-                sector_name=sector_name,
-                intraday_index_name=None,
-                source="llm_infer",
-                confidence=confidence,
-                detail=record.detail,
-            )
-            if batch_context is not None:
-                batch_context.remember_user_row(saved)
-    global_saved = promote_record_to_global(record)
-    if batch_context is not None:
-        batch_context.remember_global_row(global_saved)
     return record
 
 

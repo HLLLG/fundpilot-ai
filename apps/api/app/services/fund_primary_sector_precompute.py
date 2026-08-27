@@ -47,7 +47,7 @@ from app.services.fund_type_classification import has_positive_qdii_marker
 
 logger = logging.getLogger(__name__)
 
-PrecomputeMode = str  # "benchmark" | "holdings" | "llm" | "auto"
+PrecomputeMode = str  # "benchmark" | "holdings" | "auto"
 _PRIORITY_QUEUE_SCHEMA_VERSION = "fund_primary_sector_precompute_priority.v1"
 _PRIORITY_QUEUE_MAX_CODES = 512
 _PRIORITY_BATCH_SIZE = 32
@@ -824,7 +824,7 @@ def _profile_sector_resolution(
     profile: Mapping[str, object],
 ) -> tuple[PrimarySectorRecord | None, str, str, dict[str, object]]:
     from app.services.fund_benchmark_sector import resolve_sector_from_benchmark
-    from app.services.sector_labels import infer_semantic_sector_from_fund_name
+    from app.services.sector_labels import fund_name_has_registered_theme
 
     fund_name = str(profile.get("fund_name") or fallback_name or "").strip()
     category = str(profile.get("fund_category") or "").strip()
@@ -835,8 +835,7 @@ def _profile_sector_resolution(
     source_kind = str(
         profile.get("benchmark_text_source_kind") or "xq_akshare_aggregator"
     ).strip()
-    semantic = infer_semantic_sector_from_fund_name(fund_name) if fund_name else None
-    semantic_hint = bool(semantic is not None and semantic.source == "semantic_name")
+    semantic_hint = bool(fund_name and fund_name_has_registered_theme(fund_name))
     qdii_category = has_positive_qdii_marker(category)
     passive_category = any(
         marker in category for marker in ("标准指数", "被动指数")
@@ -859,7 +858,7 @@ def _profile_sector_resolution(
         "passive_index_category_gate": passive_category,
         "commodity_price_proxy_category_gate": commodity_price_proxy,
         "tracking_target_gate": benchmark_kind == "tracking_target",
-        "semantic_recall_sector": semantic.sector_name if semantic_hint else None,
+        "semantic_recall_sector": None,
         "holdings_classifier_scope": (
             "overseas_unsupported" if qdii_category else "cn_equity_supported"
         ),
@@ -1440,27 +1439,6 @@ def precompute_fund_sector(
                 _promote_and_remember(
                     record,
                     source="precompute_holdings",
-                    global_rows_by_code=global_rows_by_code,
-                )
-                return "ok"
-
-        if mode in ("llm", "auto") and get_settings().fund_primary_sector_llm_infer_enabled:
-            from app.services.fund_sector_llm_infer import infer_sector_via_llm
-
-            fund_name = _lookup_fund_name(code)
-            llm_result = infer_sector_via_llm(code, fund_name) if fund_name else None
-            if llm_result is not None:
-                sector_name, confidence = llm_result
-                _promote_and_remember(
-                    PrimarySectorRecord(
-                        fund_code=code,
-                        sector_name=sector_name,
-                        intraday_index_name=None,
-                        source="precompute_llm",
-                        confidence=confidence,
-                        detail={"fund_name": fund_name},
-                    ),
-                    source="precompute_llm",
                     global_rows_by_code=global_rows_by_code,
                 )
                 return "ok"
