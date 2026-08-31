@@ -1,0 +1,136 @@
+apps/api/app/services/discovery_candidate_pool.py
+  s_891dd8762331d7::t_b2db5b3afdcf56 2172-2174,2178-2179
+  s_891dd8762331d7::t_93f04a5a0a82bc 2361-2362,2368,2370,2373-2386,2395-2399,2402-2404,2407-2408,2426-2473
+  s_891dd8762331d7::t_61d3bf57764923 2363-2364
+  s_891dd8762331d7::t_09dc0803732e80 262
+  s_891dd8762331d7::t_34d34942dbd0d9 73,75-76
+  s_891dd8762331d7::t_aba1a5d6988a04 442-443
+  s_891dd8762331d7::t_48cae8baed248f 233
+  s_891dd8762331d7::t_65dbcdd303f78b 1333-1339
+  s_891dd8762331d7::t_8e9b1edff3480f 62,68
+  s_891dd8762331d7::t_6e9a773ac63ebb 2310-2340,2358-2360
+  s_891dd8762331d7::t_c53e3a9f2fb8d3 2483-2492
+  s_891dd8762331d7::t_8b3f3469dabad8 2474-2480
+  s_891dd8762331d7::t_8586028ab3b694 2369,2372,2387-2394,2400-2401,2405-2406,2409-2425
+  s_891dd8762331d7::t_3a6059e45669c1 444-445
+  s_891dd8762331d7::t_d3070e1d659c43 2371
+  s_891dd8762331d7::t_8c73078d6d25f2 71-72,74,77
+  s_891dd8762331d7::t_d2a087aedb0d88 2351,2353-2357
+  s_891dd8762331d7::t_a774879be14ebd 1848-1851
+  s_891dd8762331d7::t_a538c9ce3d45cd 1837-1841
+  s_891dd8762331d7::t_7de97348067084 64-66,70
+  s_891dd8762331d7::t_649632a1acb650 1259
+  s_891dd8762331d7::t_fb237c8afcfddd 1864-1870
+  s_891dd8762331d7::t_5d122974dff079 1317-1320
+  s_891dd8762331d7::t_276405084e37f9 1843-1847
+apps/api/app/services/fund_nav_series.py
+  s_891dd8762331d7::t_32adfbd686344a 12
+  s_891dd8762331d7::t_647348b71a8d63 29
+  s_891dd8762331d7::t_9294dd218288de 45-70
+  s_891dd8762331d7::t_510acd22a787c7 353,355-357,376-377
+  s_891dd8762331d7::t_7a5ee80c9e1fc1 1-11,13-28,30-44,71-352,354,358-375,378-459
+apps/api/tests/test_fund_nav_series.py
+  s_891dd8762331d7::t_27b69aea63762f 50-70
+  s_891dd8762331d7::t_cf521e671187ae 1-2,6-17,19-22,25-26,28-31,33-46,48-49,71-158,160-172,174-195,197-217,221,223-226,228-268
+  s_891dd8762331d7::t_cf8c647c9084dc 3
+  s_891dd8762331d7::t_63273dbec98934 4-5,18,23-24
+  s_891dd8762331d7::t_99d69c0a22c96a 173
+  s_891dd8762331d7::t_af260adaacd1e1 227
+  s_891dd8762331d7::t_bbeafb1a9903c6 269-334
+  s_891dd8762331d7::t_ce890639dcb9de 159
+  s_891dd8762331d7::t_070017724ef676 196,218-220,222
+  s_891dd8762331d7::t_d70c5e7cf9e528 32,47
+  s_891dd8762331d7::t_d5855acbda6122 27
+apps/api/tests/test_config.py
+  s_891dd8762331d7::t_2284751f97464e 127-128
+apps/api/app/mysql_bootstrap.py
+  s_891dd8762331d7::t_7387a2b01b3b52 2059-2061
+  s_891dd8762331d7::t_49dbc68327bbec 15
+  s_891dd8762331d7::t_814186e090d4f1 1870,1880-1888
+apps/api/app/services/fund_vehicle_quality.py
+  s_891dd8762331d7::t_bffba40833604d 208,211
+apps/api/tests/test_fund_holdings_snapshot_store.py
+  s_891dd8762331d7::t_46c34642fa7cd9 96
+apps/api/tests/test_fund_research_tables.py
+  s_891dd8762331d7::t_924188910744cf 147,159
+apps/api/tests/test_migrate_sqlite_to_mysql.py
+  s_891dd8762331d7::t_07dadaaeaa5216 1171
+  s_891dd8762331d7::t_77655834e5d882 1207
+apps/api/tests/test_db_migrations.py
+  s_891dd8762331d7::t_19bca38fe9b19a 253
+  s_891dd8762331d7::t_63d7a418d6a6e0 188
+  s_891dd8762331d7::t_0d04ef515f43ea 218
+  s_891dd8762331d7::t_4857e1b175ba62 354
+  s_891dd8762331d7::t_6675c2cb27adaf 392-439
+  s_891dd8762331d7::t_c4c2120c735f4f 278
+  s_891dd8762331d7::t_1070a03763c4e4 177
+  s_891dd8762331d7::t_feda12f9c167d8 493
+apps/api/app/services/akshare_subprocess.py
+  s_891dd8762331d7::t_679aded18ea0d8 987-1067
+.github/workflows/fund-nav-series-daily.yml
+  s_891dd8762331d7::t_e01f81de9cac93 1-74
+.env.example
+  s_891dd8762331d7::t_cc70451852c621 230-234
+apps/api/scripts/sync_fund_nav_series.py
+  s_891dd8762331d7::t_10f5e2280ca8c6 1-47,53-65,69-71,73-119
+  s_891dd8762331d7::t_434574b7e5bb38 66-68,72
+  s_891dd8762331d7::t_9ec4bc8cecdde0 48-52
+apps/api/tests/test_discovery_quality_v2.py
+  s_891dd8762331d7::t_d911d62ff595be 499-539
+  s_891dd8762331d7::t_90a8719107554f 740
+  s_891dd8762331d7::t_23f8f8ff032aee 15,18
+  s_891dd8762331d7::t_7d15f251314c1d 640
+  s_891dd8762331d7::t_053a719a5c4cf1 16-17
+  s_891dd8762331d7::t_632e78b070fe94 632-639,641-739,741-743
+  s_891dd8762331d7::t_fa74eb96d4ae08 744-855
+  s_891dd8762331d7::t_c4990a9664b1f1 569-631
+apps/api/app/db_migrations.py
+  s_891dd8762331d7::t_c31386c09d8d33 15
+  s_891dd8762331d7::t_d5638e4164fa08 756-790
+  s_891dd8762331d7::t_1cf2d7a8188372 2476
+  s_891dd8762331d7::t_b9b00fd11dbc09 2394
+apps/api/tests/test_decision_quality_repository.py
+  s_891dd8762331d7::t_2cd0b98851d3dc 136
+apps/api/app/services/fund_risk_metrics.py
+  s_891dd8762331d7::t_129ef4fbc07bb3 19
+  s_891dd8762331d7::t_ca55c918a70ba2 1,11-12,15,27,53-55,61-62,79,84,88-113,127,154-200,213-218
+apps/api/app/config.py
+  s_891dd8762331d7::t_a17f34f8abf873 296-300
+apps/api/app/services/fund_discovery_data_cache.py
+  s_891dd8762331d7::t_7b1e31d2a79ae8 302-311,313-315,320,322,324
+  s_891dd8762331d7::t_0935bbd1d7caa8 291
+apps/api/app/database.py
+  s_891dd8762331d7::t_e24c1ce32c8a8b 2814-3015
+  s_891dd8762331d7::t_e15a35a4de345a 2695-2697,2708
+  s_891dd8762331d7::t_d13c2c44f97e25 5
+  s_891dd8762331d7::t_47e9d6bdc275a3 2493
+  s_891dd8762331d7::t_6a364833748584 2730
+apps/api/app/background_worker.py
+  s_891dd8762331d7::t_852a65e76accaf 120-132
+apps/api/app/services/fund_nav_series_refresh_loop.py
+  s_891dd8762331d7::t_55bc0ac7273763 1-68
+apps/api/tests/test_decision_quality_rollout.py
+  s_891dd8762331d7::t_da81cc2ffb9cc5 180
+apps/api/tests/test_background_worker.py
+  s_891dd8762331d7::t_0f0ba21852d6db 108-122
+  s_891dd8762331d7::t_a3f7e4c93e960f 279
+  s_891dd8762331d7::t_8be7666c1e3b9d 30
+scripts/migrate_sqlite_to_mysql.py
+  s_891dd8762331d7::t_16591758b9e93f 129-130,134-138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "d66350985acf3c9567db7abe2675b2030e70220d",
+  "prompts": {},
+  "sessions": {
+    "s_891dd8762331d7": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "ceec98e7-8678-492c-83ef-5d6b28d3738b",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
