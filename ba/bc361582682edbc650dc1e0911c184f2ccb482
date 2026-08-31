@@ -1,0 +1,27 @@
+Dockerfile
+  s_891dd8762331d7::t_9af94f483ddeba 28
+apps/api/.dockerignore
+  s_891dd8762331d7::t_2338dd7972e14d 16
+apps/api/Dockerfile
+  s_891dd8762331d7::t_6953103d0e0d3c 22
+apps/api/tests/test_capture_script_is_packaged.py
+  s_891dd8762331d7::t_4fbb858bd47d1e 39,93-96
+.dockerignore
+  s_891dd8762331d7::t_cf198b17ac1300 40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.43-trip",
+  "base_commit_sha": "babc361582682edbc650dc1e0911c184f2ccb482",
+  "prompts": {},
+  "sessions": {
+    "s_891dd8762331d7": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "ceec98e7-8678-492c-83ef-5d6b28d3738b",
+        "model": "grok-4.6"
+      },
+      "human_author": "hegl <HLLLG@github.com>"
+    }
+  }
+}
