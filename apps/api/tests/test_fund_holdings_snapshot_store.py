@@ -93,7 +93,7 @@ def _snapshot(
 
 
 def test_sqlite_migration_creates_append_only_holdings_schema() -> None:
-    assert SCHEMA_VERSION == 27
+    assert SCHEMA_VERSION == 28
     connection = sqlite3.connect(":memory:")
     run_migrations(connection)
 
@@ -141,7 +141,7 @@ def test_mysql_bootstrap_has_equivalent_holdings_schema() -> None:
 
     ensure_mysql_schema(Connection())
 
-    assert MYSQL_SCHEMA_VERSION == 27
+    assert MYSQL_SCHEMA_VERSION == 28
     ddl = next(
         statement
         for statement in statements

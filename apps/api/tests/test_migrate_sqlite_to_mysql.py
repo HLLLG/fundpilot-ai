@@ -1168,7 +1168,7 @@ def test_main_apply_freezes_marker_bootstrap_and_copy_in_one_snapshot(
         source_fingerprint: str,
         source_rollout_marker,
     ) -> dict[str, Any]:
-        assert source_schema_version == 27
+        assert source_schema_version == SCHEMA_VERSION
         assert len(source_fingerprint) == 64
         assert source_rollout_marker == marker
         guard.update(
@@ -1204,7 +1204,7 @@ def test_main_apply_freezes_marker_bootstrap_and_copy_in_one_snapshot(
     ) -> dict[str, Any]:
         assert source.in_transaction is True
         assert batch_size == 1
-        assert source_version == 27
+        assert source_version == SCHEMA_VERSION
         assert rollout_marker == marker
         assert rollout_marker == observed["bootstrap_marker"]
         assert source.execute(

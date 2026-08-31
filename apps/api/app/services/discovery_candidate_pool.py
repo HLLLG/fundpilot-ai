@@ -59,9 +59,22 @@ _PER_SECTOR = 5
 # normal scan so recall validation describes the real funnel.
 _MAX_RECALL_AUDIT_CANDIDATES = 1024
 _HARD_MIN_SCALE_YI = 2.0
+_HARD_MAX_SCALE_YI = 100.0
 _MIN_HISTORY_DAYS = 365
+_MIN_MANAGER_CAREER_YEARS = 3
+# 与经理花名册 ``format_career_tenure`` 同一套 365 天/年，满 3 年 = 1095 天。
+_MIN_MANAGER_CAREER_DAYS = _MIN_MANAGER_CAREER_YEARS * 365
 _HARD_MIN_SCALE_LABEL = f"{_HARD_MIN_SCALE_YI:g}亿元"
+_HARD_MAX_SCALE_LABEL = f"{_HARD_MAX_SCALE_YI:g}亿元"
 _MIN_HISTORY_LABEL = "1年"
+_MIN_MANAGER_CAREER_LABEL = f"{_MIN_MANAGER_CAREER_YEARS}年"
+# 硬筛选：近1年收益、近1年回撤在目录同类桶内分位 ≥ 80（前 20%）。
+# 回撤是负数，越接近 0 越好，与收益共用 higher-is-better 分位。
+_MIN_PEER_RETURN_PERCENTILE = 80.0
+_MIN_PEER_DRAWDOWN_PERCENTILE = 80.0
+_MIN_PEER_RETURN_SAMPLE = 20
+_PEER_RETURN_TOP_LABEL = "前20%"
+_PEER_DRAWDOWN_TOP_LABEL = "前20%"
 # 近 3 年夏普约需 750 个交易日；与持仓/详情共用 800 日规范缓存，避免短序列覆盖长缓存。
 _NAV_LOOKBACK_TRADING_DAYS = CANONICAL_NAV_TRADING_DAYS
 # 3 个月收益窗口约 60 个交易日；少一天则 `window_return_percent(..., 60)` 会从更早的点起算。
@@ -217,6 +230,7 @@ def build_candidate_pool(
         else None
     )
     verified_primary_sectors_by_code = _verified_primary_sectors_by_code(primary_rows)
+    return_peer_ranks = build_catalogue_return_peer_ranks(rank_rows)
 
     for index, sector_label in enumerate(target_sectors):
         raise_if_stream_cancelled(stop_event)
@@ -245,6 +259,7 @@ def build_candidate_pool(
             recall_audit_state=recall_state,
             recall_audit_limit=recall_audit_limit,
             verified_primary_sectors_by_code=verified_primary_sectors_by_code,
+            return_peer_ranks=return_peer_ranks,
         )
         for candidate in sector_candidates:
             candidate["candidate_universe_mode"] = universe_mode
@@ -424,6 +439,10 @@ def _compact_recall_audit_candidate(candidate: dict) -> dict:
         "fund_quality_score",
         "sector_fit_score",
         "recall_upside_score",
+        "peer_return_1y_percentile",
+        "peer_return_bucket",
+        "peer_drawdown_1y_percentile",
+        "peer_drawdown_1y_sample_size",
         "opportunity_score_20_60d",
         "opportunity_score_version",
         "fund_entry_signal",
@@ -1237,6 +1256,7 @@ def _candidates_for_sector(
     recall_audit_state: dict | None = None,
     recall_audit_limit: int = _MAX_RECALL_AUDIT_CANDIDATES,
     verified_primary_sectors_by_code: dict[str, set[str]] | None = None,
+    return_peer_ranks: dict[str, dict] | None = None,
 ) -> list[dict]:
     canon = get_canonical_sector(sector_label)
     keywords = _sector_keywords(sector_label, canon)
@@ -1294,7 +1314,10 @@ def _candidates_for_sector(
             },
             rank_by_code.get(code),
         )
-        entries_by_code[code] = _with_opportunity(entry, opportunity)
+        entries_by_code[code] = _with_opportunity(
+            _with_catalogue_return_peer_ranks(entry, return_peer_ranks),
+            opportunity,
+        )
 
     if selection_strategy == "with_new_issue":
         for entry in _new_issue_entries_for_sector(
@@ -1307,7 +1330,13 @@ def _candidates_for_sector(
             as_of_date=as_of_date,
         ):
             code = str(entry.get("fund_code", "")).zfill(6)
-            entries_by_code.setdefault(code, _with_opportunity(entry, opportunity))
+            entries_by_code.setdefault(
+                code,
+                _with_opportunity(
+                    _with_catalogue_return_peer_ranks(entry, return_peer_ranks),
+                    opportunity,
+                ),
+            )
 
     scored = [
         _with_quality_score(
@@ -1805,6 +1834,21 @@ def _with_data_quality_gate(
         reasons.append(
             f"{scale_label}低于{_HARD_MIN_SCALE_LABEL}，清盘与流动性风险偏高"
         )
+    elif not scale_is_stale and scale is not None and scale > _HARD_MAX_SCALE_YI:
+        status = "excluded"
+        reasons.append(
+            f"{scale_label}高于{_HARD_MAX_SCALE_LABEL}，调仓冲击与风格漂移风险偏高"
+        )
+
+    return_rank_failures = _peer_return_rank_failures(row)
+    if status != "excluded" and return_rank_failures:
+        status = "excluded"
+        reasons.extend(return_rank_failures)
+
+    drawdown_rank_failures = _peer_drawdown_rank_failures(row)
+    if status != "excluded" and drawdown_rank_failures:
+        status = "excluded"
+        reasons.extend(drawdown_rank_failures)
 
     established = _parse_iso_date(row.get("established_date"))
     if (
@@ -1815,6 +1859,13 @@ def _with_data_quality_gate(
         status = "excluded"
         reasons.append(
             f"成立不足{_MIN_HISTORY_LABEL}，净值样本不足以判断近期趋势"
+        )
+
+    career_days = _manager_career_days(row)
+    if status != "excluded" and career_days is not None and career_days < _MIN_MANAGER_CAREER_DAYS:
+        status = "excluded"
+        reasons.append(
+            f"现任基金经理累计从业不足{_MIN_MANAGER_CAREER_LABEL}，样本不足以判断管理稳定性"
         )
 
     _ = discovery_strategy
@@ -2118,13 +2169,14 @@ def _scale_score(row: dict, penalties: list[str], reasons: list[str]) -> float:
     if scale < _HARD_MIN_SCALE_YI:
         penalties.append("基金规模过小")
         return 0.0
+    if scale > _HARD_MAX_SCALE_YI:
+        penalties.append("基金规模过大")
+        return 0.0
     if scale < 3:
         penalties.append("基金规模偏小")
         return 5.0
-    if scale <= 120:
-        reasons.append("基金规模适中")
-        return 10.0
-    return 7.0
+    reasons.append("基金规模适中")
+    return 10.0
 
 
 def _type_preference_score(row: dict, preference: str, reasons: list[str]) -> float:
@@ -2255,6 +2307,37 @@ def infer_sector_label_from_discovery_keywords(fund_name: str) -> str:
     return "综合"
 
 
+def _manager_career_days(row: dict) -> int | None:
+    """现任经理累计从业天数：优先行上汇总字段，否则取 ``fund_managers`` 最大值。"""
+
+    raw = row.get("manager_career_days")
+    if raw is not None:
+        try:
+            days = int(raw)
+        except (TypeError, ValueError):
+            days = None
+        else:
+            if days >= 0:
+                return days
+    managers = row.get("fund_managers")
+    if not isinstance(managers, list):
+        return None
+    collected: list[int] = []
+    for item in managers:
+        if not isinstance(item, dict):
+            continue
+        value = item.get("career_days")
+        if value is None:
+            continue
+        try:
+            days = int(value)
+        except (TypeError, ValueError):
+            continue
+        if days >= 0:
+            collected.append(days)
+    return max(collected) if collected else None
+
+
 def _passes_quality(row: dict, *, as_of_date: date | None = None) -> bool:
     established = _parse_iso_date(row.get("established_date"))
     if (
@@ -2265,11 +2348,146 @@ def _passes_quality(row: dict, *, as_of_date: date | None = None) -> bool:
     scale = row.get("fund_scale_yi")
     if scale is not None:
         try:
-            if float(scale) < _HARD_MIN_SCALE_YI:
-                return False
+            parsed_scale = float(scale)
         except (TypeError, ValueError):
-            pass
+            parsed_scale = None
+        if parsed_scale is not None and (
+            parsed_scale < _HARD_MIN_SCALE_YI or parsed_scale > _HARD_MAX_SCALE_YI
+        ):
+            return False
+    career_days = _manager_career_days(row)
+    if career_days is not None and career_days < _MIN_MANAGER_CAREER_DAYS:
+        return False
+    if _peer_return_rank_failures(row):
+        return False
+    if _peer_drawdown_rank_failures(row):
+        return False
     return True
+
+
+def build_catalogue_return_peer_ranks(universe: list[dict]) -> dict[str, dict]:
+    """按目录粗分桶计算近1年收益、近1年回撤分位，供硬筛选使用。
+
+    同类口径与日报/荐基共用的 ``peer_catalogue_bucket`` 一致；A/C 同一家族
+    只留一只代表，避免重复计数。回撤是负数，越浅越好。
+    """
+
+    by_bucket: dict[str, list[dict]] = {}
+    for raw in universe:
+        if not isinstance(raw, dict):
+            continue
+        code = str(raw.get("fund_code") or "").strip().zfill(6)
+        if len(code) != 6 or not code.isdigit() or code == "000000":
+            continue
+        bucket = _peer_catalogue_bucket(raw)
+        by_bucket.setdefault(bucket, []).append(raw)
+
+    result: dict[str, dict] = {}
+    for bucket, rows in by_bucket.items():
+        percentile_1y, sample_1y = _family_percentiles_for_field(
+            rows,
+            "return_1y_percent",
+        )
+        percentile_dd, sample_dd = _family_percentiles_for_field(
+            rows,
+            "max_drawdown_1y_percent",
+        )
+        for raw in rows:
+            code = str(raw.get("fund_code") or "").zfill(6)
+            family = _family_key(str(raw.get("fund_name") or "")) or f"code:{code}"
+            payload = {
+                "peer_return_bucket": bucket,
+                "peer_return_1y_sample_size": sample_1y,
+                "peer_drawdown_1y_sample_size": sample_dd,
+            }
+            if family in percentile_1y:
+                payload["peer_return_1y_percentile"] = percentile_1y[family]
+            if family in percentile_dd:
+                payload["peer_drawdown_1y_percentile"] = percentile_dd[family]
+            result[code] = payload
+    return result
+
+
+def _family_percentiles_for_field(
+    rows: list[dict],
+    field: str,
+) -> tuple[dict[str, float], int]:
+    family_rows = _family_return_representatives(rows, field)
+    values = [value for _family, _row, value in family_rows]
+    if len(values) < _MIN_PEER_RETURN_SAMPLE:
+        return {}, len(values)
+    return (
+        {
+            family: _higher_is_better_percentile(value, values)
+            for family, _row, value in family_rows
+        },
+        len(values),
+    )
+
+
+def _family_return_representatives(
+    rows: list[dict],
+    field: str,
+) -> list[tuple[str, dict, float]]:
+    best: dict[str, tuple[dict, float]] = {}
+    order: list[str] = []
+    for raw in rows:
+        value = _num(raw.get(field))
+        if value is None:
+            continue
+        code = str(raw.get("fund_code") or "").zfill(6)
+        family = _family_key(str(raw.get("fund_name") or "")) or f"code:{code}"
+        current = best.get(family)
+        if current is None:
+            best[family] = (raw, value)
+            order.append(family)
+            continue
+        current_name = str(current[0].get("fund_name") or "")
+        new_name = str(raw.get("fund_name") or "")
+        if _share_class_rank(new_name) > _share_class_rank(current_name):
+            best[family] = (raw, value)
+    return [(family, best[family][0], best[family][1]) for family in order]
+
+
+def _higher_is_better_percentile(target: float, peers: list[float]) -> float:
+    less = sum(value < target for value in peers)
+    equal = sum(value == target for value in peers)
+    return round((less + equal * 0.5) / len(peers) * 100.0, 1)
+
+
+def _with_catalogue_return_peer_ranks(
+    entry: dict,
+    ranks: dict[str, dict] | None,
+) -> dict:
+    if not ranks:
+        return entry
+    code = str(entry.get("fund_code") or "").zfill(6)
+    extra = ranks.get(code)
+    if not extra:
+        return entry
+    row = dict(entry)
+    row.update(extra)
+    return row
+
+
+def _peer_return_rank_failures(row: dict) -> list[str]:
+    sample = _num(row.get("peer_return_1y_sample_size"))
+    if sample is not None and sample < _MIN_PEER_RETURN_SAMPLE:
+        return []
+    percentile = _num(row.get("peer_return_1y_percentile"))
+    if percentile is not None and percentile < _MIN_PEER_RETURN_PERCENTILE:
+        return [f"近1年收益同类排名未进入{_PEER_RETURN_TOP_LABEL}"]
+    return []
+
+
+def _peer_drawdown_rank_failures(row: dict) -> list[str]:
+    sample = _num(row.get("peer_drawdown_1y_sample_size"))
+    if sample is not None and sample < _MIN_PEER_RETURN_SAMPLE:
+        return []
+    percentile = _num(row.get("peer_drawdown_1y_percentile"))
+    if percentile is not None and percentile < _MIN_PEER_DRAWDOWN_PERCENTILE:
+        return [f"近1年回撤同类排名未进入{_PEER_DRAWDOWN_TOP_LABEL}"]
+    return []
 
 
 def _is_etf_link_fund(name: str) -> bool:

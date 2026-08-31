@@ -12,6 +12,10 @@ from app.models import (
     InvestorProfile,
 )
 from app.services.discovery_candidate_pool import (
+    _MIN_MANAGER_CAREER_DAYS,
+    _MIN_PEER_RETURN_SAMPLE,
+    build_catalogue_return_peer_ranks,
+    _passes_quality,
     _with_data_quality_gate,
     _with_quality_score,
     enrich_candidates,
@@ -492,6 +496,47 @@ def test_scale_at_2yi_is_eligible():
     assert "max_drawdown_1y_percent" not in item
 
 
+def test_scale_at_100yi_is_eligible():
+    item = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 100.0,
+            "return_3m_percent": 8.0,
+            "return_6m_percent": 12.0,
+            "established_date": "2024-01-01",
+            "fund_manager": "测试经理",
+            "nav_date": "2026-07-10",
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    assert item["quality_gate"]["status"] == "eligible"
+    assert item["quality_gate"]["eligible"] is True
+
+
+def test_scale_above_100yi_is_excluded():
+    item = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 100.01,
+            "return_3m_percent": 8.0,
+            "return_6m_percent": 12.0,
+            "established_date": "2024-01-01",
+            "fund_manager": "测试经理",
+            "nav_date": "2026-07-10",
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    assert item["quality_gate"]["status"] == "excluded"
+    assert item["quality_gate"]["eligible"] is False
+    assert any("高于100亿元" in reason for reason in item["quality_gate"]["reasons"])
+
+
+def test_passes_quality_rejects_scale_outside_2_to_100yi():
+    row = {"established_date": "2020-01-01", "manager_career_days": _MIN_MANAGER_CAREER_DAYS}
+    assert _passes_quality({**row, "fund_scale_yi": 2.0}, as_of_date=_DECISION_DATE) is True
+    assert _passes_quality({**row, "fund_scale_yi": 100.0}, as_of_date=_DECISION_DATE) is True
+    assert _passes_quality({**row, "fund_scale_yi": 1.99}, as_of_date=_DECISION_DATE) is False
+    assert _passes_quality({**row, "fund_scale_yi": 100.01}, as_of_date=_DECISION_DATE) is False
+
+
 def test_fund_established_one_year_is_eligible():
     item = _with_data_quality_gate(
         {
@@ -519,6 +564,293 @@ def test_fund_established_under_one_year_is_excluded():
     )
     assert item["quality_gate"]["status"] == "excluded"
     assert any("成立不足1年" in reason for reason in item["quality_gate"]["reasons"])
+
+
+def test_manager_career_at_three_years_is_eligible():
+    item = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 2.0,
+            "return_3m_percent": 6.0,
+            "established_date": "2020-01-01",
+            "fund_manager": "测试经理",
+            "manager_career_days": _MIN_MANAGER_CAREER_DAYS,
+            "nav_date": "2026-07-10",
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    assert item["quality_gate"]["status"] == "eligible"
+
+
+def test_manager_career_under_three_years_is_excluded():
+    item = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 2.0,
+            "return_3m_percent": 6.0,
+            "established_date": "2020-01-01",
+            "fund_manager": "测试经理",
+            "manager_career_days": _MIN_MANAGER_CAREER_DAYS - 1,
+            "nav_date": "2026-07-10",
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    assert item["quality_gate"]["status"] == "excluded"
+    assert any("累计从业不足3年" in reason for reason in item["quality_gate"]["reasons"])
+
+
+def test_manager_career_from_roster_under_three_years_is_excluded():
+    item = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 2.0,
+            "return_3m_percent": 6.0,
+            "established_date": "2020-01-01",
+            "fund_manager": "甲/乙",
+            "fund_managers": [
+                {"manager_name": "甲", "career_days": 400},
+                {"manager_name": "乙", "career_days": 800},
+            ],
+            "nav_date": "2026-07-10",
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    assert item["quality_gate"]["status"] == "excluded"
+    assert any("累计从业不足3年" in reason for reason in item["quality_gate"]["reasons"])
+
+
+def test_passes_quality_rejects_short_manager_career():
+    row = {
+        "fund_scale_yi": 8.0,
+        "established_date": "2020-01-01",
+        "manager_career_days": _MIN_MANAGER_CAREER_DAYS - 1,
+    }
+    assert _passes_quality(row, as_of_date=_DECISION_DATE) is False
+    row["manager_career_days"] = _MIN_MANAGER_CAREER_DAYS
+    assert _passes_quality(row, as_of_date=_DECISION_DATE) is True
+    row.pop("manager_career_days")
+    assert _passes_quality(row, as_of_date=_DECISION_DATE) is True
+
+
+def test_catalogue_return_peer_ranks_use_same_bucket_and_collapse_share_class():
+    universe = []
+    for index in range(_MIN_PEER_RETURN_SAMPLE + 2):
+        universe.append(
+            {
+                "fund_code": f"{index + 1:06d}",
+                "fund_name": f"测试股票{index}A",
+                "fund_type": "gp",
+                "return_1y_percent": 1.0 + index,
+            }
+        )
+    universe.append(
+        {
+            "fund_code": "009999",
+            "fund_name": "测试股票21C",
+            "fund_type": "gp",
+            "return_1y_percent": 23.0,
+        }
+    )
+    ranks = build_catalogue_return_peer_ranks(universe)
+    assert ranks["000001"]["peer_return_bucket"] == "equity_active"
+    assert ranks["000001"]["peer_return_1y_percentile"] < 80.0
+    assert ranks[f"{_MIN_PEER_RETURN_SAMPLE + 2:06d}"]["peer_return_1y_percentile"] >= 80.0
+    assert ranks["009999"]["peer_return_1y_percentile"] == ranks[
+        f"{_MIN_PEER_RETURN_SAMPLE + 2:06d}"
+    ]["peer_return_1y_percentile"]
+
+
+def test_peer_return_rank_below_top_20_is_excluded():
+    item = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 8.0,
+            "return_3m_percent": 6.0,
+            "established_date": "2020-01-01",
+            "fund_manager": "测试经理",
+            "nav_date": "2026-07-10",
+            "peer_return_1y_percentile": 79.9,
+            "peer_return_1y_sample_size": 40,
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    assert item["quality_gate"]["status"] == "excluded"
+    assert any("近1年收益同类排名未进入前20%" in reason for reason in item["quality_gate"]["reasons"])
+
+
+def test_peer_return_rank_at_top_20_is_eligible():
+    item = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 8.0,
+            "return_3m_percent": 6.0,
+            "established_date": "2020-01-01",
+            "fund_manager": "测试经理",
+            "nav_date": "2026-07-10",
+            "peer_return_1y_percentile": 80.0,
+            "peer_return_1y_sample_size": 40,
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    assert item["quality_gate"]["status"] == "eligible"
+
+
+def test_peer_return_rank_skipped_when_sample_too_small_or_missing():
+    small = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 8.0,
+            "return_3m_percent": 6.0,
+            "established_date": "2020-01-01",
+            "fund_manager": "测试经理",
+            "nav_date": "2026-07-10",
+            "peer_return_1y_percentile": 10.0,
+            "peer_return_1y_sample_size": _MIN_PEER_RETURN_SAMPLE - 1,
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    missing = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 8.0,
+            "return_3m_percent": 6.0,
+            "established_date": "2020-01-01",
+            "fund_manager": "测试经理",
+            "nav_date": "2026-07-10",
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    assert small["quality_gate"]["status"] == "eligible"
+    assert missing["quality_gate"]["status"] == "eligible"
+
+
+def test_passes_quality_rejects_bottom_peer_return_rank():
+    row = {
+        "fund_scale_yi": 8.0,
+        "established_date": "2020-01-01",
+        "manager_career_days": _MIN_MANAGER_CAREER_DAYS,
+        "peer_return_1y_sample_size": 40,
+    }
+    assert (
+        _passes_quality({**row, "peer_return_1y_percentile": 80.0}, as_of_date=_DECISION_DATE)
+        is True
+    )
+    assert (
+        _passes_quality({**row, "peer_return_1y_percentile": 79.9}, as_of_date=_DECISION_DATE)
+        is False
+    )
+    assert (
+        _passes_quality(
+            {**row, "peer_return_3y_percentile": 50.0, "peer_return_3y_sample_size": 40},
+            as_of_date=_DECISION_DATE,
+        )
+        is True
+    )
+
+
+def test_catalogue_drawdown_peer_ranks_prefer_shallower_drawdown():
+    universe = []
+    for index in range(_MIN_PEER_RETURN_SAMPLE + 2):
+        universe.append(
+            {
+                "fund_code": f"{index + 1:06d}",
+                "fund_name": f"测试股票{index}A",
+                "fund_type": "gp",
+                "max_drawdown_1y_percent": -40.0 + index,
+            }
+        )
+    universe.append(
+        {
+            "fund_code": "009999",
+            "fund_name": "测试股票21C",
+            "fund_type": "gp",
+            "max_drawdown_1y_percent": -19.0,
+        }
+    )
+    ranks = build_catalogue_return_peer_ranks(universe)
+    assert ranks["000001"]["peer_return_bucket"] == "equity_active"
+    assert ranks["000001"]["peer_drawdown_1y_percentile"] < 80.0
+    assert ranks[f"{_MIN_PEER_RETURN_SAMPLE + 2:06d}"]["peer_drawdown_1y_percentile"] >= 80.0
+    assert ranks["009999"]["peer_drawdown_1y_percentile"] == ranks[
+        f"{_MIN_PEER_RETURN_SAMPLE + 2:06d}"
+    ]["peer_drawdown_1y_percentile"]
+
+
+def test_peer_drawdown_rank_below_top_20_is_excluded():
+    item = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 8.0,
+            "return_3m_percent": 6.0,
+            "established_date": "2020-01-01",
+            "fund_manager": "测试经理",
+            "nav_date": "2026-07-10",
+            "peer_drawdown_1y_percentile": 79.9,
+            "peer_drawdown_1y_sample_size": 40,
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    assert item["quality_gate"]["status"] == "excluded"
+    assert any("近1年回撤同类排名未进入前20%" in reason for reason in item["quality_gate"]["reasons"])
+
+
+def test_peer_drawdown_rank_at_top_20_is_eligible():
+    item = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 8.0,
+            "return_3m_percent": 6.0,
+            "established_date": "2020-01-01",
+            "fund_manager": "测试经理",
+            "nav_date": "2026-07-10",
+            "peer_drawdown_1y_percentile": 80.0,
+            "peer_drawdown_1y_sample_size": 40,
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    assert item["quality_gate"]["status"] == "eligible"
+
+
+def test_peer_drawdown_rank_skipped_when_sample_too_small_or_missing():
+    small = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 8.0,
+            "return_3m_percent": 6.0,
+            "established_date": "2020-01-01",
+            "fund_manager": "测试经理",
+            "nav_date": "2026-07-10",
+            "peer_drawdown_1y_percentile": 10.0,
+            "peer_drawdown_1y_sample_size": _MIN_PEER_RETURN_SAMPLE - 1,
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    missing = _with_data_quality_gate(
+        {
+            "fund_scale_yi": 8.0,
+            "return_3m_percent": 6.0,
+            "established_date": "2020-01-01",
+            "fund_manager": "测试经理",
+            "nav_date": "2026-07-10",
+        },
+        as_of_date=_DECISION_DATE,
+    )
+    assert small["quality_gate"]["status"] == "eligible"
+    assert missing["quality_gate"]["status"] == "eligible"
+
+
+def test_passes_quality_rejects_bottom_peer_drawdown_rank():
+    row = {
+        "fund_scale_yi": 8.0,
+        "established_date": "2020-01-01",
+        "manager_career_days": _MIN_MANAGER_CAREER_DAYS,
+        "peer_drawdown_1y_sample_size": 40,
+    }
+    assert (
+        _passes_quality({**row, "peer_drawdown_1y_percentile": 80.0}, as_of_date=_DECISION_DATE)
+        is True
+    )
+    assert (
+        _passes_quality({**row, "peer_drawdown_1y_percentile": 79.9}, as_of_date=_DECISION_DATE)
+        is False
+    )
+    assert (
+        _passes_quality(
+            {**row, "peer_drawdown_3y_percentile": 50.0, "peer_drawdown_3y_sample_size": 40},
+            as_of_date=_DECISION_DATE,
+        )
+        is True
+    )
 
 
 def test_stale_profile_fallback_is_watch_only_even_when_fields_are_complete():

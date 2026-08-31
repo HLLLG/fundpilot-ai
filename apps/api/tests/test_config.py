@@ -124,6 +124,8 @@ def test_holdings_cache_defaults_are_safe_for_mysql_multiworker(monkeypatch):
     assert mysql.resolved_holdings_memory_cache_enabled is False
     assert sqlite.resolved_holdings_memory_cache_enabled is True
     assert mysql.portfolio_mutation_lock_timeout_seconds == 30
+    assert sqlite.resolved_fund_nav_series_backfill_enabled is False
+    assert mysql.resolved_fund_nav_series_backfill_enabled is True
 
 
 def test_runtime_role_and_background_worker_health_defaults(monkeypatch):

@@ -174,7 +174,7 @@ def test_v24_drops_unused_users_cloudbase_uid() -> None:
     assert "cloudbaseUid" not in columns
     assert connection.execute(
         "SELECT version FROM schema_meta WHERE id = 1"
-    ).fetchone()[0] == 27
+    ).fetchone()[0] == SCHEMA_VERSION
     assert connection.execute(
         "SELECT name FROM sqlite_master "
         "WHERE type='table' AND name='fund_daily_catalogue'"
@@ -185,7 +185,7 @@ def test_v24_drops_unused_users_cloudbase_uid() -> None:
 
 
 def test_current_schema_still_ensures_factor_ic_snapshot_table() -> None:
-    assert SCHEMA_VERSION == 27
+    assert SCHEMA_VERSION == 28
     connection = sqlite3.connect(":memory:")
     connection.execute(
         "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
@@ -215,7 +215,7 @@ def test_v25_creates_fund_daily_catalogue() -> None:
 
     assert connection.execute(
         "SELECT version FROM schema_meta WHERE id = 1"
-    ).fetchone()[0] == 27
+    ).fetchone()[0] == SCHEMA_VERSION
     columns = {
         row[1]
         for row in connection.execute("PRAGMA table_info(fund_daily_catalogue)")
@@ -250,7 +250,7 @@ def test_v26_creates_research_tables() -> None:
 
     assert connection.execute(
         "SELECT version FROM schema_meta WHERE id = 1"
-    ).fetchone()[0] == 27
+    ).fetchone()[0] == SCHEMA_VERSION
     profile_columns = {
         row[1]
         for row in connection.execute("PRAGMA table_info(fund_research_profile)")
@@ -275,6 +275,7 @@ def test_v26_creates_research_tables() -> None:
         "sharpe_1y",
         "sharpe_3y",
         "max_drawdown_1y_percent",
+        "max_drawdown_3y_percent",
         "nav_as_of",
         "schema_version",
         "snapshot_available_at",
@@ -350,7 +351,7 @@ def test_existing_v26_profile_table_gains_shares_column() -> None:
     assert "career_annual_return_percent" not in roster_columns
     assert connection.execute(
         "SELECT version FROM schema_meta WHERE id = 1"
-    ).fetchone()[0] == 27
+    ).fetchone()[0] == SCHEMA_VERSION
 
 
 def test_existing_roster_drops_unused_annual_return_column() -> None:
@@ -386,6 +387,54 @@ def test_existing_roster_drops_unused_annual_return_column() -> None:
     }
     assert "career_annual_return_percent" not in roster_columns
     assert {"fund_code", "manager_id", "career_days"} <= roster_columns
+
+
+def test_v28_creates_nav_series_and_3y_drawdown() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE schema_meta (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
+    )
+    connection.execute("INSERT INTO schema_meta VALUES (1, 27)")
+    connection.execute(
+        """
+        CREATE TABLE fund_risk_metrics (
+            fund_code TEXT NOT NULL PRIMARY KEY,
+            sharpe_1y REAL,
+            sharpe_3y REAL,
+            max_drawdown_1y_percent REAL,
+            nav_as_of TEXT,
+            nav_point_count INTEGER,
+            schema_version TEXT NOT NULL,
+            snapshot_available_at TEXT NOT NULL,
+            source TEXT NOT NULL
+        )
+        """
+    )
+
+    run_migrations(connection)
+
+    assert connection.execute(
+        "SELECT version FROM schema_meta WHERE id = 1"
+    ).fetchone()[0] == SCHEMA_VERSION
+    series_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(fund_nav_series)")
+    }
+    assert {
+        "fund_code",
+        "nav_date",
+        "unit_nav",
+        "daily_growth_percent",
+        "source",
+        "snapshot_available_at",
+    } <= series_columns
+    indexes = {
+        row[1] for row in connection.execute("PRAGMA index_list(fund_nav_series)")
+    }
+    assert "idx_fund_nav_series_date" in indexes
+    risk_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(fund_risk_metrics)")
+    }
+    assert "max_drawdown_3y_percent" in risk_columns
 
 
 def test_current_schema_still_ensures_sector_direction_state_table() -> None:
@@ -441,7 +490,7 @@ def test_v19_and_v20_add_only_performance_metadata_to_operational_tables() -> No
 
     assert connection.execute(
         "SELECT version FROM schema_meta WHERE id = 1"
-    ).fetchone()[0] == 27
+    ).fetchone()[0] == SCHEMA_VERSION
     report_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(reports)")
     }

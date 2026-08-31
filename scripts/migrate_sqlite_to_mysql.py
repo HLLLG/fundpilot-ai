@@ -126,8 +126,16 @@ TABLES = [
         "fund_risk_metrics",
         [
             "fund_code", "sharpe_1y", "sharpe_3y",
-            "max_drawdown_1y_percent", "nav_as_of", "nav_point_count",
+            "max_drawdown_1y_percent", "max_drawdown_3y_percent",
+            "nav_as_of", "nav_point_count",
             "schema_version", "snapshot_available_at", "source",
+        ],
+    ),
+    (
+        "fund_nav_series",
+        [
+            "fund_code", "nav_date", "unit_nav", "daily_growth_percent",
+            "source", "snapshot_available_at",
         ],
     ),
     (

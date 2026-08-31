@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -2489,6 +2490,7 @@ _FUND_RISK_METRICS_COLUMNS = (
     "sharpe_1y",
     "sharpe_3y",
     "max_drawdown_1y_percent",
+    "max_drawdown_3y_percent",
     "nav_as_of",
     "nav_point_count",
     "schema_version",
@@ -2690,6 +2692,9 @@ def _normalize_fund_risk_metrics_row(
     drawdown = _optional_catalogue_float(row.get("max_drawdown_1y_percent"))
     if drawdown is not None and not -100.0 <= drawdown <= 0.0:
         drawdown = None
+    drawdown_3y = _optional_catalogue_float(row.get("max_drawdown_3y_percent"))
+    if drawdown_3y is not None and not -100.0 <= drawdown_3y <= 0.0:
+        drawdown_3y = None
     point_count = row.get("nav_point_count")
     try:
         nav_point_count = int(point_count) if point_count is not None else None
@@ -2700,6 +2705,7 @@ def _normalize_fund_risk_metrics_row(
         _optional_catalogue_float(row.get("sharpe_1y")),
         _optional_catalogue_float(row.get("sharpe_3y")),
         drawdown,
+        drawdown_3y,
         _optional_catalogue_text(row.get("nav_as_of")),
         nav_point_count,
         str(row.get("schema_version") or schema_version).strip() or schema_version,
@@ -2721,7 +2727,7 @@ def upsert_fund_risk_metrics(
     source: str = "computed_nav",
     schema_version: str = "fund_sharpe.alipay_style.v1",
 ) -> int:
-    """Insert or replace computed Sharpe / 1y drawdown rows."""
+    """Insert or replace computed Sharpe / 1y / 3y drawdown rows."""
 
     available_at = str(snapshot_available_at or "").strip()
     origin = str(source or "").strip() or "computed_nav"
@@ -2802,6 +2808,208 @@ def list_fund_risk_metrics_by_codes(
             for row in rows:
                 payload = _fund_risk_metrics_payload(row)
                 result[payload["fund_code"]] = payload
+    return result
+
+
+_FUND_NAV_SERIES_COLUMNS = (
+    "fund_code",
+    "nav_date",
+    "unit_nav",
+    "daily_growth_percent",
+    "source",
+    "snapshot_available_at",
+)
+_FUND_NAV_SERIES_INSERT_SQL = f"""
+    INSERT OR REPLACE INTO fund_nav_series (
+        {", ".join(_FUND_NAV_SERIES_COLUMNS)}
+    ) VALUES ({", ".join("?" * len(_FUND_NAV_SERIES_COLUMNS))})
+"""
+_FUND_NAV_SERIES_SELECT_SQL = f"""
+    SELECT {", ".join(_FUND_NAV_SERIES_COLUMNS)}
+    FROM fund_nav_series
+"""
+_NAV_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _normalize_fund_nav_series_row(
+    row: Mapping[str, Any],
+    *,
+    snapshot_available_at: str,
+    source: str,
+) -> tuple[Any, ...] | None:
+    code = str(row.get("fund_code") or "").strip().zfill(6)
+    nav_date = str(row.get("nav_date") or "").strip()[:10]
+    unit_nav = _optional_catalogue_float(row.get("unit_nav", row.get("nav")))
+    if (
+        len(code) != 6
+        or not code.isdigit()
+        or code == "000000"
+        or not _NAV_DATE_PATTERN.fullmatch(nav_date)
+        or unit_nav is None
+        or unit_nav <= 0
+        or not math.isfinite(unit_nav)
+    ):
+        return None
+    growth = _optional_catalogue_float(
+        row.get("daily_growth_percent", row.get("daily_growth"))
+    )
+    if growth is not None and not math.isfinite(growth):
+        growth = None
+    return (
+        code,
+        nav_date,
+        unit_nav,
+        growth,
+        str(row.get("source") or source).strip() or source,
+        str(row.get("snapshot_available_at") or snapshot_available_at).strip()
+        or snapshot_available_at,
+    )
+
+
+def _fund_nav_series_payload(row: Mapping[str, Any]) -> dict[str, Any]:
+    payload = _row_to_dict(row)
+    payload["fund_code"] = str(payload.get("fund_code") or "").zfill(6)
+    return payload
+
+
+def upsert_fund_nav_series(
+    rows: list[Mapping[str, Any]],
+    *,
+    snapshot_available_at: str,
+    source: str,
+) -> int:
+    """Insert or replace rolling market NAV points."""
+
+    available_at = str(snapshot_available_at or "").strip()
+    origin = str(source or "").strip() or "eastmoney.fund_jjjz"
+    if not available_at:
+        raise ValueError("snapshot_available_at is required")
+    params = [
+        item
+        for row in rows
+        if isinstance(row, Mapping)
+        for item in (
+            _normalize_fund_nav_series_row(
+                row,
+                snapshot_available_at=available_at,
+                source=origin,
+            ),
+        )
+        if item is not None
+    ]
+    if not params:
+        return 0
+    with _connect() as connection:
+        for start in range(0, len(params), _CATALOGUE_REPLACE_BATCH):
+            connection.executemany(
+                _FUND_NAV_SERIES_INSERT_SQL,
+                params[start : start + _CATALOGUE_REPLACE_BATCH],
+            )
+        connection.commit()
+    return len(params)
+
+
+def purge_fund_nav_series_before(cutoff_date: str) -> int:
+    """Delete NAV points strictly older than the rolling 3-year cutoff."""
+
+    cutoff = str(cutoff_date or "").strip()[:10]
+    if not _NAV_DATE_PATTERN.fullmatch(cutoff):
+        raise ValueError("cutoff_date must be YYYY-MM-DD")
+    with _connect() as connection:
+        cursor = connection.execute(
+            "DELETE FROM fund_nav_series WHERE nav_date < ?",
+            (cutoff,),
+        )
+        deleted = int(getattr(cursor, "rowcount", 0) or 0)
+        connection.commit()
+    return max(0, deleted)
+
+
+def get_fund_nav_series_meta() -> dict[str, Any] | None:
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS row_count,
+                   COUNT(DISTINCT fund_code) AS fund_count,
+                   MIN(nav_date) AS first_nav_date,
+                   MAX(nav_date) AS last_nav_date,
+                   MAX(snapshot_available_at) AS snapshot_available_at
+            FROM fund_nav_series
+            """
+        ).fetchone()
+    payload = _row_to_dict(row)
+    count = int(payload.get("row_count") or 0)
+    if count <= 0:
+        return None
+    return {
+        "row_count": count,
+        "fund_count": int(payload.get("fund_count") or 0),
+        "first_nav_date": str(payload.get("first_nav_date") or ""),
+        "last_nav_date": str(payload.get("last_nav_date") or ""),
+        "snapshot_available_at": str(payload.get("snapshot_available_at") or ""),
+    }
+
+
+def list_fund_nav_series_fund_codes() -> list[str]:
+    with _connect() as connection:
+        rows = connection.execute(
+            "SELECT DISTINCT fund_code FROM fund_nav_series ORDER BY fund_code"
+        ).fetchall()
+    codes: list[str] = []
+    for row in rows:
+        payload = _row_to_dict(row)
+        code = str(payload.get("fund_code") or "").zfill(6)
+        if len(code) == 6 and code.isdigit() and code != "000000":
+            codes.append(code)
+    return codes
+
+
+def list_fund_nav_series_coverage() -> dict[str, dict[str, Any]]:
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT fund_code,
+                   MIN(nav_date) AS first_nav_date,
+                   MAX(nav_date) AS last_nav_date,
+                   COUNT(*) AS point_count
+            FROM fund_nav_series
+            GROUP BY fund_code
+            """
+        ).fetchall()
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        payload = _row_to_dict(row)
+        code = str(payload.get("fund_code") or "").zfill(6)
+        if len(code) != 6 or not code.isdigit() or code == "000000":
+            continue
+        result[code] = {
+            "fund_code": code,
+            "first_nav_date": str(payload.get("first_nav_date") or ""),
+            "last_nav_date": str(payload.get("last_nav_date") or ""),
+            "point_count": int(payload.get("point_count") or 0),
+        }
+    return result
+
+
+def list_fund_nav_series_by_codes(
+    fund_codes: set[str] | list[str],
+) -> dict[str, list[dict[str, Any]]]:
+    normalized = _normalize_lookup_fund_codes(fund_codes)
+    if not normalized:
+        return {}
+    result: dict[str, list[dict[str, Any]]] = {code: [] for code in normalized}
+    with _connect() as connection:
+        for start in range(0, len(normalized), _CATALOGUE_REPLACE_BATCH):
+            chunk = normalized[start : start + _CATALOGUE_REPLACE_BATCH]
+            placeholders = ",".join("?" * len(chunk))
+            rows = connection.execute(
+                _FUND_NAV_SERIES_SELECT_SQL
+                + f" WHERE fund_code IN ({placeholders}) ORDER BY fund_code, nav_date",
+                tuple(chunk),
+            ).fetchall()
+            for row in rows:
+                payload = _fund_nav_series_payload(row)
+                result.setdefault(payload["fund_code"], []).append(payload)
     return result
 
 

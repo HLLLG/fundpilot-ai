@@ -293,6 +293,11 @@ class Settings(BaseSettings):
     fund_research_profile_refresh_enabled: bool = True
     fund_research_profile_refresh_poll_seconds: int = 3600
     fund_research_profile_refresh_startup_delay_seconds: int = 45
+    # 全市场滚动 3 年净值：后台日更 + 断点回填。本地 SQLite 默认不回填 2 万只。
+    fund_nav_series_refresh_enabled: bool = True
+    fund_nav_series_refresh_poll_seconds: int = 3600
+    fund_nav_series_refresh_startup_delay_seconds: int = 90
+    fund_nav_series_backfill_enabled: bool | None = None
     # 持仓共享行情缓存：后台时钟按时段刷新；请求路径只读缓存
     holding_detail_cache_ttl_seconds: int = 300
     holding_intraday_warmup_enabled: bool = True
@@ -454,6 +459,12 @@ class Settings(BaseSettings):
     @property
     def uses_mysql(self) -> bool:
         return bool(self.database_url and self.database_url.startswith("mysql"))
+
+    @property
+    def resolved_fund_nav_series_backfill_enabled(self) -> bool:
+        if self.fund_nav_series_backfill_enabled is not None:
+            return bool(self.fund_nav_series_backfill_enabled)
+        return self.uses_mysql
 
     @property
     def resolved_holdings_memory_cache_enabled(self) -> bool:

@@ -205,10 +205,10 @@ def _scale_component(row: Mapping[str, Any]) -> tuple[float, list[str], list[str
     if scale is None:
         score = 0.0
         penalties.append("基金规模未核验")
-    elif 3.0 <= scale <= 120.0:
+    elif 3.0 <= scale <= 100.0:
         score = 25.0
         reasons.append("基金规模处于稳健区间")
-    elif scale > 120.0:
+    elif scale > 100.0:
         score = 21.25
     elif scale >= 0.5:
         score = 17.5

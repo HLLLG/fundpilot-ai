@@ -12,7 +12,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 28
 
 # 迁移在应用/后台线程首次建立连接时触发（例如板块快照刷新会 daemon 线程预取资金流历史，
 # 与主线程几乎同时首次打开 sqlite 连接）。同进程内多个线程各自用独立 connection 对同一
@@ -750,6 +750,41 @@ def _migrate_fund_manager_roster_v27(connection: sqlite3.Connection) -> None:
     if _column_exists(connection, "fund_manager_roster", "career_annual_return_percent"):
         connection.execute(
             "ALTER TABLE fund_manager_roster DROP COLUMN career_annual_return_percent"
+        )
+
+
+def _migrate_fund_nav_series_v28(connection: sqlite3.Connection) -> None:
+    """Persist a rolling 3-year market NAV series and 3y drawdown on risk rows.
+
+    Daily JJJZ snapshots and per-fund history backfill write here. Retention
+    deletes dates older than three calendar years. Sharpe / drawdown are
+    recomputed from this table, not from Xueqiu or tesedata pages.
+    """
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fund_nav_series (
+            fund_code TEXT NOT NULL,
+            nav_date TEXT NOT NULL,
+            unit_nav REAL NOT NULL,
+            daily_growth_percent REAL,
+            source TEXT NOT NULL,
+            snapshot_available_at TEXT NOT NULL,
+            PRIMARY KEY (fund_code, nav_date)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_fund_nav_series_date
+        ON fund_nav_series (nav_date)
+        """
+    )
+    if _table_exists(connection, "fund_risk_metrics") and not _column_exists(
+        connection, "fund_risk_metrics", "max_drawdown_3y_percent"
+    ):
+        connection.execute(
+            "ALTER TABLE fund_risk_metrics ADD COLUMN max_drawdown_3y_percent REAL"
         )
 
 
@@ -2356,6 +2391,7 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
         _migrate_fund_daily_catalogue_v25(connection)
         _migrate_fund_research_tables_v26(connection)
         _migrate_fund_manager_roster_v27(connection)
+        _migrate_fund_nav_series_v28(connection)
         return
 
     connection.execute(
@@ -2437,4 +2473,5 @@ def _run_migrations_locked(connection: sqlite3.Connection) -> None:
     _migrate_fund_daily_catalogue_v25(connection)
     _migrate_fund_research_tables_v26(connection)
     _migrate_fund_manager_roster_v27(connection)
+    _migrate_fund_nav_series_v28(connection)
     _set_schema_version(connection, SCHEMA_VERSION)

@@ -144,6 +144,7 @@ def test_upsert_risk_metrics_clamps_invalid_drawdown() -> None:
                 "fund_code": "000022",
                 "sharpe_1y": 0.1,
                 "max_drawdown_1y_percent": 12.0,
+                "max_drawdown_3y_percent": 8.0,
             },
         ],
         snapshot_available_at="2026-08-26T16:00:00+00:00",
@@ -155,6 +156,7 @@ def test_upsert_risk_metrics_clamps_invalid_drawdown() -> None:
     assert rows["000021"]["schema_version"] == SHARPE_SCHEMA_VERSION
     assert rows["000021"]["source"] == "computed_nav"
     assert rows["000022"]["max_drawdown_1y_percent"] is None
+    assert rows["000022"]["max_drawdown_3y_percent"] is None
     assert list_fund_risk_metrics()[0]["fund_code"] == "000021"
 
 

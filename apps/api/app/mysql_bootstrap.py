@@ -12,7 +12,7 @@ from app.services.decision_quality_rollout import (
 )
 
 
-MYSQL_SCHEMA_VERSION = 27
+MYSQL_SCHEMA_VERSION = 28
 
 MYSQL_MIGRATION_GUARD_NAME = "sqlite_to_mysql"
 MYSQL_SCHEMA_LOCK_NAME = "fundpilot.mysql_schema.v18"
@@ -1867,12 +1867,25 @@ def _ensure_mysql_schema_locked(
             sharpe_1y DOUBLE NULL,
             sharpe_3y DOUBLE NULL,
             max_drawdown_1y_percent DOUBLE NULL,
+            max_drawdown_3y_percent DOUBLE NULL,
             nav_as_of VARCHAR(32) NULL,
             nav_point_count INT NULL,
             schema_version VARCHAR(64) NOT NULL,
             snapshot_available_at VARCHAR(64) NOT NULL,
             source VARCHAR(128) NOT NULL,
             INDEX idx_fund_risk_metrics_snapshot (snapshot_available_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS fund_nav_series (
+            fund_code VARCHAR(16) NOT NULL,
+            nav_date VARCHAR(10) NOT NULL,
+            unit_nav DOUBLE NOT NULL,
+            daily_growth_percent DOUBLE NULL,
+            source VARCHAR(128) NOT NULL,
+            snapshot_available_at VARCHAR(64) NOT NULL,
+            PRIMARY KEY (fund_code, nav_date),
+            INDEX idx_fund_nav_series_date (nav_date)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """,
         """
@@ -2042,6 +2055,9 @@ def _ensure_mysql_schema_locked(
             },
             "fund_research_profile": {
                 "fund_shares_yi": "DOUBLE NULL",
+            },
+            "fund_risk_metrics": {
+                "max_drawdown_3y_percent": "DOUBLE NULL",
             },
         }
         for table, columns in performance_columns.items():

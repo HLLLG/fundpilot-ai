@@ -45,8 +45,6 @@ _UNIVERSE_REFRESH_IN_FLIGHT = False
 _UNIVERSE_MEMORY_LOCK = RLock()
 _UNIVERSE_MEMORY_PAYLOAD: dict | None = None
 _UNIVERSE_MEMORY_LOADED_AT = 0.0
-_RISK_REFRESH_STATE_LOCK = RLock()
-_RISK_REFRESH_IN_FLIGHT = False
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +288,7 @@ def _refresh_discovery_universe_under_lock(
             source=str(snapshot.get("source") or _UNIVERSE_SNAPSHOT_SOURCE),
         )
         _pin_universe_payload(snapshot)
-        _schedule_risk_metrics_refresh()
+        _schedule_nav_series_maintenance()
         return _universe_rows_with_snapshot_contract(snapshot)
 
     if cached is not None:
@@ -301,35 +299,29 @@ def _refresh_discovery_universe_under_lock(
     return []
 
 
+def _schedule_nav_series_maintenance() -> None:
+    from app.services.fund_nav_series import (
+        schedule_daily_nav_series_sync,
+        schedule_nav_series_backfill,
+    )
+
+    schedule_daily_nav_series_sync()
+    schedule_nav_series_backfill()
+
+
 def _schedule_risk_metrics_refresh() -> None:
-    global _RISK_REFRESH_IN_FLIGHT
-    with _RISK_REFRESH_STATE_LOCK:
-        if _RISK_REFRESH_IN_FLIGHT:
-            return
-        _RISK_REFRESH_IN_FLIGHT = True
-    try:
-        Thread(
-            target=_run_risk_metrics_sidecar,
-            name="fund-risk-metrics-refresh",
-            daemon=True,
-        ).start()
-    except Exception:  # noqa: BLE001
-        with _RISK_REFRESH_STATE_LOCK:
-            _RISK_REFRESH_IN_FLIGHT = False
-        logger.exception("failed to start fund risk metrics refresh thread")
+    """兼容旧调用：目录刷新后改走全市场净值日更 + 回填。"""
+
+    _schedule_nav_series_maintenance()
 
 
 def _run_risk_metrics_sidecar() -> None:
-    global _RISK_REFRESH_IN_FLIGHT
     try:
-        from app.services.fund_risk_metrics import refresh_fund_risk_metrics_from_nav_cache
+        from app.services.fund_nav_series import run_daily_nav_series_and_risk
 
-        refresh_fund_risk_metrics_from_nav_cache()
+        run_daily_nav_series_and_risk()
     except Exception:  # noqa: BLE001
-        logger.exception("scheduled fund risk metrics refresh failed")
-    finally:
-        with _RISK_REFRESH_STATE_LOCK:
-            _RISK_REFRESH_IN_FLIGHT = False
+        logger.exception("scheduled fund nav series daily sync failed")
 
 
 def _schedule_discovery_universe_refresh(*, limit: int) -> None:

@@ -1,4 +1,4 @@
-"""身份集自算夏普 / 一年回撤：只写净值复算，不接雪球现成数字。"""
+"""身份集 / 全市场净值表自算夏普与回撤：只写净值复算，不接雪球现成数字。"""
 
 from __future__ import annotations
 
@@ -8,11 +8,15 @@ from typing import Any
 
 from app.database import (
     list_fresh_verified_identity_fund_codes,
+    list_fund_nav_series_by_codes,
+    list_fund_nav_series_fund_codes,
     list_fund_risk_metrics,
     list_fund_risk_metrics_by_codes,
+    upsert_fund_nav_series,
     upsert_fund_risk_metrics,
 )
 from app.services.fund_nav_cache import CANONICAL_NAV_TRADING_DAYS, get_cached_fund_nav
+from app.services.fund_nav_series import NAV_SERIES_SOURCE_HISTORY
 from app.services.fund_sharpe import (
     SHARPE_SCHEMA_VERSION,
     compute_alipay_style_sharpes,
@@ -20,6 +24,7 @@ from app.services.fund_sharpe import (
 )
 
 _RISK_SOURCE = "computed_nav"
+_RISK_REFRESH_CHUNK = 40
 logger = logging.getLogger(__name__)
 
 
@@ -45,14 +50,16 @@ def build_risk_metrics_row(
     )
     one = payload["horizons"]["1y"]
     three = payload["horizons"]["3y"]
-    drawdown = compute_window_max_drawdown_percent(series, years=1, as_of=as_of)
-    if one is None and three is None and drawdown is None:
+    drawdown_1y = compute_window_max_drawdown_percent(series, years=1, as_of=as_of)
+    drawdown_3y = compute_window_max_drawdown_percent(series, years=3, as_of=as_of)
+    if one is None and three is None and drawdown_1y is None and drawdown_3y is None:
         return None
     return {
         "fund_code": code,
         "sharpe_1y": None if one is None else one["sharpe"],
         "sharpe_3y": None if three is None else three["sharpe"],
-        "max_drawdown_1y_percent": drawdown,
+        "max_drawdown_1y_percent": drawdown_1y,
+        "max_drawdown_3y_percent": drawdown_3y,
         "nav_as_of": payload.get("as_of"),
         "nav_point_count": len(series),
         "schema_version": SHARPE_SCHEMA_VERSION,
@@ -69,14 +76,41 @@ def persist_risk_metrics_from_points(
     as_of: object | None = None,
     available_at: str | None = None,
 ) -> dict[str, Any] | None:
+    stamp = available_at or _now_utc_iso()
     row = build_risk_metrics_row(
         fund_code,
         points,
         as_of=as_of,
-        available_at=available_at,
+        available_at=stamp,
     )
     if row is None:
         return None
+    series_rows = [
+        {
+            "fund_code": row["fund_code"],
+            "nav_date": getattr(point, "date", None)
+            if not isinstance(point, dict)
+            else point.get("date"),
+            "unit_nav": getattr(point, "nav", None)
+            if not isinstance(point, dict)
+            else point.get("nav"),
+            "daily_growth_percent": (
+                getattr(point, "daily_return_percent", None)
+                if not isinstance(point, dict)
+                else point.get(
+                    "daily_growth_percent",
+                    point.get("daily_return_percent", point.get("daily_growth")),
+                )
+            ),
+        }
+        for point in list(points or [])
+    ]
+    if series_rows:
+        upsert_fund_nav_series(
+            series_rows,
+            snapshot_available_at=stamp,
+            source=NAV_SERIES_SOURCE_HISTORY,
+        )
     upsert_fund_risk_metrics(
         [row],
         snapshot_available_at=str(row["snapshot_available_at"]),
@@ -90,7 +124,7 @@ def refresh_fund_risk_metrics_from_nav_cache(
     *,
     fund_codes: list[str] | None = None,
 ) -> int:
-    """只读净值缓存，给已核验身份（或指定代码）补夏普/一年回撤。不拉源。"""
+    """只读净值缓存，给已核验身份（或指定代码）补夏普/回撤。不拉源。"""
 
     codes = list(fund_codes or list_fresh_verified_identity_fund_codes())
     computed: list[dict[str, Any]] = []
@@ -117,6 +151,53 @@ def refresh_fund_risk_metrics_from_nav_cache(
     )
 
 
+def _series_rows_to_points(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    points: list[dict[str, Any]] = []
+    for row in rows:
+        points.append(
+            {
+                "date": row.get("nav_date"),
+                "nav": row.get("unit_nav"),
+                "daily_return_percent": row.get("daily_growth_percent"),
+            }
+        )
+    return points
+
+
+def refresh_fund_risk_metrics_from_nav_series(
+    *,
+    fund_codes: list[str] | None = None,
+) -> int:
+    """只读 ``fund_nav_series``，给全市场（或指定代码）重算 1/3 年夏普与回撤。"""
+
+    codes = list(fund_codes or list_fund_nav_series_fund_codes())
+    available_at = _now_utc_iso()
+    written = 0
+    for start in range(0, len(codes), _RISK_REFRESH_CHUNK):
+        chunk = codes[start : start + _RISK_REFRESH_CHUNK]
+        series_map = list_fund_nav_series_by_codes(chunk)
+        computed: list[dict[str, Any]] = []
+        for code in chunk:
+            points = _series_rows_to_points(series_map.get(code) or [])
+            as_of = points[-1]["date"] if points else None
+            row = build_risk_metrics_row(
+                code,
+                points,
+                as_of=as_of,
+                available_at=available_at,
+            )
+            if row is not None:
+                computed.append(row)
+        if computed:
+            written += upsert_fund_risk_metrics(
+                computed,
+                snapshot_available_at=available_at,
+                source=_RISK_SOURCE,
+                schema_version=SHARPE_SCHEMA_VERSION,
+            )
+    return written
+
+
 def list_risk_metrics_for_codes(fund_codes: list[str] | set[str]) -> dict[str, dict]:
     return list_fund_risk_metrics_by_codes(fund_codes)
 
@@ -129,7 +210,12 @@ def apply_risk_metrics_to_row(row: dict, extra: dict | None) -> dict:
     if not extra:
         return row
     item = row
-    for key in ("sharpe_1y", "sharpe_3y", "max_drawdown_1y_percent"):
+    for key in (
+        "sharpe_1y",
+        "sharpe_3y",
+        "max_drawdown_1y_percent",
+        "max_drawdown_3y_percent",
+    ):
         if item.get(key) is None and extra.get(key) is not None:
             item[key] = extra[key]
             stamp = extra.get("snapshot_available_at")

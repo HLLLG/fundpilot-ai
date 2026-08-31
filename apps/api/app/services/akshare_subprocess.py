@@ -984,6 +984,87 @@ except Exception as e:
     )
 
 
+def fetch_open_fund_daily_nav_snapshot() -> dict | None:
+    """一次拉取开放式基金最新净值全表（通常含最近 1～2 个披露日）。"""
+
+    script = """
+import json
+import math
+import re
+
+import akshare as ak
+
+_DATE_RE = re.compile(r"^(\\d{4}-\\d{2}-\\d{2})")
+
+
+def _num(raw):
+    if raw is None or str(raw).strip().lower() in ("", "nan", "--"):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    return value
+
+
+try:
+    frame = ak.fund_open_fund_daily_em()
+    if frame is None or frame.empty:
+        print(json.dumps({"error": "empty"}))
+    else:
+        dated = []
+        for column in frame.columns:
+            match = _DATE_RE.match(str(column))
+            if match is None or not str(column).endswith("单位净值"):
+                continue
+            dated.append((match.group(1), column))
+        dated.sort(key=lambda item: item[0], reverse=True)
+        latest_date = dated[0][0] if dated else None
+        prior_date = dated[1][0] if len(dated) > 1 else None
+        latest_col = dated[0][1] if dated else None
+        prior_col = dated[1][1] if len(dated) > 1 else None
+        rows = []
+        seen = set()
+        for _, row in frame.iterrows():
+            code = str(row.get("基金代码", "")).strip().zfill(6)
+            if (
+                len(code) != 6
+                or not code.isdigit()
+                or code == "000000"
+                or code in seen
+            ):
+                continue
+            seen.add(code)
+            rows.append({
+                "fund_code": code,
+                "fund_name": str(row.get("基金简称", "") or "").strip(),
+                "latest_nav": _num(row.get(latest_col)) if latest_col else None,
+                "prior_nav": _num(row.get(prior_col)) if prior_col else None,
+                "daily_growth_percent": _num(row.get("日增长率")),
+            })
+        print(json.dumps({
+            "latest_date": latest_date,
+            "prior_date": prior_date,
+            "rows": rows,
+        }, ensure_ascii=False))
+except Exception as exc:
+    print(json.dumps({"error": str(exc)}, ensure_ascii=False))
+"""
+    payload = run_akshare_json_script(
+        script,
+        label="open_fund_daily_nav_snapshot",
+        timeout=max(_SUBPROCESS_TIMEOUT, 90),
+    )
+    if not isinstance(payload, dict) or payload.get("error"):
+        return None
+    rows = payload.get("rows")
+    if not isinstance(rows, list) or not rows:
+        return None
+    return payload
+
+
 def _index_market_symbol(index_symbol: str) -> str:
     code = index_symbol.strip()
     if code.startswith(("sh", "sz")):
