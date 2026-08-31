@@ -36,6 +36,7 @@ SCHEDULED_SCRIPTS = (
     "rerun_holdings_primary_sectors.py",
     "rerun_all_primary_sectors.py",
     "verify_holdings_primary_sectors.py",
+    "sync_fund_nav_series.py",
 )
 
 
@@ -88,6 +89,11 @@ def test_both_dockerignore_allowlists_release_the_script(script: str) -> None:
             "fund-research-profile-refresh.yml",
             "python scripts/refresh_fund_research_profiles.py",
             "apps/api/scripts/refresh_fund_research_profiles.py",
+        ),
+        (
+            "fund-nav-series-daily.yml",
+            "python scripts/sync_fund_nav_series.py",
+            "apps/api/scripts/sync_fund_nav_series.py",
         ),
     ],
 )

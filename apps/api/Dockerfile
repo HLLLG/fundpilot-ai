@@ -19,6 +19,7 @@ COPY scripts/diagnose_sector_vehicles.py /app/scripts/diagnose_sector_vehicles.p
 COPY scripts/rerun_holdings_primary_sectors.py /app/scripts/rerun_holdings_primary_sectors.py
 COPY scripts/rerun_all_primary_sectors.py /app/scripts/rerun_all_primary_sectors.py
 COPY scripts/verify_holdings_primary_sectors.py /app/scripts/verify_holdings_primary_sectors.py
+COPY scripts/sync_fund_nav_series.py /app/scripts/sync_fund_nav_series.py
 
 # 2026-07-04（方案 B，见 apps/api/var/factor_ic/.gitkeep 注释）：因子 IC 离线回测
 # 产物（scripts/run_factor_ic.py 生成，供 factor_confidence.py::load_ic_summary 读取，

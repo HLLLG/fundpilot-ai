@@ -25,6 +25,7 @@ COPY apps/api/scripts/diagnose_sector_vehicles.py /app/scripts/diagnose_sector_v
 COPY apps/api/scripts/rerun_holdings_primary_sectors.py /app/scripts/rerun_holdings_primary_sectors.py
 COPY apps/api/scripts/rerun_all_primary_sectors.py /app/scripts/rerun_all_primary_sectors.py
 COPY apps/api/scripts/verify_holdings_primary_sectors.py /app/scripts/verify_holdings_primary_sectors.py
+COPY apps/api/scripts/sync_fund_nav_series.py /app/scripts/sync_fund_nav_series.py
 
 # 因子 IC 离线回测产物由 scripts/run_factor_ic.py 生成，供
 # factor_confidence.py::load_ic_summary 读取。`.gitkeep` 保证干净 checkout 中目录存在；

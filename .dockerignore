@@ -37,6 +37,7 @@ apps/api/scripts/*
 !apps/api/scripts/rerun_holdings_primary_sectors.py
 !apps/api/scripts/rerun_all_primary_sectors.py
 !apps/api/scripts/verify_holdings_primary_sectors.py
+!apps/api/scripts/sync_fund_nav_series.py
 deploy
 scripts
 

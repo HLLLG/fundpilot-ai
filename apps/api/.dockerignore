@@ -13,6 +13,7 @@ scripts/*
 !scripts/rerun_holdings_primary_sectors.py
 !scripts/rerun_all_primary_sectors.py
 !scripts/verify_holdings_primary_sectors.py
+!scripts/sync_fund_nav_series.py
 **/__pycache__
 **/*.py[cod]
 **/*.log
