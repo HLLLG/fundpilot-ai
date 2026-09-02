@@ -2224,6 +2224,9 @@ _FUND_DAILY_CATALOGUE_SELECT_SQL = f"""
     FROM fund_daily_catalogue
 """
 _CATALOGUE_REPLACE_BATCH = 500
+# 单次整表 DELETE 会在 15M 行上打穿 MySQL 30s read_timeout。
+_NAV_SERIES_PURGE_BATCH = 2000
+_NAV_SERIES_CODE_PAGE = 500
 
 
 def _optional_catalogue_text(value: object) -> str | None:
@@ -2910,19 +2913,49 @@ def upsert_fund_nav_series(
 
 
 def purge_fund_nav_series_before(cutoff_date: str) -> int:
-    """Delete NAV points strictly older than the rolling 3-year cutoff."""
+    """Delete NAV points strictly older than the rolling 3-year cutoff.
+
+    Production holds more than ten million rows. One unbounded ``DELETE``
+    exceeds the 30s MySQL read timeout, so each batch commits independently.
+    """
 
     cutoff = str(cutoff_date or "").strip()[:10]
     if not _NAV_DATE_PATTERN.fullmatch(cutoff):
         raise ValueError("cutoff_date must be YYYY-MM-DD")
-    with _connect() as connection:
-        cursor = connection.execute(
-            "DELETE FROM fund_nav_series WHERE nav_date < ?",
-            (cutoff,),
-        )
-        deleted = int(getattr(cursor, "rowcount", 0) or 0)
-        connection.commit()
-    return max(0, deleted)
+    deleted_total = 0
+    batch_index = 0
+    while True:
+        with _connect() as connection:
+            if str(getattr(connection, "dialect", "")) == "mysql":
+                cursor = connection.execute(
+                    "DELETE FROM fund_nav_series WHERE nav_date < ? LIMIT ?",
+                    (cutoff, _NAV_SERIES_PURGE_BATCH),
+                )
+            else:
+                cursor = connection.execute(
+                    """
+                    DELETE FROM fund_nav_series
+                    WHERE rowid IN (
+                        SELECT rowid FROM fund_nav_series
+                        WHERE nav_date < ?
+                        LIMIT ?
+                    )
+                    """,
+                    (cutoff, _NAV_SERIES_PURGE_BATCH),
+                )
+            batch = max(0, int(getattr(cursor, "rowcount", 0) or 0))
+        deleted_total += batch
+        batch_index += 1
+        if batch_index == 1 or batch_index % 10 == 0 or batch < _NAV_SERIES_PURGE_BATCH:
+            logger.info(
+                "fund nav series purge cutoff=%s batch=%s deleted=%s total=%s",
+                cutoff,
+                batch_index,
+                batch,
+                deleted_total,
+            )
+        if batch < _NAV_SERIES_PURGE_BATCH:
+            return deleted_total
 
 
 def get_fund_nav_series_meta() -> dict[str, Any] | None:
@@ -2951,17 +2984,35 @@ def get_fund_nav_series_meta() -> dict[str, Any] | None:
 
 
 def list_fund_nav_series_fund_codes() -> list[str]:
-    with _connect() as connection:
-        rows = connection.execute(
-            "SELECT DISTINCT fund_code FROM fund_nav_series ORDER BY fund_code"
-        ).fetchall()
+    """Page through distinct codes so a 15M-row scan cannot time out."""
+
     codes: list[str] = []
-    for row in rows:
-        payload = _row_to_dict(row)
-        code = str(payload.get("fund_code") or "").zfill(6)
-        if len(code) == 6 and code.isdigit() and code != "000000":
-            codes.append(code)
-    return codes
+    after = ""
+    while True:
+        with _connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT fund_code
+                FROM fund_nav_series
+                WHERE fund_code > ?
+                GROUP BY fund_code
+                ORDER BY fund_code
+                LIMIT ?
+                """,
+                (after, _NAV_SERIES_CODE_PAGE),
+            ).fetchall()
+        page: list[str] = []
+        for row in rows:
+            payload = _row_to_dict(row)
+            code = str(payload.get("fund_code") or "").zfill(6)
+            if len(code) == 6 and code.isdigit() and code != "000000":
+                page.append(code)
+        if not page:
+            return codes
+        codes.extend(page)
+        after = page[-1]
+        if len(page) < _NAV_SERIES_CODE_PAGE:
+            return codes
 
 
 def list_fund_nav_series_coverage() -> dict[str, dict[str, Any]]:

@@ -173,7 +173,8 @@ def refresh_fund_risk_metrics_from_nav_series(
     codes = list(fund_codes or list_fund_nav_series_fund_codes())
     available_at = _now_utc_iso()
     written = 0
-    for start in range(0, len(codes), _RISK_REFRESH_CHUNK):
+    total = len(codes)
+    for start in range(0, total, _RISK_REFRESH_CHUNK):
         chunk = codes[start : start + _RISK_REFRESH_CHUNK]
         series_map = list_fund_nav_series_by_codes(chunk)
         computed: list[dict[str, Any]] = []
@@ -194,6 +195,14 @@ def refresh_fund_risk_metrics_from_nav_series(
                 snapshot_available_at=available_at,
                 source=_RISK_SOURCE,
                 schema_version=SHARPE_SCHEMA_VERSION,
+            )
+        done = min(start + _RISK_REFRESH_CHUNK, total)
+        if done == total or done % 800 == 0:
+            logger.info(
+                "fund risk metrics from nav series %s/%s written=%s",
+                done,
+                total,
+                written,
             )
     return written
 

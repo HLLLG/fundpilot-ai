@@ -5,11 +5,12 @@
     python scripts/sync_fund_nav_series.py --daily
     python scripts/sync_fund_nav_series.py --backfill
     python scripts/sync_fund_nav_series.py --backfill --limit 200
+    python scripts/sync_fund_nav_series.py --purge-expired
     python scripts/sync_fund_nav_series.py --recompute-risk
     python scripts/sync_fund_nav_series.py --all
 
 日更走东财开放式净值全表（一次请求）。3 年历史只能逐只回填，可断点续跑。
-过期点（早于今天往前 3 个自然年）每次写入后删除。
+过期点（早于今天往前 3 个自然年）分批删除，避免整表 DELETE 把 MySQL 读超时打穿。
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ if str(API_ROOT) not in sys.path:
 from app.database import get_fund_nav_series_meta  # noqa: E402
 from app.services.fund_nav_series import (  # noqa: E402
     backfill_fund_nav_series,
+    purge_expired_fund_nav_series,
     run_daily_nav_series_and_risk,
 )
 from app.services.fund_risk_metrics import (  # noqa: E402
@@ -34,7 +36,7 @@ from app.services.fund_risk_metrics import (  # noqa: E402
 )
 
 logging.basicConfig(
-    level=logging.WARNING,
+    level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
@@ -53,11 +55,14 @@ def main() -> int:
     parser.add_argument("--backfill", action="store_true", help="逐只回填近 800 个交易日")
     parser.add_argument("--limit", type=int, default=None, help="本轮最多回填几只")
     parser.add_argument("--force", action="store_true", help="无视已回填记录，重新拉历史")
+    parser.add_argument("--purge-expired", action="store_true", help="只分批删除 3 年以前的净值点")
     parser.add_argument("--recompute-risk", action="store_true", help="只按已入库净值重算风险")
     parser.add_argument("--all", action="store_true", help="日更 + 回填剩余代码 + 重算风险")
     parser.add_argument("--json", dest="json_out", default=None, help="把摘要写到该路径")
     args = parser.parse_args()
-    if not any((args.daily, args.backfill, args.recompute_risk, args.all)):
+    if not any(
+        (args.daily, args.backfill, args.recompute_risk, args.all, args.purge_expired)
+    ):
         args.all = True
 
     summary: dict = {"ok": False}
@@ -74,6 +79,12 @@ def main() -> int:
         )
         if daily.get("error"):
             print(f"  !! {daily['error']}", file=sys.stderr)
+
+    if args.purge_expired and not (args.all or args.daily or args.backfill):
+        print(f"[{_now()}] 开始分批删除过期净值", flush=True)
+        purged = purge_expired_fund_nav_series()
+        summary["purged"] = purged
+        print(f"  删除过期 {purged}", flush=True)
 
     if args.all or args.backfill:
         print(f"[{_now()}] 开始历史净值回填", flush=True)
@@ -95,9 +106,19 @@ def main() -> int:
         summary["risk_written"] = written
         print(f"  写入 {written}", flush=True)
 
-    meta = get_fund_nav_series_meta() or {}
+    try:
+        meta = get_fund_nav_series_meta() or {}
+    except Exception as exc:  # noqa: BLE001 - 摘要查询超时不应盖过已完成的写入
+        print(f"  !! 表摘要查询失败：{exc}", file=sys.stderr)
+        meta = {}
     summary["series"] = meta
-    summary["ok"] = int(meta.get("row_count") or 0) > 0
+    summary["ok"] = bool(
+        int(meta.get("row_count") or 0) > 0
+        or summary.get("risk_written")
+        or summary.get("purged")
+        or (summary.get("daily") or {}).get("written")
+        or (summary.get("backfill") or {}).get("fetched")
+    )
     print()
     print(f"  表内点数          {meta.get('row_count')}")
     print(f"  覆盖基金          {meta.get('fund_count')}")

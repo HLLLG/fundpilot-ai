@@ -225,12 +225,19 @@ def sync_daily_fund_nav_series() -> dict[str, Any]:
         snapshot_available_at=available_at,
         source=NAV_SERIES_SOURCE_DAILY,
     )
-    purged = purge_expired_fund_nav_series()
+    # 日更点已写入就落状态，避免 purge 超时后每小时重拉全表。
     status = _load_status()
     status["daily_as_of"] = snapshot.get("latest_date")
     status["daily_updated_at"] = available_at
     _save_status(status)
-    return {
+    try:
+        purged = purge_expired_fund_nav_series()
+        purge_error = None
+    except Exception as exc:  # noqa: BLE001 - 日更已成功，过期清理失败不回滚写入
+        logger.exception("fund nav series purge failed after daily write")
+        purged = 0
+        purge_error = f"purge_failed:{exc}"
+    payload = {
         "written": written,
         "purged": purged,
         "latest_date": snapshot.get("latest_date"),
@@ -244,6 +251,9 @@ def sync_daily_fund_nav_series() -> dict[str, Any]:
             }
         ),
     }
+    if purge_error:
+        payload["error"] = purge_error
+    return payload
 
 
 def _candidate_backfill_codes() -> list[str]:
@@ -312,7 +322,12 @@ def backfill_fund_nav_series(
             _save_status(status)
         if index + 1 < len(targets) and _BACKFILL_SLEEP_SECONDS > 0:
             time.sleep(_BACKFILL_SLEEP_SECONDS)
-    purged = purge_expired_fund_nav_series()
+    try:
+        purged = purge_expired_fund_nav_series()
+    except Exception as exc:  # noqa: BLE001 - 回填进度已落盘，过期清理失败不丢本轮
+        logger.exception("fund nav series purge failed after backfill")
+        purged = 0
+        last_error = last_error or f"purge:{exc}"
     status["filled_codes"] = sorted(filled)
     status["filled_count"] = len(filled)
     status["updated_at"] = _now_utc_iso()

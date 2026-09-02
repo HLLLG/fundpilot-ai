@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from app.database import (
     get_fund_nav_series_meta,
     list_fund_nav_series_by_codes,
+    list_fund_nav_series_fund_codes,
     list_fund_risk_metrics_by_codes,
     replace_fund_daily_catalogue,
     upsert_fund_nav_series,
@@ -128,6 +129,82 @@ def test_upsert_and_purge_keeps_only_three_years() -> None:
     assert meta is not None
     assert meta["fund_count"] == 1
     assert meta["row_count"] == 2
+
+
+def test_purge_deletes_expired_rows_in_small_batches(monkeypatch) -> None:
+    import app.database as database
+
+    monkeypatch.setattr(database, "_NAV_SERIES_PURGE_BATCH", 1)
+    upsert_fund_nav_series(
+        [
+            {"fund_code": "000041", "nav_date": "2022-01-01", "unit_nav": 1.01},
+            {"fund_code": "000041", "nav_date": "2022-06-01", "unit_nav": 1.02},
+            {"fund_code": "000041", "nav_date": "2026-08-31", "unit_nav": 1.2},
+        ],
+        snapshot_available_at="2026-08-31T16:00:00+00:00",
+        source=NAV_SERIES_SOURCE_HISTORY,
+    )
+
+    purged = purge_expired_fund_nav_series(today=date(2026, 8, 31))
+
+    assert purged == 2
+    stored = list_fund_nav_series_by_codes(["000041"])["000041"]
+    assert [row["nav_date"] for row in stored] == ["2026-08-31"]
+
+
+def test_list_nav_series_fund_codes_pages_distinct_codes(monkeypatch) -> None:
+    import app.database as database
+
+    monkeypatch.setattr(database, "_NAV_SERIES_CODE_PAGE", 1)
+    upsert_fund_nav_series(
+        [
+            {"fund_code": "000051", "nav_date": "2026-08-30", "unit_nav": 1.1},
+            {"fund_code": "000052", "nav_date": "2026-08-30", "unit_nav": 1.2},
+            {"fund_code": "000052", "nav_date": "2026-08-31", "unit_nav": 1.3},
+        ],
+        snapshot_available_at="2026-08-31T16:00:00+00:00",
+        source=NAV_SERIES_SOURCE_HISTORY,
+    )
+
+    assert list_fund_nav_series_fund_codes() == ["000051", "000052"]
+
+
+def test_daily_sync_keeps_status_when_purge_fails(monkeypatch) -> None:
+    from app.services import fund_nav_series as nav_mod
+
+    monkeypatch.setattr(
+        "app.services.akshare_subprocess.fetch_open_fund_daily_nav_snapshot",
+        lambda: {
+            "latest_date": "2026-08-28",
+            "prior_date": "2026-08-27",
+            "rows": [
+                {
+                    "fund_code": "110033",
+                    "latest_nav": 1.5,
+                    "prior_nav": 1.4,
+                    "daily_growth_percent": 7.14,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        nav_mod,
+        "purge_expired_fund_nav_series",
+        lambda: (_ for _ in ()).throw(TimeoutError("read timed out")),
+    )
+
+    summary = sync_daily_fund_nav_series()
+
+    assert summary["written"] == 2
+    assert summary["purged"] == 0
+    assert str(summary.get("error") or "").startswith("purge_failed:")
+    assert daily_nav_series_already_ran_today(today=date(2026, 8, 28)) is False
+    # available_at 是 UTC「现在」，用上海今天验收：状态已写入，不会因 purge 丢失。
+    stored = list_fund_nav_series_by_codes(["110033"])["110033"]
+    assert stored[-1]["unit_nav"] == 1.5
+    status = nav_mod._load_status()
+    assert status.get("daily_as_of") == "2026-08-28"
+    assert status.get("daily_updated_at")
 
 
 def test_daily_sync_uses_market_snapshot(monkeypatch) -> None:
@@ -332,3 +409,4 @@ def test_daily_workflow_calls_sync_script() -> None:
     text = workflow.read_text(encoding="utf-8")
     assert "scripts/sync_fund_nav_series.py --daily" in text
     assert "10 22 * * 1-5" in text
+    assert "3 年历史回填不在本 workflow" in text
