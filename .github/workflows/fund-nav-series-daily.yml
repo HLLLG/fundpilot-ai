@@ -72,3 +72,4 @@ jobs:
           echo "口径：东财开放式净值全表写入最近 1～2 个披露日到 fund_nav_series。" >> "$GITHUB_STEP_SUMMARY"
           echo "口径：按表重算 1/3 年回撤与夏普到 fund_risk_metrics。" >> "$GITHUB_STEP_SUMMARY"
           echo "口径：3 年历史回填不在本 workflow，由 worker 断点续跑。" >> "$GITHUB_STEP_SUMMARY"
+          echo "口径：退出码只认日更本身——净值没拉到才算失败；过期清理与表摘要超时降级成告警。" >> "$GITHUB_STEP_SUMMARY"

@@ -2227,6 +2227,8 @@ _CATALOGUE_REPLACE_BATCH = 500
 # 单次整表 DELETE 会在 15M 行上打穿 MySQL 30s read_timeout。
 _NAV_SERIES_PURGE_BATCH = 2000
 _NAV_SERIES_CODE_PAGE = 500
+# 精确计数绕不开一次索引扫描，但按代码分页后没有单条语句会撞上 30s 读超时。
+_NAV_SERIES_COUNT_PAGE = 200
 
 
 def _optional_catalogue_text(value: object) -> str | None:
@@ -2958,28 +2960,82 @@ def purge_fund_nav_series_before(cutoff_date: str) -> int:
             return deleted_total
 
 
+def count_fund_nav_series_rows() -> tuple[int, int]:
+    """Return ``(row_count, fund_count)`` without one statement over the table.
+
+    An exact InnoDB count has to walk an index either way, so this only splits
+    the walk: each page covers a bounded slice of the primary key instead of
+    betting the whole scan on a single round trip.
+    """
+
+    row_total = 0
+    fund_total = 0
+    after = ""
+    while True:
+        with _connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT fund_code, COUNT(*) AS point_count
+                FROM fund_nav_series
+                WHERE fund_code > ?
+                GROUP BY fund_code
+                ORDER BY fund_code
+                LIMIT ?
+                """,
+                (after, _NAV_SERIES_COUNT_PAGE),
+            ).fetchall()
+        page = [_row_to_dict(row) for row in rows]
+        if not page:
+            return row_total, fund_total
+        for payload in page:
+            row_total += max(0, int(payload.get("point_count") or 0))
+        fund_total += len(page)
+        after = str(page[-1].get("fund_code") or "")
+        if not after or len(page) < _NAV_SERIES_COUNT_PAGE:
+            return row_total, fund_total
+
+
 def get_fund_nav_series_meta() -> dict[str, Any] | None:
+    """Summarise the NAV table without one statement that reads every row.
+
+    The old single aggregate combined ``COUNT(*)``, ``COUNT(DISTINCT
+    fund_code)`` and ``MAX(snapshot_available_at)``. That last column has no
+    index, so MySQL had to walk the clustered index across every column; on the
+    production table (~18M rows) it blew the 30s read timeout and took the
+    nightly job down with it. Now the date bounds come from
+    ``idx_fund_nav_series_date``, the capture stamp from the newest ``nav_date``
+    alone (the reading anyone wants from this field), and the counts from
+    :func:`count_fund_nav_series_rows`.
+    """
+
     with _connect() as connection:
-        row = connection.execute(
-            """
-            SELECT COUNT(*) AS row_count,
-                   COUNT(DISTINCT fund_code) AS fund_count,
-                   MIN(nav_date) AS first_nav_date,
-                   MAX(nav_date) AS last_nav_date,
-                   MAX(snapshot_available_at) AS snapshot_available_at
-            FROM fund_nav_series
-            """
-        ).fetchone()
-    payload = _row_to_dict(row)
-    count = int(payload.get("row_count") or 0)
-    if count <= 0:
-        return None
+        first_nav_date = str(
+            _row_to_dict(
+                connection.execute(
+                    "SELECT nav_date FROM fund_nav_series ORDER BY nav_date LIMIT 1"
+                ).fetchone()
+            ).get("nav_date")
+            or ""
+        )
+        if not first_nav_date:
+            return None
+        newest = _row_to_dict(
+            connection.execute(
+                """
+                SELECT nav_date, snapshot_available_at
+                FROM fund_nav_series
+                ORDER BY nav_date DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        )
+    row_count, fund_count = count_fund_nav_series_rows()
     return {
-        "row_count": count,
-        "fund_count": int(payload.get("fund_count") or 0),
-        "first_nav_date": str(payload.get("first_nav_date") or ""),
-        "last_nav_date": str(payload.get("last_nav_date") or ""),
-        "snapshot_available_at": str(payload.get("snapshot_available_at") or ""),
+        "row_count": row_count,
+        "fund_count": fund_count,
+        "first_nav_date": first_nav_date,
+        "last_nav_date": str(newest.get("nav_date") or ""),
+        "snapshot_available_at": str(newest.get("snapshot_available_at") or ""),
     }
 
 

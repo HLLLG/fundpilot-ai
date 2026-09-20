@@ -66,19 +66,31 @@ def main() -> int:
         args.all = True
 
     summary: dict = {"ok": False}
+    # 致命失败（净值没拉到）才让退出码变红；过期清理和表摘要失败不算，
+    # 它们不影响当天入库的净值点。
+    failures: list[str] = []
+    meta: dict | None = None
     if args.all or args.daily:
         print(f"[{_now()}] 开始全市场净值日更", flush=True)
         daily_summary = run_daily_nav_series_and_risk()
         summary["daily"] = daily_summary.get("daily")
         summary["risk_written"] = daily_summary.get("risk_written")
+        meta = daily_summary.get("series") or None
         daily = summary.get("daily") or {}
         print(
             f"  写入 {daily.get('written')}  删除过期 {daily.get('purged')}  "
             f"最新日 {daily.get('latest_date')}  风险 {daily_summary.get('risk_written')}",
             flush=True,
         )
-        if daily.get("error"):
-            print(f"  !! {daily['error']}", file=sys.stderr)
+        error = str(daily.get("error") or "")
+        if error:
+            print(f"  !! {error}", file=sys.stderr)
+        if error and not error.startswith("purge_failed:"):
+            failures.append(error)
+        elif int(daily.get("written") or 0) <= 0:
+            failures.append("daily_nav_no_points_written")
+        if daily_summary.get("meta_error"):
+            print(f"  !! {daily_summary['meta_error']}", file=sys.stderr)
 
     if args.purge_expired and not (args.all or args.daily or args.backfill):
         print(f"[{_now()}] 开始分批删除过期净值", flush=True)
@@ -87,6 +99,8 @@ def main() -> int:
         print(f"  删除过期 {purged}", flush=True)
 
     if args.all or args.backfill:
+        # 回填会改变表内点数，日更那一步取的摘要不能再复用。
+        meta = None
         print(f"[{_now()}] 开始历史净值回填", flush=True)
         backfill = backfill_fund_nav_series(limit=args.limit, force=args.force)
         summary["backfill"] = backfill
@@ -106,19 +120,23 @@ def main() -> int:
         summary["risk_written"] = written
         print(f"  写入 {written}", flush=True)
 
-    try:
-        meta = get_fund_nav_series_meta() or {}
-    except Exception as exc:  # noqa: BLE001 - 摘要查询超时不应盖过已完成的写入
-        print(f"  !! 表摘要查询失败：{exc}", file=sys.stderr)
-        meta = {}
+    if meta is None:
+        try:
+            meta = get_fund_nav_series_meta() or {}
+        except Exception as exc:  # noqa: BLE001 - 摘要查询超时不应盖过已完成的写入
+            print(f"  !! 表摘要查询失败：{exc}", file=sys.stderr)
+            meta = {}
     summary["series"] = meta
-    summary["ok"] = bool(
+    did_work = bool(
         int(meta.get("row_count") or 0) > 0
         or summary.get("risk_written")
         or summary.get("purged")
         or (summary.get("daily") or {}).get("written")
         or (summary.get("backfill") or {}).get("fetched")
     )
+    if failures:
+        summary["failures"] = failures
+    summary["ok"] = did_work and not failures
     print()
     print(f"  表内点数          {meta.get('row_count')}")
     print(f"  覆盖基金          {meta.get('fund_count')}")

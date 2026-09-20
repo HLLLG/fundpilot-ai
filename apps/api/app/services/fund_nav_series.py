@@ -353,8 +353,16 @@ def run_daily_nav_series_and_risk() -> dict[str, Any]:
     from app.services.fund_risk_metrics import refresh_fund_risk_metrics_from_nav_series
 
     risk_written = refresh_fund_risk_metrics_from_nav_series()
-    meta = get_fund_nav_series_meta() or {}
-    return {
+    # 表摘要只喂日志和 CLI 打印。它超时过去会把已经写完的日更 + 风险重算判成失败，
+    # 2026-09-04 起 Fund NAV Series Daily 连续变红就是栽在这一行。
+    try:
+        meta = get_fund_nav_series_meta() or {}
+        meta_error = None
+    except Exception as exc:  # noqa: BLE001 - 摘要失败不回滚已完成的写入
+        logger.exception("fund nav series meta lookup failed after daily sync")
+        meta = {}
+        meta_error = f"meta_failed:{exc}"
+    payload: dict[str, Any] = {
         "daily": daily,
         "risk_written": risk_written,
         "series": meta,
@@ -363,6 +371,9 @@ def run_daily_nav_series_and_risk() -> dict[str, Any]:
             "row_count": int(meta.get("row_count") or 0),
         },
     }
+    if meta_error:
+        payload["meta_error"] = meta_error
+    return payload
 
 
 def schedule_daily_nav_series_sync(*, force: bool = False) -> None:

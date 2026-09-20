@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import sys
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
 from app.database import (
+    count_fund_nav_series_rows,
     get_fund_nav_series_meta,
     list_fund_nav_series_by_codes,
     list_fund_nav_series_fund_codes,
@@ -150,6 +152,101 @@ def test_purge_deletes_expired_rows_in_small_batches(monkeypatch) -> None:
     assert purged == 2
     stored = list_fund_nav_series_by_codes(["000041"])["000041"]
     assert [row["nav_date"] for row in stored] == ["2026-08-31"]
+
+
+def test_nav_series_meta_counts_in_pages_without_table_wide_aggregate(monkeypatch) -> None:
+    import app.database as database
+
+    monkeypatch.setattr(database, "_NAV_SERIES_COUNT_PAGE", 1)
+    upsert_fund_nav_series(
+        [
+            {"fund_code": "000061", "nav_date": "2026-08-28", "unit_nav": 1.1},
+            {"fund_code": "000062", "nav_date": "2026-08-28", "unit_nav": 1.2},
+            {"fund_code": "000062", "nav_date": "2026-08-31", "unit_nav": 1.3},
+        ],
+        snapshot_available_at="2026-08-31T16:00:00+00:00",
+        source=NAV_SERIES_SOURCE_HISTORY,
+    )
+
+    assert count_fund_nav_series_rows() == (3, 2)
+    meta = get_fund_nav_series_meta()
+    assert meta is not None
+    assert meta["row_count"] == 3
+    assert meta["fund_count"] == 2
+    assert meta["first_nav_date"] == "2026-08-28"
+    assert meta["last_nav_date"] == "2026-08-31"
+    assert meta["snapshot_available_at"] == "2026-08-31T16:00:00+00:00"
+
+
+def test_daily_and_risk_survive_meta_timeout(monkeypatch) -> None:
+    from app.services import fund_nav_series as nav_mod
+
+    monkeypatch.setattr(
+        "app.services.akshare_subprocess.fetch_open_fund_daily_nav_snapshot",
+        lambda: {
+            "latest_date": "2026-08-28",
+            "prior_date": "2026-08-27",
+            "rows": [
+                {
+                    "fund_code": "110034",
+                    "latest_nav": 1.6,
+                    "prior_nav": 1.5,
+                    "daily_growth_percent": 6.67,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        nav_mod,
+        "get_fund_nav_series_meta",
+        lambda: (_ for _ in ()).throw(
+            TimeoutError("Lost connection to MySQL server during query")
+        ),
+    )
+
+    summary = run_daily_nav_series_and_risk()
+
+    # 日更点和风险重算都已落库，摘要超时只降级成一条 meta_error。
+    assert (summary.get("daily") or {}).get("written") == 2
+    assert summary["series"] == {}
+    assert summary["coverage"] == {"fund_count": 0, "row_count": 0}
+    assert str(summary.get("meta_error") or "").startswith("meta_failed:")
+    stored = list_fund_nav_series_by_codes(["110034"])["110034"]
+    assert stored[-1]["unit_nav"] == 1.6
+
+
+def test_sync_script_exit_code_ignores_meta_but_not_a_missing_snapshot(monkeypatch) -> None:
+    from scripts import sync_fund_nav_series as script
+
+    monkeypatch.setattr(sys, "argv", ["sync_fund_nav_series.py", "--daily"])
+    monkeypatch.setattr(
+        script,
+        "run_daily_nav_series_and_risk",
+        lambda: {
+            "daily": {"written": 42, "purged": 0, "latest_date": "2026-08-28"},
+            "risk_written": 7,
+            "series": {},
+            "meta_error": "meta_failed:read timed out",
+        },
+    )
+    monkeypatch.setattr(script, "get_fund_nav_series_meta", lambda: None)
+    assert script.main() == 0
+
+    monkeypatch.setattr(
+        script,
+        "run_daily_nav_series_and_risk",
+        lambda: {
+            "daily": {
+                "written": 0,
+                "purged": 0,
+                "latest_date": None,
+                "error": "daily_nav_snapshot_unavailable",
+            },
+            "risk_written": 21686,
+            "series": {"row_count": 18_000_000, "fund_count": 24331},
+        },
+    )
+    assert script.main() == 1
 
 
 def test_list_nav_series_fund_codes_pages_distinct_codes(monkeypatch) -> None:
